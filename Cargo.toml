@@ -1,0 +1,33 @@
+[package]
+name    = "arrow-client"
+version = "0.3.0"
+authors = ["Ondrej Perutka <ondrej.perutka@angelcam.com>"]
+license = "Apache-2.0"
+readme  = "README.md"
+build   = "build.rs"
+
+[features]
+discovery = []
+
+[dependencies]
+libc            = "0.2"
+regex           = "0.1"
+mio             = "0.5"
+uuid            = "0.1"
+time            = "0.1"
+rustc-serialize = "0.3"
+
+[dependencies.openssl]
+version  = "0.7.3"
+features = ["tlsv1_2"]
+
+[build-dependencies]
+gcc = "0.3"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+debug     = false
