@@ -1,5 +1,7 @@
 # Arrow Client
 
+[![Build Status](https://travis-ci.org/angelcam/arrow-client.svg?branch=master)](https://travis-ci.org/angelcam/arrow-client)
+
 Arrow Client is an application used to simplify the process of connecting IP 
 cameras to the Angelcam cloud services. The Arrow Client is meant to be shipped 
 together with IP camera firmwares or as a standalone application for various 
