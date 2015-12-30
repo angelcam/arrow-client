@@ -12,6 +12,9 @@ interfaces and find local RTSP services automatically. All such RTSP services
 can be registered within Angelcam cloud services under your Angelcam account 
 without the need of a public IP address and setting up your firewall.
 
+This is a reference implementation of the Arrow Client role described in 
+[Arrow Protocol](https://github.com/angelcam/arrow-client/wiki/Arrow-Protocol-v0.1 "Arrow Protocol v0.1").
+
 ## Features
 
 - Automatic RTSP service discovery
