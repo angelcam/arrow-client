@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <net/if_arp.h>
@@ -34,11 +35,14 @@ typedef struct net_device {
 } net_device;
 
 static char * string_dup(const char* str) {
+    char* result;
+    size_t len;
+    
     if (!str)
         return NULL;
     
-    size_t len = strlen(str);
-    char* result = malloc(len + 1);
+    len = strlen(str);
+    result = malloc(len + 1);
     if (!result)
         return NULL;
     
@@ -133,27 +137,34 @@ err:
 struct net_device * net_find_devices() {
     struct net_device* result = NULL;
     struct net_device* tmp;
-    struct ifreq dconf;
-    int fd, ret, i = 0;
+    struct ifreq *ifreq;
+    struct ifconf ifconf;
+    char buffer[65536];
+    int fd;
     
-    fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0)
+    memset(buffer, 0, sizeof(buffer));
+    memset(&ifconf, 0, sizeof(ifconf));
+    
+    ifconf.ifc_len = sizeof(buffer);
+    ifconf.ifc_buf = buffer;
+    
+    if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
         return NULL;
+    if (ioctl(fd, SIOCGIFCONF, &ifconf) != 0)
+        goto ret;
     
-    memset(&dconf, 0, sizeof(dconf));
-    dconf.ifr_ifindex = ++i;
-    
-    while ((ret = ioctl(fd, SIOCGIFNAME, &dconf)) == 0) {
-        tmp = get_device_info(fd, dconf.ifr_name);
+    ifreq = ifconf.ifc_req;
+    while (((char*)ifreq - (char*)ifconf.ifc_req) < ifconf.ifc_len) {
+        tmp = get_device_info(fd, ifreq->ifr_name);
         if (tmp) {
             tmp->next = result;
             result = tmp;
         }
         
-        memset(&dconf, 0, sizeof(dconf));
-        dconf.ifr_ifindex = ++i;
+        ifreq++;
     }
     
+ret:
     close(fd);
     
     return result;
