@@ -22,6 +22,7 @@
 #include <net/if.h>
 #include <net/if_arp.h>
 #include <netinet/in.h>
+#include <ifaddrs.h>
 
 #define MAC_ADDR_SIZE       6
 #define IPV4_ADDR_SIZE      4
@@ -68,31 +69,17 @@ static int get_mac_address(int fd, const char* dname, unsigned char* buffer) {
     return 0;
 }
 
-static int get_ipv4_record(int fd, unsigned long addr_type, 
-    const char* dname, unsigned char* buffer) {
+static int get_ipv4_record(struct sockaddr *addr, unsigned char* buffer) {
     struct sockaddr_in* inet_addr;
-    struct ifreq dconf;
     
-    memset(&dconf, 0, sizeof(dconf));
-    strncpy(dconf.ifr_name, dname, IFNAMSIZ);
-    
-    if (ioctl(fd, addr_type, &dconf) != 0)
+    if (addr->sa_family != AF_INET)
         return -1;
-    if (dconf.ifr_hwaddr.sa_family != AF_INET)
-        return -2;
     
-    inet_addr = (struct sockaddr_in*)&dconf.ifr_addr;
+    inet_addr = (struct sockaddr_in*)addr;
+    
     memcpy(buffer, &inet_addr->sin_addr, IPV4_ADDR_SIZE);
     
     return 0;
-}
-
-static int get_ipv4_address(int fd, const char* dname, unsigned char* buffer) {
-    return get_ipv4_record(fd, SIOCGIFADDR, dname, buffer);
-}
-
-static int get_ipv4_netmask(int fd, const char* dname, unsigned char* buffer) {
-    return get_ipv4_record(fd, SIOCGIFNETMASK, dname, buffer);
 }
 
 void net_free_device_list(struct net_device* dev) {
@@ -105,7 +92,7 @@ void net_free_device_list(struct net_device* dev) {
     }
 }
 
-static struct net_device * get_device_info(int fd, const char* name) {
+static struct net_device * get_device_info(int fd, struct ifaddrs* ifaddrs) {
     struct net_device* result;
     
     result = malloc(sizeof(net_device));
@@ -114,16 +101,16 @@ static struct net_device * get_device_info(int fd, const char* name) {
     
     memset(result, 0, sizeof(net_device));
     
-    if (!(result->name = string_dup(name))) {
+    if (!(result->name = string_dup(ifaddrs->ifa_name))) {
         free(result);
         return NULL;
     }
 
-    if (get_mac_address(fd, name, result->mac_address) != 0)
+    if (get_mac_address(fd, result->name, result->mac_address) != 0)
         goto err;
-    if (get_ipv4_address(fd, name, result->ipv4_address) != 0)
+    if (get_ipv4_record(ifaddrs->ifa_addr, result->ipv4_address) != 0)
         goto err;
-    if (get_ipv4_netmask(fd, name, result->ipv4_netmask) != 0)
+    if (get_ipv4_record(ifaddrs->ifa_netmask, result->ipv4_netmask) != 0)
         goto err;
     
     return result;
@@ -137,34 +124,29 @@ err:
 struct net_device * net_find_devices() {
     struct net_device* result = NULL;
     struct net_device* tmp;
-    struct ifreq *ifreq;
-    struct ifconf ifconf;
-    char buffer[65536];
+    struct ifaddrs* ifaddrs;
+    struct ifaddrs* ifaddr;
     int fd;
-    
-    memset(buffer, 0, sizeof(buffer));
-    memset(&ifconf, 0, sizeof(ifconf));
-    
-    ifconf.ifc_len = sizeof(buffer);
-    ifconf.ifc_buf = buffer;
     
     if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
         return NULL;
-    if (ioctl(fd, SIOCGIFCONF, &ifconf) != 0)
-        goto ret;
+    if (getifaddrs(&ifaddrs) != 0)
+        goto err;
     
-    ifreq = ifconf.ifc_req;
-    while (((char*)ifreq - (char*)ifconf.ifc_req) < ifconf.ifc_len) {
-        tmp = get_device_info(fd, ifreq->ifr_name);
+    for (ifaddr = ifaddrs; ifaddr != NULL; ifaddr = ifaddr->ifa_next) {
+        if (!ifaddr->ifa_addr)
+            continue;
+        
+        tmp = get_device_info(fd, ifaddr);
         if (tmp) {
             tmp->next = result;
             result = tmp;
         }
-        
-        ifreq++;
     }
     
-ret:
+    freeifaddrs(ifaddrs);
+    
+err:
     close(fd);
     
     return result;
@@ -197,4 +179,3 @@ const size_t net_get_mac_addr_size() {
 const size_t net_get_ipv4_addr_size() {
     return IPV4_ADDR_SIZE;
 }
-
