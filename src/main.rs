@@ -450,13 +450,16 @@ fn main() {
         let mut config = ArrowConfig::load(CONFIG_FILE)
             .unwrap_or(ArrowConfig::new());
         
+        let mut default_svc_table = ServiceTable::new();
+        
         while i < args.len() {
             match &args[i] as &str {
                 "-d" if cfg!(feature = "discovery") => { discovery = true; },
                 "-r" => {
                     let service = parse_rtsp_url(&args[i + 1]);
                     let service = result_or_usage(service);
-                    config.add(service);
+                    config.add(service.clone());
+                    default_svc_table.add(service);
                     i += 1;
                 },
                 "-v" => { logger.set_level(Severity::DEBUG); },
@@ -477,8 +480,7 @@ fn main() {
         log_info!(logger, &format!("application started (uuid: {}, mac: {})", 
             config.uuid_string(), arrow_mac));
         
-        let default_svc_table = config.service_table();
-        let app_context       = Shared::new(AppContext::new(config));
+        let app_context = Shared::new(AppContext::new(config));
         
         let mut event_loop = EventLoop::new()
             .unwrap();
