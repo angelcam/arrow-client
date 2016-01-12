@@ -266,6 +266,8 @@ fn find_rtsp_paths(
     
     let res = if locked {
         vec![Service::LockedRTSP(mac, addr)]
+    } else if res.is_empty() {
+        vec![Service::UnknownRTSP(mac, addr)]
     } else {
         res.into_iter()
             .map(|path| Service::RTSP(mac, addr, path))

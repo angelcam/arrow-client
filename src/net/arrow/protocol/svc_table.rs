@@ -35,6 +35,7 @@ use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 const SVC_TYPE_CONTROL_PROTOCOL: u16 = 0x0000;
 const SVC_TYPE_RTSP:             u16 = 0x0001;
 const SVC_TYPE_LOCKED_RTSP:      u16 = 0x0002;
+const SVC_TYPE_UNKNOWN_RTSP:     u16 = 0x0003;
 
 /// Service Table item header.
 #[derive(Debug, Copy, Clone)]
@@ -127,76 +128,78 @@ pub enum Service {
     RTSP(MacAddr, SocketAddr, String),
     /// Remote RTSP service requiring authorization (mac, addr).
     LockedRTSP(MacAddr, SocketAddr),
+    /// Remote RTSP service without any known path.
+    UnknownRTSP(MacAddr, SocketAddr),
 }
 
 impl Service {
-    /// Get service address (in case it is a remote service).
+    /// Get service type ID.
+    pub fn type_id(&self) -> u16 {
+        match self {
+            &Service::ControlProtocol   => SVC_TYPE_CONTROL_PROTOCOL,
+            &Service::RTSP(_, _, _)     => SVC_TYPE_RTSP,
+            &Service::LockedRTSP(_, _)  => SVC_TYPE_LOCKED_RTSP,
+            &Service::UnknownRTSP(_, _) => SVC_TYPE_UNKNOWN_RTSP
+        }
+    }
+    
+    /// Get service MAC address (in case it is not the Control Protocol svc).
+    pub fn mac(&self) -> Option<&MacAddr> {
+        match self {
+            &Service::ControlProtocol          => None,
+            &Service::RTSP(ref addr, _, _)     => Some(addr),
+            &Service::LockedRTSP(ref addr, _)  => Some(addr),
+            &Service::UnknownRTSP(ref addr, _) => Some(addr)
+        }
+    }
+    
+    /// Get service address (in case it is not the Control Protocol svc).
     pub fn address(&self) -> Option<&SocketAddr> {
         match self {
-            &Service::ControlProtocol         => None,
-            &Service::RTSP(_, ref addr, _)    => Some(addr),
-            &Service::LockedRTSP(_, ref addr) => Some(addr)
+            &Service::ControlProtocol          => None,
+            &Service::RTSP(_, ref addr, _)     => Some(addr),
+            &Service::LockedRTSP(_, ref addr)  => Some(addr),
+            &Service::UnknownRTSP(_, ref addr) => Some(addr)
+        }
+    }
+    
+    /// Get service path (valid only for certain types of services),
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            &Service::RTSP(_, _, ref path) => Some(path),
+            _ => None
         }
     }
     
     /// Serialize this Service Table item in-place.
     fn serialize<W: Write>(&self, w: &mut W, id: u16) -> io::Result<()> {
-        match self {
-            &Service::ControlProtocol => Self::serialize_cp(w, id),
-            &Service::RTSP(ref mac, ref addr, ref path) => 
-                Self::serialize_svc(w, id, SVC_TYPE_RTSP, mac, addr, path),
-            &Service::LockedRTSP(ref mac, ref addr) =>
-                Self::serialize_svc(w, id, SVC_TYPE_LOCKED_RTSP, mac, addr, "")
-        }
-    }
-    
-    /// Serialize a control protocol service item in-place.
-    fn serialize_cp<W: Write>(w: &mut W, id: u16) -> io::Result<()> {
-        let saddr  = SocketAddr::V4(SocketAddrV4::new(
+        let dhaddr = MacAddr::new(0, 0, 0, 0, 0, 0);
+        let dsaddr = SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::new(0, 0, 0, 0), 0));
-        let haddr  = MacAddr::new(0, 0, 0, 0, 0, 0);
-        let header = ServiceHeader::new(
-            id, SVC_TYPE_CONTROL_PROTOCOL, &haddr, &saddr);
+        
+        let haddr = self.mac()
+            .unwrap_or(&dhaddr);
+        let saddr = self.address()
+            .unwrap_or(&dsaddr);
+        
+        let header = ServiceHeader::new(id, self.type_id(), haddr, saddr);
         
         try!(header.serialize(w));
         
-        w.write_all(&[0u8])
-    }
-    
-    /// Serialize a remote service item in-place.
-    fn serialize_svc<W: Write>(
-        w: &mut W, 
-        svc_id: u16, 
-        svc_type: u16, 
-        haddr: &MacAddr, 
-        saddr: &SocketAddr, 
-        path: &str) -> io::Result<()> {
-        let header = ServiceHeader::new(svc_id, svc_type, haddr, saddr);
-        
-        try!(header.serialize(w));
-        
-        try!(w.write_all(path.as_bytes()));
+        if let Some(path) = self.path() {
+            try!(w.write_all(path.as_bytes()));
+        }
         
         w.write_all(&[0u8])
     }
     
     /// Get size of this Service Table item in bytes.
     fn len(&self) -> usize {
-        match self {
-            &Service::ControlProtocol       => Self::cp_len(),
-            &Service::RTSP(_, _, ref path)  => Self::svc_len(path),
-            &Service::LockedRTSP(_, _)      => Self::svc_len("")
-        }
-    }
-    
-    /// Get size of a control protocol service item in bytes.
-    fn cp_len() -> usize {
-        mem::size_of::<ServiceHeader>() + 1
-    }
-    
-    /// Get size of a remote service item in bytes.
-    fn svc_len(path: &str) -> usize {
-        let path_bytes = path.as_bytes();
+        let path_bytes = match self.path() {
+            Some(path) => path.as_bytes(),
+            None       => &[] as &[u8]
+        };
+        
         mem::size_of::<ServiceHeader>() + path_bytes.len() + 1
     }
 }
@@ -235,6 +238,9 @@ impl JsonService {
             SVC_TYPE_LOCKED_RTSP => Ok(Service::LockedRTSP(
                 try!(MacAddr::from_str(&self.mac)), 
                 try!(parse_socket_addr(&self.address)))),
+            SVC_TYPE_UNKNOWN_RTSP => Ok(Service::UnknownRTSP(
+                try!(MacAddr::from_str(&self.mac)),
+                try!(parse_socket_addr(&self.address)))),
             _ => Err(ConfigError::from("unknown service type"))
         }
     }
@@ -242,17 +248,14 @@ impl JsonService {
 
 impl<'a> From<&'a Service> for JsonService {
     fn from(svc: &Service) -> JsonService {
-        match svc {
-            &Service::ControlProtocol => JsonService::new(
-                SVC_TYPE_CONTROL_PROTOCOL, 
-                String::new(), String::new(), String::new()),
-            &Service::RTSP(ref mac, ref addr, ref path) => JsonService::new(
-                SVC_TYPE_RTSP, 
-                format!("{}", mac), format!("{}", addr), path.clone()),
-            &Service::LockedRTSP(ref mac, ref addr) => JsonService::new(
-                SVC_TYPE_LOCKED_RTSP,
-                format!("{}", mac), format!("{}", addr), String::new())
-        }
+        let mac = svc.mac()
+            .map_or(String::new(), |mac| format!("{}", mac));
+        let address = svc.address()
+            .map_or(String::new(), |addr| format!("{}", addr));
+        let path = svc.path()
+            .map_or(String::new(), |path| path.to_string());
+        
+        JsonService::new(svc.type_id(), mac, address, path)
     }
 }
 
