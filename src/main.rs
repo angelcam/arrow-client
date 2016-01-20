@@ -319,6 +319,7 @@ struct CommandHandler<L: Logger> {
     default_svc_table: ServiceTable,
     app_context:       Shared<AppContext>,
     scanner:           Option<JoinHandle<()>>,
+    last_scan:         u64,
     discovery:         bool,
 }
 
@@ -329,11 +330,13 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
         default_svc_table: ServiceTable,
         app_context: Shared<AppContext>, 
         discovery: bool) -> CommandHandler<L> {
+        let now = time::precise_time_ns() / 1000000;
         CommandHandler {
             logger:            logger,
             default_svc_table: default_svc_table,
             app_context:       app_context,
             scanner:           None,
+            last_scan:         now - NETWORK_SCAN_PERIOD,
             discovery:         discovery
         }
     }
@@ -341,10 +344,19 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
     /// Scan the local network for new services and schedule the next network 
     /// scanning event.
     fn periodical_network_scan(&mut self, event_loop: &mut EventLoop<Self>) {
-        self.scan_network(event_loop);
+        let now     = time::precise_time_ns() / 1000000;
+        let elapsed = (now - self.last_scan) as i64;
+        let period  = NETWORK_SCAN_PERIOD as i64;
+        let delta   = period - elapsed;
         
-        event_loop.timeout_ms(TimerEvent::ScanNetwork, NETWORK_SCAN_PERIOD)
-            .unwrap();
+        if delta <= 0 {
+            self.scan_network(event_loop);
+            event_loop.timeout_ms(TimerEvent::ScanNetwork, NETWORK_SCAN_PERIOD)
+                .unwrap();
+        } else {
+            event_loop.timeout_ms(TimerEvent::ScanNetwork, delta as u64)
+                .unwrap();
+        }
     }
     
     /// Spawn a new network scanner thread (if it is not already running) and 
@@ -353,6 +365,8 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
         // check if the discovery is enabled and if there is another scanner 
         // running
         if self.discovery && self.scanner.is_none() {
+            self.last_scan = time::precise_time_ns() / 1000000;
+            
             let mut app_context = self.app_context.lock()
                 .unwrap();
             
