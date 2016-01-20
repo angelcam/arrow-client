@@ -369,14 +369,15 @@ impl<L: Logger> SessionContext<L> {
         &mut self, 
         event_loop: &mut EventLoop<T>, 
         event_set: EventSet) -> Result<Option<usize>> {
-        try!(self.check_read_event(event_loop, event_set));
+        let read = try!(self.check_read_event(event_loop, event_set));
+        
         try!(self.check_write_event(event_loop, event_set));
         
         if event_set.is_error() {
             let err = self.get_socket_error()
                 .ok_or(ArrowError::from("socket error expected"));
             Err(try!(err))
-        } else if event_set.is_hup() {
+        } else if event_set.is_hup() && read == 0 {
             Ok(None)
         } else {
             Ok(Some(self.input_buffer.buffered()))
@@ -384,25 +385,27 @@ impl<L: Logger> SessionContext<L> {
     }
     
     /// Read a message if the underlaying socket is readable and the input 
-    /// buffer is not already full.
+    /// buffer is not already full. Return the number of bytes read.
     fn check_read_event<T: Handler>(
         &mut self, 
         event_loop: &mut EventLoop<T>, 
-        event_set: EventSet) -> Result<()> {
+        event_set: EventSet) -> Result<usize> {
         if event_set.is_readable() {
-            if self.input_buffer.is_full() {
-                self.update_socket_events(event_loop);
-            } else {
+            if !self.input_buffer.is_full() || event_set.is_hup() {
                 let buffer = &mut *self.read_buffer;
                 let len    = try!(self.stream.read(buffer));
                 self.input_buffer.write_all(&buffer[..len])
                     .unwrap();
                 
                 //log_debug!(self.logger, &format!("{} bytes read from session socket {:08x} (buffer size: {})", len, self.session_id, self.input_buffer.buffered()));
+                
+                return Ok(len);
+            } else {
+                self.update_socket_events(event_loop);
             }
         }
         
-        Ok(())
+        Ok(0)
     }
     
     /// Write data from the output buffer into the underlaying socket if the 
@@ -1269,6 +1272,40 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         Ok(None)
     }
     
+    /// Move all data from the session input buffer into the Arrow output 
+    /// buffer.
+    fn flush_session(
+        &mut self, 
+        session_id: u32, 
+        event_loop: &mut EventLoop<Self>) {
+        if let Some(ctx) = self.sessions.get_mut(&session_id) {
+            // avoid sending empty packets
+            let len = if ctx.input_ready() {
+                let data = ctx.input_buffer();
+                let arrow_msg = ArrowMessage::new(
+                    ctx.service_id, ctx.session_id, 
+                    data);
+                
+                if self.output_buffer.is_empty() {
+                    self.write_tout.set(CONNECTION_TIMEOUT);
+                }
+                
+                arrow_msg.serialize(&mut self.output_buffer)
+                    .unwrap();
+                
+                data.len()
+            } else {
+                0
+            };
+            
+            ctx.drop_input_bytes(len, event_loop);
+            
+            self.stream.enable_socket_events(true, true, event_loop);
+            
+            //log_debug!(self.logger, &format!("{} bytes moved from session {:08x} input buffer into the Arrow output buffer", len, session_id));
+        }
+    }
+    
     /// Process all notifications for a given remote session socket.
     fn session_socket_ready(
         &mut self, 
@@ -1283,11 +1320,13 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         match res {
             Err(err) => {
                 log_warn!(self.logger, &format!("service connection error: {}", err.description()));
+                self.flush_session(session_id, event_loop);
                 self.send_hup_message(session_id, 2, event_loop);
                 self.remove_session_context(session_id, event_loop);
             },
             Ok(None) => {
                 log_info!(self.logger, "service connection closed");
+                self.flush_session(session_id, event_loop);
                 self.send_hup_message(session_id, 0, event_loop);
                 self.remove_session_context(session_id, event_loop);
             },
