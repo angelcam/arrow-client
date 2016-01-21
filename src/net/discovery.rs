@@ -101,7 +101,7 @@ pub fn find_rtsp_streams() -> Result<Vec<Service>> {
     let devices = EthernetDevice::list();
     
     let port_candidates = PortCollection::new()
-        .add_all(&[554, 88, 81, 555, 7447, 8554, 7070, 10554]);
+        .add_all(&[554, 88, 81, 555, 7447, 8554, 7070, 10554, 80]);
     
     let mut threads = Vec::new();
     
