@@ -22,6 +22,7 @@ use std::result;
 use std::fs::File;
 use std::sync::Arc;
 use std::error::Error;
+use std::collections::HashSet;
 use std::io::{BufReader, BufRead};
 use std::fmt::{Display, Formatter};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -35,6 +36,7 @@ use net::raw::ether::MacAddr;
 use net::arrow::protocol::Service;
 use net::raw::arp::scanner::Ipv4ArpScanner;
 use net::raw::tcp::scanner::{TcpPortScanner, PortCollection};
+use net::rtsp::sdp::{SessionDescription, MediaType, RTPMap, FromAttribute};
 
 static RTSP_PATH_FILE: &'static str = "/etc/arrow/rtsp-paths";
 
@@ -174,8 +176,43 @@ fn is_rtsp_service(addr: SocketAddr) -> Result<bool> {
     Ok(client.options().is_ok())
 }
 
+/// Check if a given session description contains at least one H.264 or 
+/// a general MPEG4 video stream.
+fn is_supported_service(sdp: &[u8]) -> bool {
+    if let Ok(sdp) = SessionDescription::parse(sdp) {
+        let mut vcodecs   = HashSet::new();
+        let video_streams = sdp.media_descriptions.into_iter()
+            .filter(|md| md.media_type == MediaType::Video);
+        
+        for md in video_streams {
+            for attr in md.attributes {
+                if let Ok(rtpmap) = RTPMap::parse(&attr) {
+                    vcodecs.insert(rtpmap.encoding.to_uppercase());
+                }
+            }
+        }
+        
+        vcodecs.contains("H264") ||
+            vcodecs.contains("H264-RCDO") ||
+            vcodecs.contains("H264-SVC") ||
+            vcodecs.contains("MP4V-ES") ||
+            vcodecs.contains("MPEG4-GENERIC")
+    } else {
+        false
+    }
+}
+
+/// RTSP DESCRIBE status.
+enum DescribeStatus {
+    Ok,
+    Locked,
+    Unsupported,
+    NotFound,
+    Error
+}
+
 /// Get describe status code for a given RTSP service and path.
-fn get_describe_status(addr: SocketAddr, path: &str) -> Result<Option<i32>> {
+fn get_describe_status(addr: SocketAddr, path: &str) -> Result<DescribeStatus> {
     let mut client = try!(RtspClient::new(addr));
     client.set_timeout(Some(1000));
     if let Ok(response) = client.describe(path) {
@@ -187,12 +224,19 @@ fn get_describe_status(addr: SocketAddr, path: &str) -> Result<Option<i32>> {
         };
         
         if hipcam && path != "/11" && path != "/12" {
-            Ok(None)
+            Ok(DescribeStatus::NotFound)
         } else {
-            Ok(Some(header.code))
+            match header.code {
+                404 => Ok(DescribeStatus::NotFound),
+                401 => Ok(DescribeStatus::Locked),
+                200 if is_supported_service(&response.body) => 
+                    Ok(DescribeStatus::Ok),
+                200 => Ok(DescribeStatus::Unsupported),
+                _   => Ok(DescribeStatus::Error)
+            }
         }
     } else {
-        Ok(None)
+        Ok(DescribeStatus::Error)
     }
 }
 
@@ -254,25 +298,36 @@ fn find_rtsp_paths(
     mac: MacAddr, 
     addr: SocketAddr, 
     paths: &[String]) -> Result<Vec<Service>> {
-    let mut res    = Vec::new();
-    let mut locked = false;
+    let mut ok          = Vec::new();
+    let mut unsupported = Vec::new();
+    let mut locked      = false;
+    
     for path in paths {
         match try!(get_describe_status(addr, path)) {
-            Some(200) => res.push(path.to_string()),
-            Some(401) => locked = true,
+            DescribeStatus::Ok          => ok.push(path.to_string()),
+            DescribeStatus::Unsupported => unsupported.push(path.to_string()),
+            DescribeStatus::Locked      => locked = true,
             _ => ()
         }
     }
     
-    let res = if locked {
-        vec![Service::LockedRTSP(mac, addr)]
-    } else if res.is_empty() {
-        vec![Service::UnknownRTSP(mac, addr)]
-    } else {
-        res.into_iter()
-            .map(|path| Service::RTSP(mac, addr, path))
-            .collect::<Vec<_>>()
-    };
+    let mut res = ok.into_iter()
+        .map(|path| Service::RTSP(mac, addr, path))
+        .collect::<Vec<_>>();
+    
+    let unsupported = unsupported.into_iter()
+        .map(|path| Service::UnsupportedRTSP(mac, addr, path))
+        .collect::<Vec<_>>();
+    
+    res.extend(unsupported);
+    
+    if locked {
+        res.push(Service::LockedRTSP(mac, addr));
+    }
+    
+    if res.is_empty() {
+        res.push(Service::UnknownRTSP(mac, addr));
+    }
     
     Ok(res)
 }

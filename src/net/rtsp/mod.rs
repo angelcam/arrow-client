@@ -15,6 +15,8 @@
 //! RTSP client definitions (only OPTIONS and DESCRIBE methods are currently
 //! implemented.
 
+pub mod sdp;
+
 use std::io;
 use std::fmt;
 use std::num;

@@ -36,6 +36,7 @@ const SVC_TYPE_CONTROL_PROTOCOL: u16 = 0x0000;
 const SVC_TYPE_RTSP:             u16 = 0x0001;
 const SVC_TYPE_LOCKED_RTSP:      u16 = 0x0002;
 const SVC_TYPE_UNKNOWN_RTSP:     u16 = 0x0003;
+const SVC_TYPE_UNSUPPORTED_RTSP: u16 = 0x0004;
 
 /// Service Table item header.
 #[derive(Debug, Copy, Clone)]
@@ -130,43 +131,49 @@ pub enum Service {
     LockedRTSP(MacAddr, SocketAddr),
     /// Remote RTSP service without any known path.
     UnknownRTSP(MacAddr, SocketAddr),
+    /// Remote RTSP service without any supported stream (mac, addr, path).
+    UnsupportedRTSP(MacAddr, SocketAddr, String),
 }
 
 impl Service {
     /// Get service type ID.
     pub fn type_id(&self) -> u16 {
         match self {
-            &Service::ControlProtocol   => SVC_TYPE_CONTROL_PROTOCOL,
-            &Service::RTSP(_, _, _)     => SVC_TYPE_RTSP,
-            &Service::LockedRTSP(_, _)  => SVC_TYPE_LOCKED_RTSP,
-            &Service::UnknownRTSP(_, _) => SVC_TYPE_UNKNOWN_RTSP
+            &Service::ControlProtocol          => SVC_TYPE_CONTROL_PROTOCOL,
+            &Service::RTSP(_, _, _)            => SVC_TYPE_RTSP,
+            &Service::LockedRTSP(_, _)         => SVC_TYPE_LOCKED_RTSP,
+            &Service::UnknownRTSP(_, _)        => SVC_TYPE_UNKNOWN_RTSP,
+            &Service::UnsupportedRTSP(_, _, _) => SVC_TYPE_UNSUPPORTED_RTSP
         }
     }
     
     /// Get service MAC address (in case it is not the Control Protocol svc).
     pub fn mac(&self) -> Option<&MacAddr> {
         match self {
-            &Service::ControlProtocol          => None,
-            &Service::RTSP(ref addr, _, _)     => Some(addr),
-            &Service::LockedRTSP(ref addr, _)  => Some(addr),
-            &Service::UnknownRTSP(ref addr, _) => Some(addr)
+            &Service::ControlProtocol                 => None,
+            &Service::RTSP(ref addr, _, _)            => Some(addr),
+            &Service::LockedRTSP(ref addr, _)         => Some(addr),
+            &Service::UnknownRTSP(ref addr, _)        => Some(addr),
+            &Service::UnsupportedRTSP(ref addr, _, _) => Some(addr),
         }
     }
     
     /// Get service address (in case it is not the Control Protocol svc).
     pub fn address(&self) -> Option<&SocketAddr> {
         match self {
-            &Service::ControlProtocol          => None,
-            &Service::RTSP(_, ref addr, _)     => Some(addr),
-            &Service::LockedRTSP(_, ref addr)  => Some(addr),
-            &Service::UnknownRTSP(_, ref addr) => Some(addr)
+            &Service::ControlProtocol                 => None,
+            &Service::RTSP(_, ref addr, _)            => Some(addr),
+            &Service::LockedRTSP(_, ref addr)         => Some(addr),
+            &Service::UnknownRTSP(_, ref addr)        => Some(addr),
+            &Service::UnsupportedRTSP(_, ref addr, _) => Some(addr)
         }
     }
     
     /// Get service path (valid only for certain types of services),
     pub fn path(&self) -> Option<&str> {
         match self {
-            &Service::RTSP(_, _, ref path) => Some(path),
+            &Service::RTSP(_, _, ref path)            => Some(path),
+            &Service::UnsupportedRTSP(_, _, ref path) => Some(path),
             _ => None
         }
     }
@@ -241,6 +248,9 @@ impl JsonService {
             SVC_TYPE_UNKNOWN_RTSP => Ok(Service::UnknownRTSP(
                 try!(MacAddr::from_str(&self.mac)),
                 try!(parse_socket_addr(&self.address)))),
+            SVC_TYPE_UNSUPPORTED_RTSP => Ok(Service::UnsupportedRTSP(
+                try!(MacAddr::from_str(&self.mac)),
+                try!(parse_socket_addr(&self.address)), self.path)),
             _ => Err(ConfigError::from("unknown service type"))
         }
     }
