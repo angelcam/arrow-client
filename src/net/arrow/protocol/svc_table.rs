@@ -269,11 +269,27 @@ impl<'a> From<&'a Service> for JsonService {
     }
 }
 
+/// Service table key (svc_type, mac_addr, port, path).
+type ServiceTableKey = (u16, Option<MacAddr>, Option<u16>, Option<String>);
+
+/// Get service table key for a given service.
+fn get_service_table_key(svc: &Service) -> ServiceTableKey {
+    let type_id  = svc.type_id();
+    let mac_addr = svc.mac()
+        .map(|ma| *ma);
+    let port = svc.address()
+        .map(|sa| sa.port());
+    let path = svc.path()
+        .map(|p| p.to_string());
+    
+    (type_id, mac_addr, port, path)
+}
+
 /// Service Table.
 #[derive(Debug, Clone)]
 pub struct ServiceTable {
     services: Vec<Service>,
-    set:      HashSet<Service>,
+    set:      HashSet<ServiceTableKey>,
 }
 
 impl ServiceTable {
@@ -290,7 +306,7 @@ impl ServiceTable {
     pub fn contains(&self, svc: &Service) -> bool {
         match svc {
             &Service::ControlProtocol => true,
-            svc => self.set.contains(svc)
+            svc => self.set.contains(&get_service_table_key(svc))
         }
     }
     
@@ -301,7 +317,7 @@ impl ServiceTable {
         } else {
             match self.services.get((id - 1) as usize) {
                 Some(svc) => Some(svc.clone()),
-                None => None
+                None      => None
             }
         }
     }
@@ -312,8 +328,8 @@ impl ServiceTable {
         if self.contains(&svc) {
             None
         } else {
-            self.services.push(svc.clone());
-            self.set.insert(svc);
+            self.set.insert(get_service_table_key(&svc));
+            self.services.push(svc);
             Some(self.services.len() as u16)
         }
     }
