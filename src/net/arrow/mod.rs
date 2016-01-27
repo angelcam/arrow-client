@@ -617,10 +617,10 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
             let config = &app_context.config;
             if let Some(svc) = config.get(service_id) {
                 if let Some(addr) = svc.address() {
-                    log_info!(self.logger, "connecting to remote service: {}, session ID: {:08x}", addr, session_id);
+                    log_info!(self.logger, "connecting to remote service: {}, service ID: {:04x}, session ID: {:08x}", addr, service_id, session_id);
                     match SessionContext::new(self.logger.clone(),
                         service_id, session_id, addr, event_loop) {
-                        Err(err) => log_warn!(self.logger, "unable to open connection to a remote service: {}", err.description()),
+                        Err(err) => log_warn!(self.logger, "unable to open connection to a remote service (address: {}, service ID: {:04x}, session ID: {:08x}): {}", addr, service_id, session_id, err.description()),
                         Ok(ctx)  => {
                             let token_id = session2token(session_id);
                             let tevent   = TimerEvent::TimeoutCheck(token_id);
@@ -631,10 +631,10 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
                         }
                     }
                 } else {
-                    log_warn!(self.logger, "requested service ID belongs to a Control Protocol service");
+                    log_warn!(self.logger, "requested service ID belongs to a Control Protocol service (session ID: {:08x})", session_id);
                 }
             } else {
-                log_warn!(self.logger, "non-existing service requested (service ID: {})", service_id);
+                log_warn!(self.logger, "non-existing service requested (service ID: {}, session ID: {:08x})", service_id, session_id);
             }
         }
         
@@ -714,7 +714,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         
         self.msg_id += 1;
         
-        log_debug!(self.logger, "sending a HUP message...");
+        log_debug!(self.logger, "sending a HUP message (session ID: {:08x}, error_code: {:08x})...", session_id, error_code);
         
         self.send_control_message(control_msg, event_loop);
     }
@@ -890,7 +890,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         }
         
         if timeout {
-            log_warn!(self.logger, "session {} connection timeout", session_id);
+            log_warn!(self.logger, "session {:08x} connection timeout", session_id);
             self.send_hup_message(session_id, 0, event_loop);
             self.remove_session_context(session_id, event_loop);
         } else {
@@ -1319,13 +1319,13 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         
         match res {
             Err(err) => {
-                log_warn!(self.logger, "service connection error: {}", err.description());
+                log_warn!(self.logger, "service connection error (session ID: {:08x}): {}", session_id, err.description());
                 self.flush_session(session_id, event_loop);
                 self.send_hup_message(session_id, 2, event_loop);
                 self.remove_session_context(session_id, event_loop);
             },
             Ok(None) => {
-                log_info!(self.logger, "service connection closed");
+                log_info!(self.logger, "service connection closed (session ID: {:08x})", session_id);
                 self.flush_session(session_id, event_loop);
                 self.send_hup_message(session_id, 0, event_loop);
                 self.remove_session_context(session_id, event_loop);
