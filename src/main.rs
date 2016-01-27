@@ -23,7 +23,7 @@ extern crate uuid;
 extern crate rustc_serialize;
 
 #[macro_use]
-mod utils;
+pub mod utils;
 
 pub mod net;
 
@@ -35,6 +35,7 @@ use std::sync::Arc;
 use std::fmt::Debug;
 use std::error::Error;
 use std::str::FromStr;
+use std::time::Duration;
 use std::thread::JoinHandle;
 use std::net::{SocketAddr, ToSocketAddrs};
 
@@ -207,9 +208,10 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
             Ok(addr) => cur_addr = addr,
             Err(t) => {
                 if (last_error + RETRY_TIMEOUT - 0.5) > t {
-                    let retry = RETRY_TIMEOUT + last_error - t;
+                    let retry    = RETRY_TIMEOUT + last_error - t;
+                    let retry_ms = (retry * 1000.0) as u64;
                     log_info!(logger, &format!("retrying in {:.3} seconds", retry));
-                    thread::sleep_ms((retry * 1000.0) as u32);
+                    thread::sleep(Duration::from_millis(retry_ms));
                 }
                 
                 cur_addr   = addr.to_string();
