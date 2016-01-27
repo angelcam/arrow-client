@@ -37,7 +37,7 @@ use std::error::Error;
 use std::str::FromStr;
 use std::time::Duration;
 use std::thread::JoinHandle;
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
 
 use utils::logger::syslog;
 
@@ -107,6 +107,45 @@ fn result_or_usage<T, E>(res: Result<T, E>) -> T
     }
 }
 
+/// Generate a fake MAC address from a given prefix and socket address.
+///
+/// Note: It is used in case we do not know the device MAC address (e.g. for 
+/// services passed as command line arguments).
+fn get_fake_mac_address(prefix: u16, addr: &SocketAddr) -> MacAddr {
+    match addr {
+        &SocketAddr::V4(ref addr) => get_fake_mac_address_v4(prefix, addr),
+        &SocketAddr::V6(ref addr) => get_fake_mac_address_v6(prefix, addr),
+    }
+}
+
+fn get_fake_mac_address_v4(prefix: u16, addr: &SocketAddrV4) -> MacAddr {
+    let a = ((prefix >> 8)  & 0xff) as u8;
+    let b = ( prefix        & 0xff) as u8;
+    
+    let addr   = addr.ip();
+    let octets = addr.octets();
+    
+    MacAddr::new(a, b,
+        octets[0],
+        octets[1],
+        octets[2],
+        octets[3])
+}
+
+fn get_fake_mac_address_v6(prefix: u16, addr: &SocketAddrV6) -> MacAddr {
+    let addr     = addr.ip();
+    let segments = addr.segments();
+    
+    let a = ((prefix      >> 8)  & 0xff) as u8;
+    let b = ( prefix             & 0xff) as u8;
+    let c = ((segments[6] >> 8)  & 0xff) as u8;
+    let d = ( segments[6]        & 0xff) as u8;
+    let e = ((segments[7] >> 8)  & 0xff) as u8;
+    let f = ( segments[7]        & 0xff) as u8;
+    
+    MacAddr::new(a, b, c, d, e, f)
+}
+
 /// Parse a given RTSP URL and return Service::RTSP, Service::LockedRTSP or 
 /// an error.
 fn parse_rtsp_url(url: &str) -> Result<Service, RuntimeError> {
@@ -114,8 +153,6 @@ fn parse_rtsp_url(url: &str) -> Result<Service, RuntimeError> {
     let re  = Regex::new(res).unwrap();
     
     if let Some(caps) = re.captures(url) {
-        // we don't care about the actual MAC address
-        let mac  = MacAddr::new(0, 0, 0, 0, 0, 0);
         let host = caps.at(2).unwrap();
         let path = caps.at(5).unwrap();
         let port = match caps.at(4) {
@@ -126,6 +163,8 @@ fn parse_rtsp_url(url: &str) -> Result<Service, RuntimeError> {
         let socket_addr = try!(get_socket_address((host, port))
             .or(Err(RuntimeError::from(
                 "unable to resolve RTSP service address"))));
+        
+        let mac = get_fake_mac_address(0xffff, &socket_addr);
         
         // note: we do not want to probe the service here as it might not be 
         // available on app startup
