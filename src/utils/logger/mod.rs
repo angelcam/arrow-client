@@ -15,32 +15,32 @@
 //! Logger definitions.
 
 macro_rules! log {
-    ($logger:expr, $severity:expr, $msg:expr) => {
-        $logger.log(file!(), line!(), $severity, $msg)
+    ($logger:expr, $severity:expr, $( $arg:tt )*) => {
+        $logger.log(file!(), line!(), $severity, &format!($($arg)*))
     };
 }
 
 macro_rules! log_debug {
-    ($logger:expr, $msg:expr) => {
-        $logger.debug(file!(), line!(), $msg)
+    ($logger:expr, $( $arg:tt )*) => {
+        $logger.debug(file!(), line!(), &format!($($arg)*))
     };
 }
 
 macro_rules! log_info {
-    ($logger:expr, $msg:expr) => {
-        $logger.info(file!(), line!(), $msg)
+    ($logger:expr, $( $arg:tt )*) => {
+        $logger.info(file!(), line!(), &format!($($arg)*))
     };
 }
 
 macro_rules! log_warn {
-    ($logger:expr, $msg:expr) => {
-        $logger.warn(file!(), line!(), $msg)
+    ($logger:expr, $( $arg:tt )*) => {
+        $logger.warn(file!(), line!(), &format!($($arg)*))
     };
 }
 
 macro_rules! log_error {
-    ($logger:expr, $msg:expr) => {
-        $logger.error(file!(), line!(), $msg)
+    ($logger:expr, $( $arg:tt )*) => {
+        $logger.error(file!(), line!(), &format!($($arg)*))
     };
 }
 

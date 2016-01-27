@@ -238,7 +238,7 @@ pub fn result_or_log<L, T, E>(
           L: Logger {
     match res {
         Err(err) => {
-            log!(logger, severity, err.description());
+            log!(logger, severity, "{}", err.description());
             None
         },
         Ok(res)  => Some(res)

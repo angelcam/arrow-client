@@ -397,7 +397,7 @@ impl<L: Logger> SessionContext<L> {
                 self.input_buffer.write_all(&buffer[..len])
                     .unwrap();
                 
-                //log_debug!(self.logger, &format!("{} bytes read from session socket {:08x} (buffer size: {})", len, self.session_id, self.input_buffer.buffered()));
+                //log_debug!(self.logger, "{} bytes read from session socket {:08x} (buffer size: {})", len, self.session_id, self.input_buffer.buffered());
                 
                 return Ok(len);
             } else {
@@ -423,7 +423,7 @@ impl<L: Logger> SessionContext<L> {
                     self.output_buffer.as_bytes()));
                 
                 if len > 0 {
-                    //log_debug!(self.logger, &format!("{} bytes written into session socket {:08x} (buffer size: {})", len, self.session_id, self.output_buffer.buffered()));
+                    //log_debug!(self.logger, "{} bytes written into session socket {:08x} (buffer size: {})", len, self.session_id, self.output_buffer.buffered());
                     self.output_buffer.drop(len);
                     self.write_tout.set(CONNECTION_TIMEOUT);
                 }
@@ -617,10 +617,10 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
             let config = &app_context.config;
             if let Some(svc) = config.get(service_id) {
                 if let Some(addr) = svc.address() {
-                    log_info!(self.logger, &format!("connecting to remote service: {}, session ID: {:08x}", addr, session_id));
+                    log_info!(self.logger, "connecting to remote service: {}, session ID: {:08x}", addr, session_id);
                     match SessionContext::new(self.logger.clone(),
                         service_id, session_id, addr, event_loop) {
-                        Err(err) => log_warn!(self.logger, &format!("unable to open connection to a remote service: {}", err.description())),
+                        Err(err) => log_warn!(self.logger, "unable to open connection to a remote service: {}", err.description()),
                         Ok(ctx)  => {
                             let token_id = session2token(session_id);
                             let tevent   = TimerEvent::TimeoutCheck(token_id);
@@ -634,7 +634,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
                     log_warn!(self.logger, "requested service ID belongs to a Control Protocol service");
                 }
             } else {
-                log_warn!(self.logger, &format!("non-existing service requested (service ID: {})", service_id));
+                log_warn!(self.logger, "non-existing service requested (service ID: {})", service_id);
             }
         }
         
@@ -890,7 +890,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         }
         
         if timeout {
-            log_warn!(self.logger, &format!("session {} connection timeout", session_id));
+            log_warn!(self.logger, "session {} connection timeout", session_id);
             self.send_hup_message(session_id, 0, event_loop);
             self.remove_session_context(session_id, event_loop);
         } else {
@@ -961,7 +961,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         
         let len = try!(self.stream.read(&mut *self.read_buffer, event_loop));
         
-        //log_debug!(self.logger, &format!("{} bytes read from the Arrow socket", len));
+        //log_debug!(self.logger, "{} bytes read from the Arrow socket", len);
         
         while consumed < len {
             consumed += try!(self.req_parser.add(
@@ -1007,7 +1007,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         event_loop: &mut EventLoop<Self>) -> SocketEventResult {
         let (header, body) = try!(self.parse_control_message());
         
-        log_debug!(self.logger, &format!("received control message: {:?}", header.message_type()));
+        log_debug!(self.logger, "received control message: {:?}", header.message_type());
         
         let res = match header.message_type() {
             ControlMessageType::ACK => 
@@ -1143,7 +1143,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
             let msg        = try!(HupMessage::from_bytes(msg));
             let session_id = msg.session_id;
             // XXX: the HUP error code should be processed here
-            log_info!(self.logger, &format!("session {:08x} closed", session_id));
+            log_info!(self.logger, "session {:08x} closed", session_id);
             self.remove_session_context(session_id, event_loop);
             Ok(None)
         } else {
@@ -1154,7 +1154,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
     /// Send command using the underlaying command channel.
     fn process_command(&mut self, cmd: Command) -> SocketEventResult {
         match self.cmd_sender.send(cmd) {
-            Err(cmd) => log_warn!(self.logger, &format!("unable to process command {:?}", cmd)),
+            Err(cmd) => log_warn!(self.logger, "unable to process command {:?}", cmd),
             _ => ()
         }
         
@@ -1236,7 +1236,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
                     
                     self.session_queue.push_back(session_id);
                     
-                    //log_debug!(self.logger, &format!("{} bytes moved from session {:08x} input buffer into the Arrow output buffer", len, session_id));
+                    //log_debug!(self.logger, "{} bytes moved from session {:08x} input buffer into the Arrow output buffer", len, session_id);
                 }
             }
             
@@ -1263,7 +1263,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
             };
             
             if len > 0 {
-                //log_debug!(self.logger, &format!("{} bytes written into the Arrow socket", len));
+                //log_debug!(self.logger, "{} bytes written into the Arrow socket", len);
                 self.write_tout.set(CONNECTION_TIMEOUT);
                 self.output_buffer.drop(len);
             }
@@ -1302,7 +1302,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
             
             self.stream.enable_socket_events(true, true, event_loop);
             
-            //log_debug!(self.logger, &format!("{} bytes moved from session {:08x} input buffer into the Arrow output buffer", len, session_id));
+            //log_debug!(self.logger, "{} bytes moved from session {:08x} input buffer into the Arrow output buffer", len, session_id);
         }
     }
     
@@ -1319,7 +1319,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         
         match res {
             Err(err) => {
-                log_warn!(self.logger, &format!("service connection error: {}", err.description()));
+                log_warn!(self.logger, "service connection error: {}", err.description());
                 self.flush_session(session_id, event_loop);
                 self.send_hup_message(session_id, 2, event_loop);
                 self.remove_session_context(session_id, event_loop);

@@ -231,7 +231,7 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
     let mut cur_addr   = addr.to_string();
     
     loop {
-        log_info!(logger, &format!("connecting to remote Arrow Service {}", cur_addr));
+        log_info!(logger, "connecting to remote Arrow Service {}", cur_addr);
         
         let lgr = logger.clone();
         let ctx = app_context.clone();
@@ -249,7 +249,7 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
                 if (last_error + RETRY_TIMEOUT - 0.5) > t {
                     let retry    = RETRY_TIMEOUT + last_error - t;
                     let retry_ms = (retry * 1000.0) as u64;
-                    log_info!(logger, &format!("retrying in {:.3} seconds", retry));
+                    log_info!(logger, "retrying in {:.3} seconds", retry);
                     thread::sleep(Duration::from_millis(retry_ms));
                 }
                 
@@ -303,7 +303,7 @@ fn network_scanner_thread<L: Logger + Clone>(
             config.bump_version();
         }
         
-        log_info!(logger, &format!("{} services found, current service table: {}", count, config));
+        log_info!(logger, "{} services found, current service table: {}", count, config);
         utils::result_or_log(&mut logger, Severity::WARN, 
             config.save(CONFIG_FILE));
     }
@@ -532,8 +532,8 @@ fn main() {
         let ssl_context = Arc::new(
             utils::result_or_error(init_ssl(ca_file), 4));
         
-        log_info!(logger, &format!("application started (uuid: {}, mac: {})", 
-            config.uuid_string(), arrow_mac));
+        log_info!(logger, "application started (uuid: {}, mac: {})", 
+            config.uuid_string(), arrow_mac);
         
         let app_context = Shared::new(AppContext::new(config));
         
