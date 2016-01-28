@@ -43,6 +43,11 @@ pub enum ControlMessageType {
     UNKNOWN,
 }
 
+pub const ACK_NO_ERROR:                     u32 = 0x00000000;
+pub const ACK_UNSUPPORTED_PROTOCOL_VERSION: u32 = 0x00000001;
+pub const ACK_UNAUTHORIZED:                 u32 = 0x00000002;
+pub const ACK_INTERNAL_SERVER_ERROR:        u32 = 0xffffffff;
+
 // message type constants
 const CMSG_ACK:             u16 = 0x0000;
 const CMSG_PING:            u16 = 0x0001;
@@ -220,7 +225,7 @@ impl<'a> ControlMessageParser<'a> {
     pub fn process(&mut self, data: &'a [u8]) -> Result<()> {
         let header_size = mem::size_of::<ControlMessageHeader>();
         if data.len() < header_size {
-            return Err(ArrowError::from("not enough data to parse an Arrow Control Protocol message"));
+            return Err(ArrowError::other("not enough data to parse an Arrow Control Protocol message"));
         }
         
         let header_data = &data[..header_size];
@@ -373,7 +378,7 @@ impl HupMessage {
     pub fn from_bytes(data: &[u8]) -> Result<HupMessage> {
         let msg_size = mem::size_of::<HupMessage>();
         if data.len() != msg_size {
-            return Err(ArrowError::from("invalid size of an Arrow Control Protocol HUP message"));
+            return Err(ArrowError::other("invalid size of an Arrow Control Protocol HUP message"));
         }
         
         let ptr = data.as_ptr() as *const HupMessage;
@@ -457,7 +462,7 @@ pub fn parse_ack_message(msg: &[u8]) -> Result<u32> {
         
         Ok(ack)
     } else {
-        Err(ArrowError::from("incorrect Control Protocol ACK message length"))
+        Err(ArrowError::other("incorrect Control Protocol ACK message length"))
     }
 }
 

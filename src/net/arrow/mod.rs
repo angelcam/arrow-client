@@ -14,6 +14,7 @@
 
 //! Arrow Protocol implementation.
 
+#[macro_use]
 pub mod error;
 pub mod protocol;
 
@@ -138,8 +139,8 @@ impl ArrowStream {
         arrow_addr: &SocketAddr,
         token_id: usize,
         event_loop: &mut EventLoop<H>) -> Result<ArrowStream> {
-        let tcp_stream = try!(TcpStream::connect(arrow_addr));
-        let ssl_stream = try!(NonblockingSslStream::connect(s, tcp_stream));
+        let tcp_stream = try_io!(TcpStream::connect(arrow_addr));
+        let ssl_stream = try_io!(NonblockingSslStream::connect(s, tcp_stream));
         
         register_socket(token_id, ssl_stream.get_ref(), 
             true, true, event_loop);
@@ -183,7 +184,7 @@ impl ArrowStream {
             other => {
                 self.state = ArrowStreamState::Ok;
                 self.enable_socket_events(true, true, event_loop);
-                Ok(try!(other))
+                Ok(try_io!(other))
             }
         }
     }
@@ -207,7 +208,7 @@ impl ArrowStream {
             other => {
                 self.state = ArrowStreamState::Ok;
                 self.enable_socket_events(true, true, event_loop);
-                Ok(try!(other))
+                Ok(try_io!(other))
             }
         }
     }
@@ -327,7 +328,7 @@ impl<L: Logger> SessionContext<L> {
         session_id: u32, 
         addr: &SocketAddr,
         event_loop: &mut EventLoop<T>) -> Result<SessionContext<L>> {
-        let stream = try!(ServiceStream::connect(addr));
+        let stream = try_svc_io!(ServiceStream::connect(addr));
         
         register_socket(session2token(session_id), stream.get_ref(), 
             true, true, event_loop);
@@ -369,14 +370,14 @@ impl<L: Logger> SessionContext<L> {
         &mut self, 
         event_loop: &mut EventLoop<T>, 
         event_set: EventSet) -> Result<Option<usize>> {
-        let read = try!(self.check_read_event(event_loop, event_set));
+        let read = try_arr!(self.check_read_event(event_loop, event_set));
         
-        try!(self.check_write_event(event_loop, event_set));
+        try_arr!(self.check_write_event(event_loop, event_set));
         
         if event_set.is_error() {
             let err = self.get_socket_error()
-                .ok_or(ArrowError::from("socket error expected"));
-            Err(try!(err))
+                .ok_or(ArrowError::other("socket error expected"));
+            Err(try_arr!(err))
         } else if event_set.is_hup() && read == 0 {
             Ok(None)
         } else {
@@ -393,7 +394,7 @@ impl<L: Logger> SessionContext<L> {
         if event_set.is_readable() {
             if !self.input_buffer.is_full() || event_set.is_hup() {
                 let buffer = &mut *self.read_buffer;
-                let len    = try!(self.stream.read(buffer));
+                let len    = try_svc_io!(self.stream.read(buffer));
                 self.input_buffer.write_all(&buffer[..len])
                     .unwrap();
                 
@@ -419,7 +420,7 @@ impl<L: Logger> SessionContext<L> {
                 self.update_socket_events(event_loop);
                 self.write_tout.clear();
             } else {
-                let len = try!(self.stream.write(
+                let len = try_svc_io!(self.stream.write(
                     self.output_buffer.as_bytes()));
                 
                 if len > 0 {
@@ -437,7 +438,7 @@ impl<L: Logger> SessionContext<L> {
     fn get_socket_error(&self) -> Option<ArrowError> {
         let err = self.stream.take_socket_error();
         match err.err() {
-            Some(err) => Some(ArrowError::from(err)),
+            Some(err) => Some(ArrowError::service_connection_error(err)),
             None      => None
         }
     }
@@ -560,7 +561,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         arrow_mac: &MacAddr,
         app_context: Shared<AppContext>, 
         event_loop: &mut EventLoop<Self>) -> Result<Self> {
-        let stream = try!(ArrowStream::connect(s, addr, 0, event_loop));
+        let stream = try_arr!(ArrowStream::connect(s, addr, 0, event_loop));
         
         let mut res = ConnectionHandler {
             logger:        logger,
@@ -869,7 +870,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         &mut self, 
         event_loop: &mut EventLoop<Self>) -> Result<()> {
         if !self.write_tout.check() || !self.ack_tout.check() {
-            Err(ArrowError::from("Arrow Service connection timeout"))
+            Err(ArrowError::connection_error("Arrow Service connection timeout"))
         } else {
             event_loop.timeout_ms(TimerEvent::TimeoutCheck(0), 
                 TIMEOUT_CHECK_PERIOD).unwrap();
@@ -907,21 +908,21 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         &mut self, 
         event_loop: &mut EventLoop<Self>, 
         event_set: EventSet) -> SocketEventResult {
-        let res = try!(self.check_arrow_read_event(event_loop, event_set));
+        let res = try_arr!(self.check_arrow_read_event(event_loop, event_set));
         if res.is_some() {
             return Ok(res);
         }
         
-        let res = try!(self.check_arrow_write_event(event_loop, event_set));
+        let res = try_arr!(self.check_arrow_write_event(event_loop, event_set));
         if res.is_some() {
             return Ok(res);
         }
         
         if event_set.is_error() {
             let socket_err = self.stream.take_socket_error();
-            Err(ArrowError::from(socket_err.unwrap_err()))
+            Err(ArrowError::connection_error(socket_err.unwrap_err()))
         } else if event_set.is_hup() {
-            Err(ArrowError::from("connection to Arrow Service lost"))
+            Err(ArrowError::connection_error("connection to Arrow Service lost"))
         } else {
             Ok(None)
         }
@@ -959,15 +960,15 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         event_loop: &mut EventLoop<Self>) -> SocketEventResult {
         let mut consumed = 0;
         
-        let len = try!(self.stream.read(&mut *self.read_buffer, event_loop));
+        let len = try_arr!(self.stream.read(&mut *self.read_buffer, event_loop));
         
         //log_debug!(self.logger, "{} bytes read from the Arrow socket", len);
         
         while consumed < len {
-            consumed += try!(self.req_parser.add(
+            consumed += try_arr!(self.req_parser.add(
                 &self.read_buffer[consumed..len]));
             if self.req_parser.is_complete() {
-                let redirect = try!(self.process_request(event_loop));
+                let redirect = try_arr!(self.process_request(event_loop));
                 if redirect.is_some() {
                     return Ok(redirect);
                 }
@@ -1005,7 +1006,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
     fn process_control_message(
         &mut self, 
         event_loop: &mut EventLoop<Self>) -> SocketEventResult {
-        let (header, body) = try!(self.parse_control_message());
+        let (header, body) = try_arr!(self.parse_control_message());
         
         log_debug!(self.logger, "received control message: {:?}", header.message_type());
         
@@ -1024,7 +1025,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
                 self.process_command(Command::ScanNetwork),
             ControlMessageType::GET_STATUS =>
                 self.process_status_request(header.msg_id, event_loop),
-            mt => Err(ArrowError::from(format!("cannot handle Control Protocol message type: {:?}", mt)))
+            mt => Err(ArrowError::other(format!("cannot handle Control Protocol message type: {:?}", mt)))
         };
         
         self.req_parser.clear();
@@ -1037,11 +1038,11 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
     fn parse_control_message(&self) -> Result<(ControlMessageHeader, Vec<u8>)> {
         if let Some(body) = self.req_parser.body() {
             let mut parser = ControlMessageParser::new();
-            try!(parser.process(body));
+            try_arr!(parser.process(body));
             let header = parser.header();
             let body   = parser.body();
             if header.message_type() == ControlMessageType::UNKNOWN {
-                Err(ArrowError::from("unknown Control Protocol message type"))
+                Err(ArrowError::other("unknown Control Protocol message type"))
             } else {
                 Ok((header.clone(), body.to_vec()))
             }
@@ -1072,10 +1073,10 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
                     Ok(None)
                 }
             } else {
-                Err(ArrowError::from("unexpected ACK message ID"))
+                Err(ArrowError::other("unexpected ACK message ID"))
             }
         } else {
-            Err(ArrowError::from("no ACK message expected"))
+            Err(ArrowError::other("no ACK message expected"))
         }
     }
     
@@ -1085,8 +1086,8 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         msg: &[u8],
         event_loop: &mut EventLoop<Self>) -> SocketEventResult {
         if self.state == ProtocolState::Handshake {
-            let ack = try!(control::parse_ack_message(msg));
-            if ack == 0 {
+            let ack = try_arr!(control::parse_ack_message(msg));
+            if ack == ACK_NO_ERROR {
                 // switch the protocol state into normal operation
                 self.state = ProtocolState::Established;
                 // start sending update messages
@@ -1097,8 +1098,14 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
                     PING_PERIOD).unwrap();
                 
                 Ok(None)
+            } else if ack == ACK_UNAUTHORIZED {
+                Err(ArrowError::unauthorized("Arrow REGISTER failed (unauthorized)"))
+            } else if ack == ACK_UNSUPPORTED_PROTOCOL_VERSION {
+                Err(ArrowError::unsupported_protocol_version("Arrow REGISTER failed (unsupported version of the Arrow Protocol)"))
+            } else if ack == ACK_INTERNAL_SERVER_ERROR {
+                Err(ArrowError::arrow_server_error("Arrow REGISTER failed (internal server error)"))
             } else {
-                Err(ArrowError::from("Arrow REGISTER failed"))
+                Err(ArrowError::other("Arrow REGISTER failed (unknown error)"))
             }
         } else {
             panic!("unexpected protocol state");
@@ -1114,7 +1121,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
             self.send_ack_message(msg_id, 0, event_loop);
             Ok(None)
         } else {
-            Err(ArrowError::from("cannot handle PING message in the Handshake state"))
+            Err(ArrowError::other("cannot handle PING message in the Handshake state"))
         }
     }
     
@@ -1130,7 +1137,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
             
             Ok(Some(addr.to_string()))
         } else {
-            Err(ArrowError::from("cannot handle REDIRECT message in the Handshake state"))
+            Err(ArrowError::other("cannot handle REDIRECT message in the Handshake state"))
         }
     }
     
@@ -1140,14 +1147,14 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         msg: &[u8], 
         event_loop: &mut EventLoop<Self>) -> SocketEventResult {
         if self.state == ProtocolState::Established {
-            let msg        = try!(HupMessage::from_bytes(msg));
+            let msg        = try_arr!(HupMessage::from_bytes(msg));
             let session_id = msg.session_id;
             // XXX: the HUP error code should be processed here
             log_info!(self.logger, "session {:08x} closed", session_id);
             self.remove_session_context(session_id, event_loop);
             Ok(None)
         } else {
-            Err(ArrowError::from("cannot handle HUP message in the Handshake state"))
+            Err(ArrowError::other("cannot handle HUP message in the Handshake state"))
         }
     }
     
@@ -1199,7 +1206,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
             
             Ok(None)
         } else {
-            Err(ArrowError::from("cannot handle service requests in the Handshake state"))
+            Err(ArrowError::other("cannot handle service requests in the Handshake state"))
         }
     }
     
@@ -1259,7 +1266,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
                 let len    = cmp::min(data.len(), self.write_buffer.len());
                 let buffer = &mut self.write_buffer[..len];
                 utils::memcpy(buffer, &data[..len]);
-                try!(self.stream.write(buffer, event_loop))
+                try_arr!(self.stream.write(buffer, event_loop))
             };
             
             if len > 0 {
@@ -1412,8 +1419,8 @@ impl<L: Logger + Clone, Q: Sender<Command>> ArrowClient<L, Q> {
         addr: &SocketAddr, 
         arrow_mac: &MacAddr,
         app_context: Shared<AppContext>) -> Result<Self> {
-        let mut event_loop    = try!(EventLoop::new());
-        let connection        = try!(ConnectionHandler::new(
+        let mut event_loop    = try_other!(EventLoop::new());
+        let connection        = try_arr!(ConnectionHandler::new(
             logger, s, cmd_sender, 
             addr, arrow_mac, app_context, 
             &mut event_loop));
@@ -1430,7 +1437,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ArrowClient<L, Q> {
     /// requests. Return error or redirect address in case the connection has 
     /// been shut down.
     pub fn event_loop(&mut self) -> Result<String> {
-        try!(self.event_loop.run(&mut self.connection));
+        try_other!(self.event_loop.run(&mut self.connection));
         match self.connection.result {
             Some(ref res) => res.clone(),
             _             => panic!("result expected")

@@ -17,6 +17,11 @@
 pub mod control;
 pub mod svc_table;
 
+pub use self::control::ACK_NO_ERROR;
+pub use self::control::ACK_UNSUPPORTED_PROTOCOL_VERSION;
+pub use self::control::ACK_UNAUTHORIZED;
+pub use self::control::ACK_INTERNAL_SERVER_ERROR;
+
 pub use self::control::ControlMessage;
 pub use self::control::ControlMessageHeader;
 pub use self::control::ControlMessageBody;
@@ -93,7 +98,7 @@ impl ArrowMessageHeader {
         if res.version == 0 {
             Ok(res)
         } else {
-            Err(ArrowError::from("unsupported Arrow Protocol version"))
+            Err(ArrowError::unsupported_protocol_version("unsupported Arrow Protocol version"))
         }
     }
 }

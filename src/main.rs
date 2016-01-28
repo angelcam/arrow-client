@@ -50,7 +50,7 @@ use net::discovery;
 
 use net::raw::ether::MacAddr;
 use net::raw::devices::EthernetDevice;
-use net::arrow::error::ArrowError;
+use net::arrow::error::{ArrowError, ErrorKind};
 use net::arrow::{ArrowClient, Sender, Command};
 use net::arrow::protocol::{Service, ServiceTable};
 
@@ -227,8 +227,9 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
     addr: &str,
     arrow_mac: &MacAddr,
     app_context: Shared<AppContext>) {
-    let mut last_error = time::precise_time_s();
-    let mut cur_addr   = addr.to_string();
+    let mut unauthorized_timeout = None;
+    let mut cur_addr = addr.to_string();
+    let mut last_attempt;
     
     loop {
         log_info!(logger, "connecting to remote Arrow Service {}", cur_addr);
@@ -236,25 +237,65 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
         let lgr = logger.clone();
         let ctx = app_context.clone();
         
-        let res = match utils::result_or_log(&mut logger, Severity::WARN,
-            connect(lgr, &*ssl_context, cmd_sender.clone(), 
-                &cur_addr, arrow_mac, ctx)) {
-            Some(addr) => Ok(addr),
-            None => Err(time::precise_time_s())
+        last_attempt = time::precise_time_s();
+        
+        let res = match connect(lgr, &*ssl_context, cmd_sender.clone(), 
+            &cur_addr, arrow_mac, ctx) {
+            Ok(addr) => Ok(addr),
+            Err(err) => {
+                log_warn!(&mut logger, "{}", err.description());
+                let t = time::precise_time_s();
+                match err.kind() {
+                    // the client is not authorized to access the service yet;
+                    // check the authorization timeout
+                    ErrorKind::Unauthorized => match unauthorized_timeout {
+                        // retry every 10 seconds in the first 10 minutes since 
+                        // the first "unauthorized" response
+                        Some(timeout) if t < (timeout - 600.0) => Err(10.0),
+                        // retry every 30 seconds after the first 10 minutes 
+                        // since the first "unauthorized" response
+                        Some(timeout) if t < timeout => Err(30.0),
+                        // retry in 10 hours after the first 20 minutes since
+                        // the first "unauthorized" response
+                        Some(_) => Err(36000.0),
+                        // no timeout has been set yet
+                        None => {
+                            // set the timeout to 20 minutes from now
+                            unauthorized_timeout = Some(t + 1200.0);
+                            // retry in 10 seconds
+                            Err(10.0)
+                        }
+                    },
+                    // we don't know if the client is authorized...
+                    err => {
+                        // ... but we assume it is if the last connection was 
+                        // longer than RETRY_TIMEOUT seconds
+                        if (last_attempt + RETRY_TIMEOUT) < t {
+                            unauthorized_timeout = None;
+                        }
+                        // check the error
+                        match err {
+                            // set a very long retry timeout if the version of 
+                            // the Arrow Protocol is not supported by either 
+                            // side
+                            ErrorKind::UnsupportedProtocolVersion => Err(36000.0),
+                            // in all other cases
+                            _ => Err(RETRY_TIMEOUT + last_attempt - t),
+                        }
+                    }
+                }
+            }
         };
         
         match res {
             Ok(addr) => cur_addr = addr,
             Err(t) => {
-                if (last_error + RETRY_TIMEOUT - 0.5) > t {
-                    let retry    = RETRY_TIMEOUT + last_error - t;
-                    let retry_ms = (retry * 1000.0) as u64;
-                    log_info!(logger, "retrying in {:.3} seconds", retry);
-                    thread::sleep(Duration::from_millis(retry_ms));
+                if t > 0.5 {
+                    log_info!(logger, "retrying in {:.3} seconds", t);
+                    thread::sleep(Duration::from_millis((t * 1000.0) as u64));
                 }
                 
-                cur_addr   = addr.to_string();
-                last_error = t;
+                cur_addr = addr.to_string();
             }
         }
     }
@@ -269,11 +310,14 @@ fn connect<L: Logger + Clone, S: IntoSsl, Q: Sender<Command>>(
     arrow_mac: &MacAddr,
     app_context: Shared<AppContext>) -> Result<String, ArrowError> {
     let addr = try!(get_socket_address(addr)
-        .or(Err(ArrowError::from(format!("failed to lookup Arrow Service {} address information", addr)))));
+        .or(Err(ArrowError::connection_error(format!(
+            "failed to lookup Arrow Service {} address information", addr)))));
     
     match ArrowClient::new(logger, s, cmd_sender, 
         &addr, arrow_mac, app_context) {
-        Err(err) => Err(ArrowError::from(format!("unable to connect to remote Arrow Service {} ({})", addr, err.description()))),
+        Err(err) => Err(ArrowError::connection_error(format!(
+            "unable to connect to remote Arrow Service {} ({})", 
+            addr, err.description()))),
         Ok(mut client) => client.event_loop()
     }
 }
