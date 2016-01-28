@@ -209,7 +209,7 @@ pub unsafe fn vec_from_raw_parts<T: Clone>(
 
 /// Convert a given C-string pointer to a new instance of String.
 pub unsafe fn cstr_to_string(ptr: *const i8) -> String {
-    let cstr  = CStr::from_ptr(ptr);
+    let cstr  = CStr::from_ptr(ptr as *const _);
     let slice = String::from_utf8_lossy(cstr.to_bytes());
     slice.to_string()
 }

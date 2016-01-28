@@ -25,6 +25,7 @@ use std::result;
 
 use std::ffi::CStr;
 use std::error::Error;
+use std::time::Duration;
 use std::collections::VecDeque;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -586,7 +587,9 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         res.create_register_request(arrow_mac, event_loop);
         
         // start timeout checker:
-        event_loop.timeout_ms(TimerEvent::TimeoutCheck(0), TIMEOUT_CHECK_PERIOD)
+        event_loop.timeout(
+                TimerEvent::TimeoutCheck(0),
+                Duration::from_millis(TIMEOUT_CHECK_PERIOD))
             .unwrap();
         
         Ok(res)
@@ -627,7 +630,9 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
                             let tevent   = TimerEvent::TimeoutCheck(token_id);
                             self.sessions.insert(session_id, ctx);
                             self.session_queue.push_back(session_id);
-                            event_loop.timeout_ms(tevent, TIMEOUT_CHECK_PERIOD)
+                            event_loop.timeout(
+                                    tevent,
+                                    Duration::from_millis(TIMEOUT_CHECK_PERIOD))
                                 .unwrap();
                         }
                     }
@@ -836,7 +841,9 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         event_loop: &mut EventLoop<Self>) -> Result<()> {
         self.check_update(event_loop);
         
-        event_loop.timeout_ms(TimerEvent::Update, UPDATE_CHECK_PERIOD)
+        event_loop.timeout(
+                TimerEvent::Update,
+                Duration::from_millis(UPDATE_CHECK_PERIOD))
             .unwrap();
         
         Ok(())
@@ -848,7 +855,9 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         event_loop: &mut EventLoop<Self>) -> Result<()> {
         self.send_ping_message(event_loop);
         
-        event_loop.timeout_ms(TimerEvent::Ping, PING_PERIOD)
+        event_loop.timeout(
+                TimerEvent::Ping,
+                Duration::from_millis(PING_PERIOD))
             .unwrap();
         
         Ok(())
@@ -872,8 +881,10 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         if !self.write_tout.check() || !self.ack_tout.check() {
             Err(ArrowError::connection_error("Arrow Service connection timeout"))
         } else {
-            event_loop.timeout_ms(TimerEvent::TimeoutCheck(0), 
-                TIMEOUT_CHECK_PERIOD).unwrap();
+            event_loop.timeout(
+                    TimerEvent::TimeoutCheck(0), 
+                    Duration::from_millis(TIMEOUT_CHECK_PERIOD))
+                .unwrap();
             
             Ok(())
         }
@@ -895,9 +906,10 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
             self.send_hup_message(session_id, 0, event_loop);
             self.remove_session_context(session_id, event_loop);
         } else {
-            event_loop.timeout_ms(
-                TimerEvent::TimeoutCheck(session2token(session_id)), 
-                TIMEOUT_CHECK_PERIOD).unwrap();
+            event_loop.timeout(
+                    TimerEvent::TimeoutCheck(session2token(session_id)), 
+                    Duration::from_millis(TIMEOUT_CHECK_PERIOD))
+                .unwrap();
         }
         
         Ok(())
@@ -1090,12 +1102,18 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
             if ack == ACK_NO_ERROR {
                 // switch the protocol state into normal operation
                 self.state = ProtocolState::Established;
+                
                 // start sending update messages
-                event_loop.timeout_ms(TimerEvent::Update, 
-                    UPDATE_CHECK_PERIOD).unwrap();
+                event_loop.timeout(
+                        TimerEvent::Update, 
+                        Duration::from_millis(UPDATE_CHECK_PERIOD))
+                    .unwrap();
+                
                 // start sending PING messages
-                event_loop.timeout_ms(TimerEvent::Ping,
-                    PING_PERIOD).unwrap();
+                event_loop.timeout(
+                        TimerEvent::Ping,
+                        Duration::from_millis(PING_PERIOD))
+                    .unwrap();
                 
                 Ok(None)
             } else if ack == ACK_UNAUTHORIZED {

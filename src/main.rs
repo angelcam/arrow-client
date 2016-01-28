@@ -436,10 +436,14 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
         
         if delta <= 0 {
             self.scan_network(event_loop);
-            event_loop.timeout_ms(TimerEvent::ScanNetwork, NETWORK_SCAN_PERIOD)
+            event_loop.timeout(
+                    TimerEvent::ScanNetwork,
+                    Duration::from_millis(NETWORK_SCAN_PERIOD))
                 .unwrap();
         } else {
-            event_loop.timeout_ms(TimerEvent::ScanNetwork, delta as u64)
+            event_loop.timeout(
+                    TimerEvent::ScanNetwork,
+                    Duration::from_millis(delta as u64))
                 .unwrap();
         }
     }
@@ -595,7 +599,9 @@ fn main() {
         spawn_arrow_thread(logger, ssl_context, cmd_sender, 
             arrow_addr, &arrow_mac, &app_context);
         
-        event_loop.timeout_ms(TimerEvent::ScanNetwork, 0)
+        event_loop.timeout(
+                TimerEvent::ScanNetwork,
+                Duration::new(0, 0))
             .unwrap();
         
         event_loop.run(&mut cmd_handler)

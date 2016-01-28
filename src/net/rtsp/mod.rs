@@ -25,6 +25,7 @@ use std::str;
 
 use std::error::Error;
 use std::str::FromStr;
+use std::time::Duration;
 use std::net::SocketAddr;
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -528,7 +529,7 @@ impl Client {
 /// RTSP client connection handler.
 struct ClientHandler {
     stream:   TcpStream,
-    timeout:  Option<u64>,
+    timeout:  Option<Duration>,
     buffer:   Box<[u8]>,
     buffered: usize,
     read:     usize,
@@ -566,7 +567,7 @@ impl ClientHandler {
     
     /// Set send/receive timeout.
     fn set_timeout(&mut self, ms: Option<u64>) {
-        self.timeout = ms;
+        self.timeout = ms.map(|ms| Duration::from_millis(ms));
     }
     
     /// Send a given request.
@@ -582,14 +583,14 @@ impl ClientHandler {
             events, PollOpt::level()));
         
         let timeout = match self.timeout {
-            Some(ms) => Some(try!(event_loop.timeout_ms(0, ms))),
+            Some(ms) => Some(try!(event_loop.timeout(0, ms))),
             None => None
         };
         
         try!(event_loop.run(self));
         
         if let Some(timeout) = timeout {
-            event_loop.clear_timeout(timeout);
+            event_loop.clear_timeout(&timeout);
         }
         
         if let Some(ref err) = self.err {
@@ -609,14 +610,14 @@ impl ClientHandler {
             events, PollOpt::level()));
         
         let timeout = match self.timeout {
-            Some(ms) => Some(try!(event_loop.timeout_ms(0, ms))),
+            Some(ms) => Some(try!(event_loop.timeout(0, ms))),
             None => None
         };
         
         try!(event_loop.run(self));
         
         if let Some(timeout) = timeout {
-            event_loop.clear_timeout(timeout);
+            event_loop.clear_timeout(&timeout);
         }
         
         if let Some(ref err) = self.err {
