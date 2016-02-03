@@ -357,6 +357,14 @@ impl ServiceTable {
         }
     }
     
+    /// Check if there is a given service in the table.
+    pub fn contains(&self, svc: &Service) -> bool {
+        match svc {
+            &Service::ControlProtocol => true,
+            svc => self.map.contains_key(&get_service_table_key(svc))
+        }
+    }
+    
     /// Get service according to its ID.
     pub fn get(&self, id: u16) -> Option<Service> {
         if id == 0 {
@@ -631,8 +639,6 @@ mod tests {
         assert!(table.contains(&lrtsp));
         assert!(table.contains(&Service::ControlProtocol));
         
-        let services = table.services();
-        
-        assert_eq!(services.len(), 2);
+        assert_eq!(table.services.len(), 2);
     }
 }
