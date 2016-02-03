@@ -665,12 +665,14 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         let control_msg = {
             let app_context = self.app_context.lock()
                 .unwrap();
-            let config = &app_context.config;
+            let config    = &app_context.config;
+            let svc_table = config.service_table()
+                .clone();
             let msg    = RegisterMessage::new(
                 config.uuid(),
                 arrow_mac.octets(),
                 config.password(),
-                config.service_table());
+                svc_table);
             let control_msg = control::create_register_message(self.msg_id, 
                 msg);
             self.last_update = Some(config.version());
@@ -820,7 +822,8 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
                 .unwrap();
             let config  = &app_context.config;
             cur_version = config.version();
-            svc_table   = config.service_table();
+            svc_table   = config.service_table()
+                .clone();
         }
         
         let send_update = match self.last_update {

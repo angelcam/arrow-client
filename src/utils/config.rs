@@ -197,14 +197,29 @@ impl ArrowConfig {
         self.svc_table.add(svc)
     }
     
+    /// Add a new static service (i.e. manually added).
+    pub fn add_static(&mut self, svc: Service) -> Option<u16> {
+        self.svc_table.add_static(svc)
+    }
+    
+    /// Update active flags of all services.
+    pub fn update_active_services(&mut self) -> bool {
+        self.svc_table.update_active_services()
+    }
+    
+    /// Get all active services.
+    pub fn active_services(&self) -> Vec<Service> {
+        self.svc_table.active_services()
+    }
+    
     /// Increment version of this config.
     pub fn bump_version(&mut self) {
         self.version += 1;
     }
     
-    /// Get a copy of the underlaying service table.
-    pub fn service_table(&self) -> ServiceTable {
-        self.svc_table.clone()
+    /// Get the underlaying service table.
+    pub fn service_table(&self) -> &ServiceTable {
+        &self.svc_table
     }
     
     /// Set contents of the service table to a given value.

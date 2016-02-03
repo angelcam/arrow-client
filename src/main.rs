@@ -337,19 +337,14 @@ fn network_scanner_thread<L: Logger + Clone>(
         let config = &mut app_context.config;
         let count  = services.len();
         
-        let bump = services.into_iter()
-            .fold(false, |b, svc| {
-                config.add(svc)
-                    .is_some() | b
-            });
-        
-        if bump {
-            config.bump_version();
+        for svc in services {
+            config.add(svc);
         }
         
-        log_info!(logger, "{} services found, current service table: {}", count, config);
-        utils::result_or_log(&mut logger, Severity::WARN, 
-            config.save(CONFIG_FILE));
+        config.update_active_services();
+        
+        log_info!(logger, "{} services found, current service table: {}", 
+            count, config.service_table());
     }
 }
 
@@ -402,6 +397,7 @@ impl Sender<Command> for CommandSender {
 struct CommandHandler<L: Logger> {
     logger:            L,
     default_svc_table: ServiceTable,
+    active_services:   Vec<Service>,
     app_context:       Shared<AppContext>,
     scanner:           Option<JoinHandle<()>>,
     last_scan:         u64,
@@ -416,9 +412,16 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
         app_context: Shared<AppContext>, 
         discovery: bool) -> CommandHandler<L> {
         let now = time::precise_time_ns() / 1000000;
+        let active_services = {
+            let app_context = app_context.lock()
+                .unwrap();
+            app_context.config.active_services()
+        };
+        
         CommandHandler {
             logger:            logger,
             default_svc_table: default_svc_table,
+            active_services:   active_services,
             app_context:       app_context,
             scanner:           None,
             last_scan:         now - NETWORK_SCAN_PERIOD,
@@ -483,6 +486,18 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
         
         let mut app_context = self.app_context.lock()
             .unwrap();
+        
+        {
+            let config          = &mut app_context.config;
+            let active_services = config.active_services();
+            if self.active_services != active_services {
+                self.active_services = active_services;
+                config.bump_version();
+            }
+            
+            utils::result_or_log(&mut self.logger, Severity::WARN, 
+                config.save(CONFIG_FILE));
+        }
         
         app_context.scanning = false;
         
@@ -561,8 +576,8 @@ fn main() {
                 "-r" => {
                     let service = parse_rtsp_url(&args[i + 1]);
                     let service = result_or_usage(service);
-                    config.add(service.clone());
-                    default_svc_table.add(service);
+                    config.add_static(service.clone());
+                    default_svc_table.add_static(service);
                     i += 1;
                 },
                 "-v" => { logger.set_level(Severity::DEBUG); },

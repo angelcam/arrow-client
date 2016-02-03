@@ -16,11 +16,14 @@
 
 use std::io;
 use std::mem;
+use std::fmt;
+use std::result;
 
 use std::io::Write;
 use std::str::FromStr;
 use std::error::Error;
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::net::{ToSocketAddrs, SocketAddr, SocketAddrV4, Ipv4Addr, Ipv6Addr};
 
 use utils;
@@ -29,6 +32,10 @@ use utils::Serialize;
 use utils::config::ConfigError;
 use net::raw::ether::MacAddr;
 use net::arrow::protocol::control::ControlMessageBody;
+
+use time;
+
+use rustc_serialize::json;
 
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 
@@ -211,33 +218,23 @@ impl Service {
     }
 }
 
-/// JSON mapping for a service.
+/// JSON mapping for a service table element.
 #[derive(Debug, Clone, RustcDecodable, RustcEncodable)]
 struct JsonService {
-    svc_type: u16,
-    mac:      String,
-    address:  String,
-    path:     String,
+    svc_type:   u16,
+    mac:        String,
+    address:    String,
+    path:       String,
+    static_svc: Option<bool>,
+    last_seen:  Option<i64>,
+    active:     Option<bool>,
 }
 
 impl JsonService {
-    /// Create a new JsonService instance.
-    fn new(
-        svc_type: u16, 
-        mac: String, 
-        address: String, 
-        path: String) -> JsonService {
-        JsonService {
-            svc_type: svc_type,
-            mac:      mac,
-            address:  address,
-            path:     path
-        }
-    }
-    
-    /// Transform this service description into a service object.
-    fn into_service(self) -> Result<Service, ConfigError> {
-        match self.svc_type {
+    /// Transform this service description into a service table element.
+    fn into_service_table_element(
+        self) -> Result<ServiceTableElement, ConfigError> {
+        let svc = match self.svc_type {
             SVC_TYPE_CONTROL_PROTOCOL => Ok(Service::ControlProtocol),
             SVC_TYPE_RTSP => Ok(Service::RTSP(
                 try!(MacAddr::from_str(&self.mac)), 
@@ -252,12 +249,27 @@ impl JsonService {
                 try!(MacAddr::from_str(&self.mac)),
                 try!(parse_socket_addr(&self.address)), self.path)),
             _ => Err(ConfigError::from("unknown service type"))
-        }
+        };
+        
+        let static_svc = self.static_svc.unwrap_or(false);
+        let last_seen  = self.last_seen.unwrap_or(get_utc_timestamp());
+        let active     = self.active.unwrap_or(true);
+        
+        let elem = ServiceTableElement {
+            service_id:     0,
+            service:        try!(svc),
+            static_service: static_svc,
+            last_seen:      last_seen,
+            active:         active
+        };
+        
+        Ok(elem)
     }
 }
 
-impl<'a> From<&'a Service> for JsonService {
-    fn from(svc: &Service) -> JsonService {
+impl<'a> From<&'a ServiceTableElement> for JsonService {
+    fn from(elem: &ServiceTableElement) -> JsonService {
+        let svc = &elem.service;
         let mac = svc.mac()
             .map_or(String::new(), |mac| format!("{}", mac));
         let address = svc.address()
@@ -265,7 +277,15 @@ impl<'a> From<&'a Service> for JsonService {
         let path = svc.path()
             .map_or(String::new(), |path| path.to_string());
         
-        JsonService::new(svc.type_id(), mac, address, path)
+        JsonService {
+            svc_type:   svc.type_id(),
+            mac:        mac,
+            address:    address,
+            path:       path,
+            static_svc: Some(elem.static_service),
+            last_seen:  Some(elem.last_seen),
+            active:     Some(elem.active)
+        }
     }
 }
 
@@ -285,11 +305,46 @@ fn get_service_table_key(svc: &Service) -> ServiceTableKey {
     (type_id, mac_addr, port, path)
 }
 
+const ACTIVE_THRESHOLD: u32 = 1200;
+
+/// Get current UNIX timestamp in UTC.
+fn get_utc_timestamp() -> i64 {
+    time::now_utc()
+        .to_timespec()
+        .sec
+}
+
+/// Service table element.
+#[derive(Debug, Clone)]
+struct ServiceTableElement {
+    /// Service ID.
+    service_id:     u16,
+    /// Service.
+    service:        Service,
+    /// Flag indicating a manually added service.
+    static_service: bool,
+    /// UNIX timestamp (in UTC) of the last discovery event.
+    last_seen:      i64,
+    /// Active flag. (Note: We need this flag because the service table 
+    /// serialization must remain idempotent between flag updates.)
+    active:         bool,
+}
+
+impl ServiceTableElement {
+    /// Update the active flag.
+    fn update_active_flag(&mut self, timestamp: i64) -> bool {
+        let old_value = self.active;
+        self.active = self.static_service ||
+            (self.last_seen + ACTIVE_THRESHOLD as i64) >= timestamp;
+        self.active != old_value
+    }
+}
+
 /// Service Table.
 #[derive(Debug, Clone)]
 pub struct ServiceTable {
-    services: Vec<Service>,
-    set:      HashSet<ServiceTableKey>,
+    services: Vec<ServiceTableElement>,
+    map:      HashMap<ServiceTableKey, usize>,
 }
 
 impl ServiceTable {
@@ -298,15 +353,7 @@ impl ServiceTable {
     pub fn new() -> ServiceTable {
         ServiceTable {
             services: Vec::new(),
-            set:      HashSet::new()
-        }
-    }
-    
-    /// Check if there is a given service in the table.
-    pub fn contains(&self, svc: &Service) -> bool {
-        match svc {
-            &Service::ControlProtocol => true,
-            svc => self.set.contains(&get_service_table_key(svc))
+            map:      HashMap::new()
         }
     }
     
@@ -316,35 +363,87 @@ impl ServiceTable {
             Some(Service::ControlProtocol)
         } else {
             match self.services.get((id - 1) as usize) {
-                Some(svc) => Some(svc.clone()),
-                None      => None
+                Some(elem) => Some(elem.service.clone()),
+                None       => None
             }
         }
     }
     
-    /// Add a given service into the table in case it is not already there and 
-    /// return the service ID, otherwise return None.
-    pub fn add(&mut self, svc: Service) -> Option<u16> {
-        if self.contains(&svc) {
-            None
-        } else {
-            self.set.insert(get_service_table_key(&svc));
-            self.services.push(svc);
-            Some(self.services.len() as u16)
+    /// Add a given element into the table and assign it its service ID.
+    fn add_element(&mut self, mut elem: ServiceTableElement) {
+        let key = get_service_table_key(&elem.service);
+        if !self.map.contains_key(&key) {
+            elem.service_id = (self.services.len() + 1) as u16;
+            self.map.insert(key, self.services.len());
+            self.services.push(elem);
         }
     }
     
-    /// Get vector of remote services in this configuration (i.e. without the 
-    /// implicit Control Protocol service).
+    /// Add a given service into the table in case it is not already there and 
+    /// return the service ID, otherwise return None. The last_seen timestamp 
+    /// will be set to the current time in both cases.
+    pub fn add(&mut self, svc: Service) -> Option<u16> {
+        self.add_internal(false, svc)
+    }
+    
+    /// Add a given static service (i.e. manually added) into the table in case 
+    /// it is not already there and return the service ID, otherwise return 
+    /// None.
+    pub fn add_static(&mut self, svc: Service) -> Option<u16> {
+        self.add_internal(true, svc)
+    }
+    
+    /// Add a given service into the table in case it is not already there and 
+    /// return the service ID, otherwise return None. The last_seen timestamp 
+    /// will be set to the current time in both cases.
+    fn add_internal(&mut self, static_svc: bool, svc: Service) -> Option<u16> {
+        let key   = get_service_table_key(&svc);
+        let index = self.map.get(&key)
+            .map(|index| *index);
+        
+        if svc == Service::ControlProtocol {
+            None
+        } else if let Some(index) = index {
+            let elem = &mut self.services[index];
+            
+            elem.last_seen = get_utc_timestamp();
+            elem.service   = svc;
+            
+            None
+        } else {
+            let svc_id = (self.services.len() + 1) as u16;
+            let elem   = ServiceTableElement {
+                service_id:     svc_id,
+                service:        svc,
+                static_service: static_svc,
+                last_seen:      get_utc_timestamp(),
+                active:         true
+            };
+            
+            self.map.insert(key, self.services.len());
+            self.services.push(elem);
+            
+            Some(svc_id)
+        }
+    }
+    
+    /// Update active flags of all services.
+    pub fn update_active_services(&mut self) -> bool {
+        let timestamp = get_utc_timestamp();
+        self.services.iter_mut()
+            .fold(false, |acc, elem| elem.update_active_flag(timestamp) || acc)
+    }
+    
+    /// Get all active services.
     ///
-    /// The result is a vector of pairs. The first element is service ID, 
-    /// the second element is the service itself.
-    pub fn services(&self) -> Vec<(u16, Service)> {
-        let mut res = Vec::new();
-        for i in 0..self.services.len() {
-            let svc = &self.services[i];
-            let id  = i + 1;
-            res.push((id as u16, svc.clone()));
+    /// Only static services or services with the last_seen timestamp from the 
+    /// interval [now - ACTIVE_THRESHOLD, now] are considered active.
+    pub fn active_services(&self) -> Vec<Service> {
+        let mut res = vec![Service::ControlProtocol];
+        for elem in &self.services {
+            if elem.active {
+                res.push(elem.service.clone());
+            }
         }
         
         res
@@ -353,10 +452,10 @@ impl ServiceTable {
 
 impl Serialize for ServiceTable {
     fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()> {
-        for i in 0..self.services.len() {
-            let svc = &self.services[i];
-            let id  = i + 1;
-            try!(svc.serialize(w, id as u16));
+        for elem in &self.services {
+            if elem.active {
+                try!(elem.service.serialize(w, elem.service_id));
+            }
         }
         
         let cp_svc = Service::ControlProtocol;
@@ -369,7 +468,8 @@ impl ControlMessageBody for ServiceTable {
     fn len(&self) -> usize {
         let cp_svc = Service::ControlProtocol;
         cp_svc.len() + self.services.iter()
-            .fold(0, |sum, svc| sum + svc.len())
+            .filter(|elem| elem.active)
+            .fold(0, |sum, elem| sum + elem.service.len())
     }
 }
 
@@ -386,11 +486,19 @@ impl Decodable for ServiceTable {
 impl Encodable for ServiceTable {
     fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
         let mut table = JsonServiceTable::new();
-        for svc in &self.services {
-            table.add(JsonService::from(svc));
+        for elem in &self.services {
+            table.add(JsonService::from(elem));
         }
         
         table.encode(s)
+    }
+}
+
+impl Display for ServiceTable {
+    fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
+        let content = try!(json::encode(self)
+            .or(Err(fmt::Error)));
+        f.write_str(&content)
     }
 }
 
@@ -418,7 +526,8 @@ impl JsonServiceTable {
     fn into_service_table(self) -> Result<ServiceTable, ConfigError> {
         let mut res = ServiceTable::new();
         for svc in self.services {
-            res.add(try!(svc.into_service()));
+            let elem = try!(svc.into_service_table_element());
+            res.add_element(elem);
         }
         
         Ok(res)
