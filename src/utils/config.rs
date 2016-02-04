@@ -53,39 +53,45 @@ impl Display for ConfigError {
     }
 }
 
+impl From<String> for ConfigError {
+    fn from(msg: String) -> ConfigError {
+        ConfigError { msg: msg }
+    }
+}
+
 impl<'a> From<&'a str> for ConfigError {
     fn from(msg: &'a str) -> ConfigError {
-        ConfigError { msg: msg.to_string() }
+        ConfigError::from(msg.to_string())
     }
 }
 
 impl From<io::Error> for ConfigError {
     fn from(err: io::Error) -> ConfigError {
-        ConfigError::from(err.description())
+        ConfigError::from(format!("{}", err))
     }
 }
 
 impl From<json::DecoderError> for ConfigError {
     fn from(err: json::DecoderError) -> ConfigError {
-        ConfigError::from(err.description())
+        ConfigError::from(format!("{}", err))
     }
 }
 
 impl From<json::EncoderError> for ConfigError {
     fn from(err: json::EncoderError) -> ConfigError {
-        ConfigError::from(err.description())
+        ConfigError::from(format!("{}", err))
     }
 }
 
 impl From<uuid::ParseError> for ConfigError {
     fn from(err: uuid::ParseError) -> ConfigError {
-        ConfigError { msg: format!("{}", err) }
+        ConfigError::from(format!("{}", err))
     }
 }
 
 impl From<ether::AddrParseError> for ConfigError {
     fn from(err: ether::AddrParseError) -> ConfigError {
-        ConfigError::from(err.description())
+        ConfigError::from(format!("{}", err))
     }
 }
 

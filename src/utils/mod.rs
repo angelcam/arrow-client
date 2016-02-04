@@ -53,15 +53,15 @@ impl Display for RuntimeError {
     }
 }
 
-impl<'a> From<&'a str> for RuntimeError {
-    fn from(msg: &'a str) -> RuntimeError {
-        RuntimeError { msg: msg.to_string() }
-    }
-}
-
 impl From<String> for RuntimeError {
     fn from(msg: String) -> RuntimeError {
         RuntimeError { msg: msg }
+    }
+}
+
+impl<'a> From<&'a str> for RuntimeError {
+    fn from(msg: &'a str) -> RuntimeError {
+        RuntimeError::from(msg.to_string())
     }
 }
 
@@ -215,30 +215,35 @@ pub unsafe fn cstr_to_string(ptr: *const i8) -> String {
 }
 
 /// Exit application printing a given error.
-pub fn error<T: Error + Debug>(err: T, exit_code: i32) -> ! {
-    println!("ERROR: {}", err.description());
+pub fn error<E, M>(err: E, exit_code: i32, msg: M) -> !
+    where E: Error + Debug,
+          M: Display {
+    println!("ERROR: {} ({})", msg, err);
     process::exit(exit_code);
 }
 
 /// Unwrap a given result or exit the process printing the error.
-pub fn result_or_error<T, E>(res: Result<T, E>, exit_code: i32) -> T 
-    where E: Error + Debug {
+pub fn result_or_error<T, E, M>(res: Result<T, E>, exit_code: i32, msg: M) -> T 
+    where E: Error + Debug,
+          M: Display {
     match res {
         Ok(res)  => res,
-        Err(err) => error(err, exit_code)
+        Err(err) => error(err, exit_code, msg)
     }
 }
 
 /// Unwrap a given result or log an error with a given severity and return None.
-pub fn result_or_log<L, T, E>(
+pub fn result_or_log<L, T, E, M>(
     logger: &mut L, 
     severity: Severity, 
+    msg: M, 
     res: Result<T, E>) -> Option<T>
     where E: Error + Debug,
-          L: Logger {
+          L: Logger,
+          M: Display {
     match res {
         Err(err) => {
-            log!(logger, severity, "{}", err.description());
+            log!(logger, severity, "{} ({})", msg, err);
             None
         },
         Ok(res)  => Some(res)
@@ -287,14 +292,18 @@ mod tests {
     
     #[test]
     fn test_result_or_error() {
-        assert_eq!(1, result_or_error::<i32, RuntimeError>(Ok(1), 0));
+        assert_eq!(1, result_or_error::<i32, RuntimeError, &'static str>(
+            Ok(1), 0, ""));
     }
     
     #[test]
     fn test_result_or_log() {
-        assert_eq!(Some(1), result_or_log::<DummyLogger, i32, RuntimeError>(
-            &mut DummyLogger, Severity::WARN, Ok(1)));
-        assert_eq!(None, result_or_log::<DummyLogger, i32, RuntimeError>(
-            &mut DummyLogger, Severity::WARN, Err(RuntimeError::from("foo"))));
+        assert_eq!(Some(1),
+            result_or_log::<DummyLogger, i32, RuntimeError, &'static str>(
+            &mut DummyLogger, Severity::WARN, "", Ok(1)));
+        assert_eq!(None,
+            result_or_log::<DummyLogger, i32, RuntimeError, &'static str>(
+            &mut DummyLogger, Severity::WARN, "", 
+            Err(RuntimeError::from("foo"))));
     }
 }

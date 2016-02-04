@@ -101,7 +101,7 @@ fn result_or_usage<T, E>(res: Result<T, E>) -> T
     match res {
         Ok(res)  => res,
         Err(err) => {
-            println!("ERROR: {}\n", err.description());
+            println!("ERROR: {}\n", err);
             usage(1);
         }
     }
@@ -329,7 +329,7 @@ fn network_scanner_thread<L: Logger + Clone>(
     app_context: Shared<AppContext>) {
     log_info!(logger, "looking for local services...");
     let services = utils::result_or_log(&mut logger, Severity::WARN, 
-        discovery::find_rtsp_streams());
+        "network scanner error", discovery::find_rtsp_streams());
     
     if let Some(services) = services {
         let mut app_context = app_context.lock()
@@ -496,6 +496,7 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
             }
             
             utils::result_or_log(&mut self.logger, Severity::WARN, 
+                format!("unable to save config file \"{}\"", CONFIG_FILE), 
                 config.save(CONFIG_FILE));
         }
         
@@ -517,6 +518,7 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
         config.bump_version();
         
         utils::result_or_log(&mut self.logger, Severity::WARN, 
+            format!("unable to save config file \"{}\"", CONFIG_FILE), 
             config.save(CONFIG_FILE));
     }
 }
@@ -557,7 +559,9 @@ fn main() {
     if args.len() < 3 {
         usage(1);
     } else {
-        let arrow_mac  = utils::result_or_error(get_first_mac(), 2);
+        let arrow_mac = utils::result_or_error(get_first_mac(), 2, 
+            "unable to get any network interface MAC address");
+        
         let arrow_addr = &args[1];
         let ca_file    = &args[2];
         
@@ -590,10 +594,12 @@ fn main() {
             i += 1;
         }
         
-        utils::result_or_error(config.save(CONFIG_FILE), 3);
+        utils::result_or_error(config.save(CONFIG_FILE), 3, 
+            format!("unable to save config file \"{}\"", CONFIG_FILE));
         
         let ssl_context = Arc::new(
-            utils::result_or_error(init_ssl(ca_file), 4));
+            utils::result_or_error(init_ssl(ca_file), 4, 
+                format!("unable to load CA certificate \"{}\"", ca_file)));
         
         log_info!(logger, "application started (uuid: {}, mac: {})", 
             config.uuid_string(), arrow_mac);
