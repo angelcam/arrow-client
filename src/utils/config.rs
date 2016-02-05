@@ -277,16 +277,24 @@ impl Display for ArrowConfig {
 /// Application context.
 #[derive(Debug, Clone)]
 pub struct AppContext {
-    pub config:   ArrowConfig,
-    pub scanning: bool,
+    /// Arrow Client configuration.
+    pub config:          ArrowConfig,
+    /// Scanning state indicator.
+    pub scanning:        bool,
+    /// Diagnostic mode indicator.
+    pub diagnostic_mode: bool,
+    /// Service discovery enabler.
+    pub discovery:       bool,
 }
 
 impl AppContext {
     /// Create a new application context.
     pub fn new(config: ArrowConfig) -> AppContext {
         AppContext {
-            config:   config,
-            scanning: false
+            config:          config,
+            scanning:        false,
+            diagnostic_mode: false,
+            discovery:       false
         }
     }
 }

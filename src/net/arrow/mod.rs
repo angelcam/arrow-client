@@ -1118,7 +1118,16 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
                         Duration::from_millis(PING_PERIOD))
                     .unwrap();
                 
-                Ok(None)
+                let diagnostic_mode = self.app_context.lock()
+                    .unwrap()
+                    .diagnostic_mode;
+                
+                // report a fake redirect in case of the diagnostic mode
+                if diagnostic_mode {
+                    Ok(Some(String::new()))
+                } else {
+                    Ok(None)
+                }
             } else if ack == ACK_UNAUTHORIZED {
                 Err(ArrowError::unauthorized("Arrow REGISTER failed (unauthorized)"))
             } else if ack == ACK_UNSUPPORTED_PROTOCOL_VERSION {

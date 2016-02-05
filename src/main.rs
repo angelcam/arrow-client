@@ -190,6 +190,11 @@ fn usage(exit_code: i32) -> ! {
     }
     println!("    -r URL    local RTSP service URL");
     println!("    -v        enable debug logs\n");
+    println!("    --diagnostic-mode   start the client in diagnostic mode (i.e. the client");
+    println!("                        will try to connect to a given Arrow Service and it");
+    println!("                        will report succecc as its exit code; note: the");
+    println!("                        \"access denied\" response from the server is also");
+    println!("                        considered as a successes)\n");
     process::exit(exit_code);
 }
 
@@ -227,7 +232,13 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
     addr: &str,
     arrow_mac: &MacAddr,
     app_context: Shared<AppContext>) {
-    let mut unauthorized_timeout = None;
+    let diagnostic_mode = app_context.lock()
+        .unwrap()
+        .diagnostic_mode;
+    
+    let t = time::precise_time_s();
+    
+    let mut unauthorized_timeout = t + 1200.0;
     let mut cur_addr = addr.to_string();
     let mut last_attempt;
     
@@ -239,57 +250,26 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
         
         last_attempt = time::precise_time_s();
         
-        let res = match connect(lgr, &*ssl_context, cmd_sender.clone(), 
-            &cur_addr, arrow_mac, ctx) {
-            Ok(addr) => Ok(addr),
-            Err(err) => {
-                log_warn!(&mut logger, "{}", err.description());
-                let t = time::precise_time_s();
-                match err.kind() {
-                    // the client is not authorized to access the service yet;
-                    // check the authorization timeout
-                    ErrorKind::Unauthorized => match unauthorized_timeout {
-                        // retry every 10 seconds in the first 10 minutes since 
-                        // the first "unauthorized" response
-                        Some(timeout) if t < (timeout - 600.0) => Err(10.0),
-                        // retry every 30 seconds after the first 10 minutes 
-                        // since the first "unauthorized" response
-                        Some(timeout) if t < timeout => Err(30.0),
-                        // retry in 10 hours after the first 20 minutes since
-                        // the first "unauthorized" response
-                        Some(_) => Err(36000.0),
-                        // no timeout has been set yet
-                        None => {
-                            // set the timeout to 20 minutes from now
-                            unauthorized_timeout = Some(t + 1200.0);
-                            // retry in 10 seconds
-                            Err(10.0)
-                        }
-                    },
-                    // we don't know if the client is authorized...
-                    err => {
-                        // ... but we assume it is if the last connection was 
-                        // longer than RETRY_TIMEOUT seconds
-                        if (last_attempt + RETRY_TIMEOUT) < t {
-                            unauthorized_timeout = None;
-                        }
-                        // check the error
-                        match err {
-                            // set a very long retry timeout if the version of 
-                            // the Arrow Protocol is not supported by either 
-                            // side
-                            ErrorKind::UnsupportedProtocolVersion => Err(36000.0),
-                            // in all other cases
-                            _ => Err(RETRY_TIMEOUT + last_attempt - t),
-                        }
-                    }
-                }
-            }
-        };
+        let res = connect(lgr, &*ssl_context, cmd_sender.clone(), 
+            &cur_addr, arrow_mac, ctx);
+        
+        unauthorized_timeout = get_unauthorized_timeout(&res, 
+            last_attempt,
+            unauthorized_timeout);
+        
+        if diagnostic_mode {
+            diagnose_connection_result(&res);
+        }
         
         match res {
             Ok(addr) => cur_addr = addr,
-            Err(t) => {
+            Err(err) => {
+                log_warn!(logger, "{}", err.description());
+                
+                let t = get_next_retry_timeout(err,
+                    last_attempt,
+                    unauthorized_timeout);
+                
                 if t > 0.5 {
                     log_info!(logger, "retrying in {:.3} seconds", t);
                     thread::sleep(Duration::from_millis((t * 1000.0) as u64));
@@ -297,6 +277,71 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
                 
                 cur_addr = addr.to_string();
             }
+        }
+    }
+}
+
+/// Get new timeout for the unauthorized state.
+fn get_unauthorized_timeout(
+    connection_result:       &Result<String, ArrowError>,
+    last_connection_attempt: f64,
+    current_timeout:         f64) -> f64 {
+    let t = time::precise_time_s();
+    match connection_result {
+        // We know the client is authorized, we can update the timeout.
+        &Ok(_)        => t + 1200.0,
+        &Err(ref err) => match err.kind() {
+            // We don't update the timeout in case the client is unauthorized.
+            ErrorKind::Unauthorized => current_timeout,
+            // We don't know if the client is authorized but we assume it is 
+            // if the last connection was longer than RETRY_TIMEOUT seconds.
+            _ => if (last_connection_attempt + RETRY_TIMEOUT) < t {
+                t + 1200.0
+            } else {
+                current_timeout
+            }
+        }
+    }
+}
+
+/// Get next reconnect timeout for the Arrow Client thread.
+fn get_next_retry_timeout(
+    connection_error:        ArrowError,
+    last_connection_attempt: f64,
+    unauthorized_timeout:    f64) -> f64 {
+    let t = time::precise_time_s();
+    match connection_error.kind() {
+        // the client is not authorized to access the service yet; check the 
+        // unauthorized state timeout
+        ErrorKind::Unauthorized => match unauthorized_timeout {
+            // retry every 10 seconds in the first 10 minutes since the first 
+            // "unauthorized" response
+            timeout if t < (timeout - 600.0) => 10.0,
+            // retry every 30 seconds after the first 10 minutes since the 
+            // first "unauthorized" response
+            timeout if t < timeout => 30.0,
+            // retry in 10 hours after the first 20 minutes since the first 
+            // "unauthorized" response
+            _ => 36000.0
+        },
+        // set a very long retry timeout if the version of the Arrow Protocol 
+        // is not supported by either side
+        ErrorKind::UnsupportedProtocolVersion => 36000.0,
+        // in all other cases
+        _ => RETRY_TIMEOUT + last_connection_attempt - time::precise_time_s()
+    }
+}
+
+/// Diagnose a given connection result and exit with exit code 0 if the 
+/// connection was successful or the server responded with UNAUTHORIZED, 
+/// otherwise exit with exit code 1.
+fn diagnose_connection_result(
+    connection_result: &Result<String, ArrowError>) -> ! {
+    match connection_result {
+        &Ok(_)        => process::exit(0),
+        &Err(ref err) => match err.kind() {
+            ErrorKind::Unauthorized => process::exit(0),
+            _ => process::exit(1)
         }
     }
 }
@@ -401,7 +446,6 @@ struct CommandHandler<L: Logger> {
     app_context:       Shared<AppContext>,
     scanner:           Option<JoinHandle<()>>,
     last_scan:         u64,
-    discovery:         bool,
 }
 
 impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
@@ -409,8 +453,7 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
     fn new(
         logger: L, 
         default_svc_table: ServiceTable,
-        app_context: Shared<AppContext>, 
-        discovery: bool) -> CommandHandler<L> {
+        app_context: Shared<AppContext>) -> CommandHandler<L> {
         let now = time::precise_time_ns() / 1000000;
         let active_services = {
             let app_context = app_context.lock()
@@ -424,8 +467,7 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
             active_services:   active_services,
             app_context:       app_context,
             scanner:           None,
-            last_scan:         now - NETWORK_SCAN_PERIOD,
-            discovery:         discovery
+            last_scan:         now - NETWORK_SCAN_PERIOD
         }
     }
     
@@ -454,13 +496,13 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
     /// Spawn a new network scanner thread (if it is not already running) and 
     /// save its join handle.
     fn scan_network(&mut self, event_loop: &mut EventLoop<Self>) {
+        let mut app_context = self.app_context.lock()
+            .unwrap();
+        
         // check if the discovery is enabled and if there is another scanner 
         // running
-        if self.discovery && self.scanner.is_none() {
+        if app_context.discovery && self.scanner.is_none() {
             self.last_scan = time::precise_time_ns() / 1000000;
-            
-            let mut app_context = self.app_context.lock()
-                .unwrap();
             
             app_context.scanning = true;
             
@@ -565,27 +607,33 @@ fn main() {
         let arrow_addr = &args[1];
         let ca_file    = &args[2];
         
-        let mut discovery = false;
-        
         let mut i = 3;
         
-        let mut config = ArrowConfig::load(CONFIG_FILE)
+        let config = ArrowConfig::load(CONFIG_FILE)
             .unwrap_or(ArrowConfig::new());
         
         let mut default_svc_table = ServiceTable::new();
+        let mut app_context       = AppContext::new(config);
         
         while i < args.len() {
             match &args[i] as &str {
-                "-d" if cfg!(feature = "discovery") => { discovery = true; },
+                "-d" if cfg!(feature = "discovery") => {
+                    app_context.discovery = true;
+                },
                 "-r" => {
                     let service = parse_rtsp_url(&args[i + 1]);
                     let service = result_or_usage(service);
-                    config.add_static(service.clone());
+                    app_context.config.add_static(service.clone());
                     default_svc_table.add_static(service);
                     i += 1;
                 },
-                "-v" => { logger.set_level(Severity::DEBUG); },
-                _    => {
+                "-v" => {
+                    logger.set_level(Severity::DEBUG);
+                },
+                "--diagnostic-mode" => {
+                    app_context.diagnostic_mode = true;
+                },
+                _ => {
                     println!("unknown argument: {}\n", &args[i]);
                     usage(1);
                 }
@@ -594,7 +642,7 @@ fn main() {
             i += 1;
         }
         
-        utils::result_or_error(config.save(CONFIG_FILE), 3, 
+        utils::result_or_error(app_context.config.save(CONFIG_FILE), 3, 
             format!("unable to save config file \"{}\"", CONFIG_FILE));
         
         let ssl_context = Arc::new(
@@ -602,9 +650,9 @@ fn main() {
                 format!("unable to load CA certificate \"{}\"", ca_file)));
         
         log_info!(logger, "application started (uuid: {}, mac: {})", 
-            config.uuid_string(), arrow_mac);
+            app_context.config.uuid_string(), arrow_mac);
         
-        let app_context = Shared::new(AppContext::new(config));
+        let app_context = Shared::new(app_context);
         
         let mut event_loop = EventLoop::new()
             .unwrap();
@@ -612,8 +660,7 @@ fn main() {
         let mut cmd_handler = CommandHandler::new(
             logger.clone(),
             default_svc_table,
-            app_context.clone(),
-            discovery);
+            app_context.clone());
         
         let cmd_sender = CommandSender::new(event_loop.channel());
         
