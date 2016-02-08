@@ -279,6 +279,33 @@ fn load_ca_certificates<L, P>(
     }
 }
 
+// TODO: add server hostname verification as soon as it supported by the Rust 
+// openssl wrapper
+
+/*// Validate a given hostname using peer certificate. An error is returned 
+/// if there is no peer certificate or the CN record does not match. No 
+/// error is returned if there is no CN record.
+fn validate_hostname(x509_ctx: &X509StoreContext, hostname: &str) -> bool {
+    if let Some(cert) = x509_ctx.get_current_cert() {
+        let subject_name = cert.subject_name();
+        if let Some(cn) = subject_name.text_by_nid(Nid::CN) {
+            let re = "^".to_string()
+                + &cn.replace(r".", r"\.")
+                    .replace(r"*", r"\S+")
+                + "$";
+            if let Ok(re) = Regex::new(&re) {
+                re.is_match(hostname)
+            } else {
+                false
+            }
+        } else {
+            true
+        }
+    } else {
+        false
+    }
+}*/
+
 /// Spawn a new Arrow Client thread.
 fn spawn_arrow_thread<L: 'static + Logger + Clone + Send>(
     logger: L, 

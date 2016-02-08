@@ -144,8 +144,6 @@ impl ArrowStream {
         let tcp_stream = try_io!(TcpStream::connect(arrow_addr));
         let ssl_stream = try_io!(SslStream::connect(s, tcp_stream));
         
-        // TODO: add hostname verification
-        
         register_socket(token_id, ssl_stream.get_ref(), 
             true, true, event_loop);
         
