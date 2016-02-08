@@ -679,7 +679,7 @@ fn main() {
         
         let arrow_addr = &args[1];
         
-        let mut i = 3;
+        let mut i = 2;
         
         let config = ArrowConfig::load(CONFIG_FILE)
             .unwrap_or(ArrowConfig::new());
