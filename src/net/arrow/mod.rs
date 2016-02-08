@@ -46,8 +46,9 @@ use self::error::{Result, ArrowError};
 use mio::tcp::TcpStream;
 use mio::{EventLoop, EventSet, Token, PollOpt, Handler};
 
-use openssl::ssl::{NonblockingSslStream, IntoSsl};
-use openssl::ssl::error::NonblockingSslError;
+use openssl::ssl;
+
+use openssl::ssl::{SslStream, IntoSsl};
 
 /// Register a given TCP stream in a given event loop.
 fn register_socket<H: Handler>(
@@ -127,7 +128,7 @@ enum ArrowStreamState {
 
 /// Abstraction over the Arrow SSL stream.
 struct ArrowStream {
-    stream:   NonblockingSslStream<TcpStream>,
+    stream:   SslStream<TcpStream>,
     state:    ArrowStreamState,
     token_id: usize,
 }
@@ -141,7 +142,7 @@ impl ArrowStream {
         token_id: usize,
         event_loop: &mut EventLoop<H>) -> Result<ArrowStream> {
         let tcp_stream = try_io!(TcpStream::connect(arrow_addr));
-        let ssl_stream = try_io!(NonblockingSslStream::connect(s, tcp_stream));
+        let ssl_stream = try_io!(SslStream::connect(s, tcp_stream));
         
         // TODO: add hostname verification
         
@@ -173,13 +174,13 @@ impl ArrowStream {
         &mut self, 
         buf: &mut [u8], 
         event_loop: &mut EventLoop<H>) -> Result<usize> {
-        match self.stream.read(buf) {
-            Err(NonblockingSslError::WantRead) => {
+        match self.stream.ssl_read(buf) {
+            Err(ssl::error::Error::WantRead(_)) => {
                 self.state = ArrowStreamState::ReaderWantRead;
                 self.enable_socket_events(true, false, event_loop);
                 Ok(0)
             },
-            Err(NonblockingSslError::WantWrite) => {
+            Err(ssl::error::Error::WantWrite(_)) => {
                 self.state = ArrowStreamState::ReaderWantWrite;
                 self.enable_socket_events(false, true, event_loop);
                 Ok(0)
@@ -197,13 +198,13 @@ impl ArrowStream {
         &mut self, 
         data: &[u8], 
         event_loop: &mut EventLoop<H>) -> Result<usize> {
-        match self.stream.write(data) {
-            Err(NonblockingSslError::WantRead) => {
+        match self.stream.ssl_write(data) {
+            Err(ssl::error::Error::WantRead(_)) => {
                 self.state = ArrowStreamState::WriterWantRead;
                 self.enable_socket_events(true, false, event_loop);
                 Ok(0)
             },
-            Err(NonblockingSslError::WantWrite) => {
+            Err(ssl::error::Error::WantWrite(_)) => {
                 self.state = ArrowStreamState::WriterWantWrite;
                 self.enable_socket_events(false, true, event_loop);
                 Ok(0)

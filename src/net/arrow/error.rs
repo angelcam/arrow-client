@@ -21,9 +21,9 @@ use std::result;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-use mio::TimerError;
+use mio;
 
-use openssl::ssl::error::{SslError, NonblockingSslError};
+use openssl::ssl;
 
 /// Try an IO operation (an error will be translated to the Arrow Connection 
 /// Error).
@@ -183,27 +183,27 @@ impl<'a> From<&'a str> for ArrowError {
 impl From<io::Error> for ArrowError {
     /// Create a new ArrowError from a given IO error.
     fn from(err: io::Error) -> ArrowError {
-        ArrowError::from(format!("IO error: {}", err.description()))
+        ArrowError::from(format!("IO error: {}", err))
     }
 }
 
-impl From<TimerError> for ArrowError {
+impl From<mio::TimerError> for ArrowError {
     /// Create a new ArrowError for a given timer error.
-    fn from(_: TimerError) -> ArrowError {
+    fn from(_: mio::TimerError) -> ArrowError {
         ArrowError::from("timer error")
     }
 }
 
-impl From<SslError> for ArrowError {
+impl From<ssl::error::SslError> for ArrowError {
     /// Create a new ArrowError from a given SSL error.
-    fn from(err: SslError) -> ArrowError {
-        ArrowError::from(format!("OpenSSL error: {}", err.description()))
+    fn from(err: ssl::error::SslError) -> ArrowError {
+        ArrowError::from(format!("OpenSSL error: {}", err))
     }
 }
 
-impl From<NonblockingSslError> for ArrowError {
+impl From<ssl::error::Error> for ArrowError {
     /// Create a new ArrowError from a given SSL error.
-    fn from(err: NonblockingSslError) -> ArrowError {
-        ArrowError::from(format!("OpenSSL error: {}", err.description()))
+    fn from(err: ssl::error::Error) -> ArrowError {
+        ArrowError::from(format!("OpenSSL error: {}", err))
     }
 }
