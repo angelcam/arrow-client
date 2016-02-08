@@ -35,6 +35,7 @@ use std::sync::Arc;
 use std::fmt::Debug;
 use std::error::Error;
 use std::str::FromStr;
+use std::path::Path;
 use std::time::Duration;
 use std::thread::JoinHandle;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
@@ -54,9 +55,9 @@ use net::arrow::error::{ArrowError, ErrorKind};
 use net::arrow::{ArrowClient, Sender, Command};
 use net::arrow::protocol::{Service, ServiceTable};
 
-use openssl::x509::X509FileType;
 use openssl::ssl::error::SslError;
 use openssl::ssl::{IntoSsl, SslContext, SslMethod};
+use openssl::ssl::{SSL_VERIFY_PEER, SSL_OP_NO_COMPRESSION};
 
 use mio::{EventLoop, Handler, NotifyError};
 
@@ -179,12 +180,17 @@ fn parse_rtsp_url(url: &str) -> Result<Service, RuntimeError> {
 
 /// Print usage and exit the process with a given exit code.
 fn usage(exit_code: i32) -> ! {
-    println!("USAGE: arrow-client arr-host[:arr-port] ca-cert [OPTIONS]\n");
+    println!("USAGE: arrow-client arr-host[:arr-port] [OPTIONS]\n");
     println!("    arr-host  Angelcam Arrow Service host");
     println!("    arr-port  Angelcam Arrow Service port\n");
-    println!("    ca-cert   CA certificate in PEM format for Arrow Service identity");
-    println!("              verification\n");
     println!("OPTIONS:\n");
+    println!("    -c path   path to a CA certificate for Arrow Service identity verification;");
+    println!("              in case the path is a directory, it's scanned recursively for");
+    println!("              all files with the following extensions:\n");
+    println!("              .der");
+    println!("              .cer");
+    println!("              .crr");
+    println!("              .pem\n");
     if cfg!(feature = "discovery") {
         println!("    -d        automatic service discovery");
     }
@@ -199,11 +205,78 @@ fn usage(exit_code: i32) -> ! {
 }
 
 /// Initialize SSL context. 
-fn init_ssl(ca_file: &str) -> Result<SslContext, SslError> {
-    let mut ssl_context = try!(SslContext::new(SslMethod::Tlsv1_2));
-    try!(ssl_context.set_certificate_file(ca_file, X509FileType::PEM));
-    try!(ssl_context.set_cipher_list("HIGH:!aNULL:!kRSA:!PSK:!MD5:!RC4"));
+fn init_ssl(
+    method: SslMethod, 
+    cipher_list: &str) -> Result<SslContext, SslError> {
+    let mut ssl_context = try!(SslContext::new(method));
+    try!(ssl_context.set_cipher_list(cipher_list));
+    ssl_context.set_options(SSL_OP_NO_COMPRESSION);
+    ssl_context.set_verify(SSL_VERIFY_PEER, None);
+    ssl_context.set_verify_depth(4);
     Ok(ssl_context)
+}
+
+/// Check if a given file is a certificate file.
+fn is_cert_file<P: AsRef<Path>>(path: P) -> bool {
+    let path = path.as_ref();
+    if let Some(ext) = path.extension() {
+        let ext = ext.to_string_lossy();
+        match &ext.to_lowercase() as &str {
+            "der" => true,
+            "cer" => true,
+            "crt" => true,
+            "pem" => true,
+            _ => false
+        }
+    } else {
+        false
+    }
+}
+
+/// Load all certificate files conained within a given directory structure.
+fn load_ca_certificate_dir<L, P>(
+    logger: &mut L, 
+    ssl_context: &mut SslContext, 
+    path: P) -> Result<(), RuntimeError> 
+    where L: Logger,
+          P: AsRef<Path> {
+    let path = path.as_ref();
+    let dir  = try!(path.read_dir()
+        .map_err(|err| RuntimeError::from(format!("{}", err))));
+    
+    for entry in dir {
+        let entry = try!(entry.map_err(|err|
+            RuntimeError::from(format!("{}", err))));
+        
+        let path = entry.path();
+        
+        if path.is_dir() {
+            try!(load_ca_certificate_dir(logger, ssl_context, &path));
+        } else if is_cert_file(&path) {
+            utils::result_or_log(logger, Severity::WARN, 
+                format!("unable to load certificate file \"{}\"", 
+                    path.to_string_lossy()),
+                ssl_context.set_CA_file(&path));
+        }
+    }
+    
+    Ok(())
+}
+
+/// Load CA certificates from a given path.
+fn load_ca_certificates<L, P>(
+    logger: &mut L, 
+    ssl_context: &mut SslContext, 
+    path: P) -> Result<(), RuntimeError>
+    where L: Logger,
+          P: AsRef<Path> {
+    let path = path.as_ref();
+    if path.is_dir() {
+        load_ca_certificate_dir(logger, ssl_context, path)
+    } else {
+        ssl_context.set_CA_file(path)
+            .map_err(|err| RuntimeError::from(format!("{}", err)))
+    }
 }
 
 /// Spawn a new Arrow Client thread.
@@ -598,14 +671,13 @@ fn main() {
     let args       = env::args()
         .collect::<Vec<_>>();
     
-    if args.len() < 3 {
+    if args.len() < 2 {
         usage(1);
     } else {
         let arrow_mac = utils::result_or_error(get_first_mac(), 2, 
             "unable to get any network interface MAC address");
         
         let arrow_addr = &args[1];
-        let ca_file    = &args[2];
         
         let mut i = 3;
         
@@ -613,10 +685,20 @@ fn main() {
             .unwrap_or(ArrowConfig::new());
         
         let mut default_svc_table = ServiceTable::new();
+        let mut ssl_context       = utils::result_or_error(init_ssl(
+            SslMethod::Tlsv1_2, "HIGH:!aNULL:!kRSA:!PSK:!MD5:!RC4"), 4,
+            "unable to set up SSL context");
         let mut app_context       = AppContext::new(config);
         
         while i < args.len() {
             match &args[i] as &str {
+                "-c" => {
+                    utils::result_or_error(load_ca_certificates(
+                        &mut logger, &mut ssl_context, &args[i + 1]), 5,
+                        format!("unable to load certificate(s) from \"{}\"", 
+                            &args[i + 1]));
+                    i += 1;
+                },
                 "-d" if cfg!(feature = "discovery") => {
                     app_context.discovery = true;
                 },
@@ -645,13 +727,10 @@ fn main() {
         utils::result_or_error(app_context.config.save(CONFIG_FILE), 3, 
             format!("unable to save config file \"{}\"", CONFIG_FILE));
         
-        let ssl_context = Arc::new(
-            utils::result_or_error(init_ssl(ca_file), 4, 
-                format!("unable to load CA certificate \"{}\"", ca_file)));
-        
         log_info!(logger, "application started (uuid: {}, mac: {})", 
             app_context.config.uuid_string(), arrow_mac);
         
+        let ssl_context = Arc::new(ssl_context);
         let app_context = Shared::new(app_context);
         
         let mut event_loop = EventLoop::new()
