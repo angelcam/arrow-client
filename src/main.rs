@@ -31,7 +31,6 @@ use std::env;
 use std::process;
 use std::thread;
 
-use std::sync::Arc;
 use std::fmt::Debug;
 use std::error::Error;
 use std::str::FromStr;
@@ -55,8 +54,10 @@ use net::arrow::error::{ArrowError, ErrorKind};
 use net::arrow::{ArrowClient, Sender, Command};
 use net::arrow::protocol::{Service, ServiceTable};
 
+use openssl::nid::Nid;
 use openssl::ssl::error::SslError;
-use openssl::ssl::{IntoSsl, SslContext, SslMethod};
+use openssl::x509::X509StoreContext;
+use openssl::ssl::{SslContext, SslMethod};
 use openssl::ssl::{SSL_VERIFY_PEER, SSL_OP_NO_COMPRESSION};
 
 use mio::{EventLoop, Handler, NotifyError};
@@ -279,12 +280,57 @@ fn load_ca_certificates<L, P>(
     }
 }
 
-// TODO: add server hostname verification as soon as it supported by the Rust 
-// openssl wrapper
+/// Data passed to the openssl_verify_callback().
+#[derive(Debug, Clone)]
+struct VerifyCallbackData {
+    /// Current hostname.
+    cur_hostname: String,
+}
 
-/*// Validate a given hostname using peer certificate. An error is returned 
-/// if there is no peer certificate or the CN record does not match. No 
-/// error is returned if there is no CN record.
+impl VerifyCallbackData {
+    /// Create new verify callback data.
+    fn new(address: &str) -> VerifyCallbackData {
+        VerifyCallbackData {
+            cur_hostname: get_hostname(address)
+        }
+    }
+    
+    /// Set current address.
+    fn set_cur_address(&mut self, address: &str) {
+        self.cur_hostname = get_hostname(address)
+    }
+    
+    /// Get current hostname.
+    fn get_cur_hostname(&self) -> &str {
+        &self.cur_hostname
+    }
+}
+
+/// Get hostname from a given address.
+fn get_hostname(address: &str) -> String {
+    Regex::new(r"^([^:]+)(:(\d+))?$")
+        .unwrap()
+        .captures(address)
+        .and_then(|cap| cap.at(1))
+        .unwrap_or(address)
+        .to_string()
+}
+
+/// Verify callback.
+fn openssl_verify_callback(
+    preverify_ok: bool, 
+    x509_ctx: &X509StoreContext, 
+    data: &Shared<VerifyCallbackData>) -> bool {
+    let data = data.lock()
+        .unwrap();
+    
+    preverify_ok && validate_hostname(x509_ctx, data.get_cur_hostname())
+}
+
+/// Validate a given hostname using peer certificate. This function returns 
+/// true if there is no CN record or the CN record matches with the given 
+/// hostname. False is returned if there is no certificate or the hostname does 
+/// not match.
 fn validate_hostname(x509_ctx: &X509StoreContext, hostname: &str) -> bool {
     if let Some(cert) = x509_ctx.get_current_cert() {
         let subject_name = cert.subject_name();
@@ -304,12 +350,12 @@ fn validate_hostname(x509_ctx: &X509StoreContext, hostname: &str) -> bool {
     } else {
         false
     }
-}*/
+}
 
 /// Spawn a new Arrow Client thread.
 fn spawn_arrow_thread<L: 'static + Logger + Clone + Send>(
     logger: L, 
-    ssl_context: Arc<SslContext>,
+    ssl_context: SslContext,
     cmd_sender: CommandSender,
     addr: &str,
     arrow_mac: &MacAddr,
@@ -327,7 +373,7 @@ fn spawn_arrow_thread<L: 'static + Logger + Clone + Send>(
 /// This function ensures maintaining connection with a remote Arrow Service.
 fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
     mut logger: L,
-    ssl_context: Arc<SslContext>,
+    mut ssl_context: SslContext,
     cmd_sender: Q,
     addr: &str,
     arrow_mac: &MacAddr,
@@ -342,6 +388,13 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
     let mut cur_addr = addr.to_string();
     let mut last_attempt;
     
+    let verify_data = Shared::new(VerifyCallbackData::new(&cur_addr));
+    
+    ssl_context.set_verify_with_data(
+        SSL_VERIFY_PEER,
+        openssl_verify_callback,
+        verify_data.clone());
+    
     loop {
         log_info!(logger, "connecting to remote Arrow Service {}", cur_addr);
         
@@ -350,7 +403,7 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
         
         last_attempt = time::precise_time_s();
         
-        let res = connect(lgr, &*ssl_context, cmd_sender.clone(), 
+        let res = connect(lgr, &ssl_context, cmd_sender.clone(), 
             &cur_addr, arrow_mac, ctx);
         
         unauthorized_timeout = get_unauthorized_timeout(&res, 
@@ -378,6 +431,10 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
                 cur_addr = addr.to_string();
             }
         }
+        
+        verify_data.lock()
+            .unwrap()
+            .set_cur_address(&cur_addr);
     }
 }
 
@@ -447,9 +504,9 @@ fn diagnose_connection_result(
 }
 
 /// Connect to a given Arrow Service.
-fn connect<L: Logger + Clone, S: IntoSsl, Q: Sender<Command>>(
+fn connect<L: Logger + Clone, Q: Sender<Command>>(
     logger: L,
-    s: S,
+    ssl_context: &SslContext,
     cmd_sender: Q,
     addr: &str,
     arrow_mac: &MacAddr,
@@ -458,7 +515,7 @@ fn connect<L: Logger + Clone, S: IntoSsl, Q: Sender<Command>>(
         .or(Err(ArrowError::connection_error(format!(
             "failed to lookup Arrow Service {} address information", addr)))));
     
-    match ArrowClient::new(logger, s, cmd_sender, 
+    match ArrowClient::new(logger, ssl_context, cmd_sender, 
         &addr, arrow_mac, app_context) {
         Err(err) => Err(ArrowError::connection_error(format!(
             "unable to connect to remote Arrow Service {} ({})", 
@@ -757,7 +814,6 @@ fn main() {
         log_info!(logger, "application started (uuid: {}, mac: {})", 
             app_context.config.uuid_string(), arrow_mac);
         
-        let ssl_context = Arc::new(ssl_context);
         let app_context = Shared::new(app_context);
         
         let mut event_loop = EventLoop::new()
