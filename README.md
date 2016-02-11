@@ -45,7 +45,7 @@ Here is an example of starting the Arrow Client with one fixed RTSP service and
 with network scanning enabled:
 
 ```bash
-arrow-client arr-rs.angelcam.com:8900 ca.pem -d -r "rtsp://localhost:8554/stream.sdp?prof=baseline&res=low"
+arrow-client arr-rs.angelcam.com:8900 -c ca.pem -d -r "rtsp://localhost:8554/stream.sdp?prof=baseline&res=low"
 ```
 
 Note that the application requires root privileges for direct access to local 
