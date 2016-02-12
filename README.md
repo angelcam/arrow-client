@@ -14,6 +14,9 @@ without the need of a public IP address and setting up your firewall.
 
 This is a reference implementation of the Arrow Client role described in 
 [Arrow Protocol](https://github.com/angelcam/arrow-client/wiki/Arrow-Protocol "Arrow Protocol").
+If you are interested in integration or you just want to play with the client 
+a little, please see our 
+[Quick Start guide](https://github.com/angelcam/arrow-client/wiki/Quick-Start "Quick Start guide").
 
 ## Features
 
