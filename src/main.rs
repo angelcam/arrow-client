@@ -27,16 +27,19 @@ pub mod utils;
 
 pub mod net;
 
+use std::io;
 use std::env;
 use std::process;
 use std::thread;
 
+use std::fs::File;
 use std::fmt::Debug;
 use std::error::Error;
 use std::str::FromStr;
 use std::path::Path;
 use std::time::Duration;
 use std::thread::JoinHandle;
+use std::io::{BufWriter, Write};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
 
 use utils::logger::syslog;
@@ -70,8 +73,15 @@ const NETWORK_SCAN_PERIOD: u64 = 300000;
 /// Connectionn retry timeout.
 const RETRY_TIMEOUT:       f64 = 60.0;
 
+const CONN_STATE_CONNECTED:    &'static str = "connected";
+const CONN_STATE_UNAUTHORIZED: &'static str = "unauthorized";
+const CONN_STATE_DISCONNECTED: &'static str = "disconnected";
+
 /// Arrow Client configuration file.
 static CONFIG_FILE: &'static str = "/etc/arrow/config.json";
+
+/// Arrow Client connection state file.
+static STATE_FILE: &'static str = "/var/lib/arrow/state";
 
 /// Get socket address from a given argument.
 fn get_socket_address<T>(s: T) -> Result<SocketAddr, RuntimeError>
@@ -403,6 +413,10 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
         
         last_attempt = time::precise_time_s();
         
+        utils::result_or_log(&mut logger, Severity::INFO,
+            "unable to save current connection state", 
+            save_connection_state(CONN_STATE_CONNECTED));
+        
         let res = connect(lgr, &ssl_context, cmd_sender.clone(), 
             &cur_addr, arrow_mac, ctx);
         
@@ -418,6 +432,15 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
             Ok(addr) => cur_addr = addr,
             Err(err) => {
                 log_warn!(logger, "{}", err.description());
+                
+                let res = match err.kind() {
+                    ErrorKind::Unauthorized => 
+                         save_connection_state(CONN_STATE_UNAUTHORIZED),
+                    _ => save_connection_state(CONN_STATE_DISCONNECTED)
+                };
+                
+                utils::result_or_log(&mut logger, Severity::INFO,
+                    "unable to save current connection state", res);
                 
                 let t = get_next_retry_timeout(err,
                     last_attempt,
@@ -436,6 +459,17 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
             .unwrap()
             .set_cur_address(&cur_addr);
     }
+}
+
+/// Save current connection state.
+fn save_connection_state(state: &str) -> Result<(), io::Error> {
+    let file = try!(File::create(STATE_FILE));
+    let mut bwriter = BufWriter::new(file);
+    
+    try!(bwriter.write(state.as_bytes()));
+    try!(bwriter.write(b"\n"));
+    
+    Ok(())
 }
 
 /// Get new timeout for the unauthorized state.
