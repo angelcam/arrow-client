@@ -20,4 +20,5 @@ pub mod ether;
 pub mod ip;
 pub mod arp;
 pub mod tcp;
+pub mod icmp;
 pub mod utils;

@@ -35,6 +35,7 @@ use net::raw::devices::EthernetDevice;
 use net::raw::ether::MacAddr;
 use net::arrow::protocol::Service;
 use net::raw::arp::scanner::Ipv4ArpScanner;
+use net::raw::icmp::scanner::IcmpScanner;
 use net::raw::tcp::scanner::{TcpPortScanner, PortCollection};
 use net::rtsp::sdp::{SessionDescription, MediaType, RTPMap, FromAttribute};
 
@@ -246,8 +247,14 @@ fn find_services(
     pc: pcap::ThreadingContext,
     device: &EthernetDevice,
     ports: &PortCollection) -> Result<Vec<Socket>> {
-    let hosts = try!(Ipv4ArpScanner::scan_device(pc.clone(), device));
-    let res   = try!(find_open_ports(pc, device, 
+    let mut hosts  = HashSet::new();
+    let arp_hosts  = try!(Ipv4ArpScanner::scan_device(pc.clone(), device));
+    let icmp_hosts = try!(IcmpScanner::scan_device(pc.clone(), device));
+    
+    hosts.extend(arp_hosts);
+    hosts.extend(icmp_hosts);
+    
+    let res = try!(find_open_ports(pc, device, 
         hosts.into_iter(), ports));
     
     Ok(res)
