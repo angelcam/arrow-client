@@ -33,6 +33,7 @@ use std::process;
 use std::thread;
 
 use std::fs::File;
+use std::env::Args;
 use std::fmt::Debug;
 use std::error::Error;
 use std::str::FromStr;
@@ -97,13 +98,20 @@ fn get_socket_address<T>(s: T) -> Result<SocketAddr, RuntimeError>
 
 /// Get MAC address of the first configured ethernet device.
 fn get_first_mac() -> Result<MacAddr, RuntimeError> {
-    let mut devices = EthernetDevice::list()
-        .into_iter();
-    
-    match devices.next() {
-        Some(dev) => Ok(dev.mac_addr),
-        None => Err(RuntimeError::from("there is no configured ethernet device"))
-    }
+    EthernetDevice::list()
+        .into_iter()
+        .next()
+        .map(|dev| dev.mac_addr)
+        .ok_or(RuntimeError::from("there is no configured ethernet device"))
+}
+
+/// Get MAC address of a given network interface.
+fn get_mac(iface: &str) -> Result<MacAddr, RuntimeError> {
+    EthernetDevice::list()
+        .into_iter()
+        .find(|dev| dev.name == iface)
+        .map(|dev| dev.mac_addr)
+        .ok_or(RuntimeError::from("there is no such ethernet device"))
 }
 
 /// Unwrap a given result (if possible) or print the error message and exit 
@@ -195,6 +203,8 @@ fn usage(exit_code: i32) -> ! {
     println!("    arr-host  Angelcam Arrow Service host");
     println!("    arr-port  Angelcam Arrow Service port\n");
     println!("OPTIONS:\n");
+    println!("    -i iface  ethernet interface used for client identification (the first");
+    println!("              configured network interface is used by default)");
     println!("    -c path   path to a CA certificate for Arrow Service identity verification;");
     println!("              in case the path is a directory, it's scanned recursively for");
     println!("              all files with the following extensions:\n");
@@ -209,9 +219,9 @@ fn usage(exit_code: i32) -> ! {
     println!("    -v        enable debug logs\n");
     println!("    --diagnostic-mode   start the client in diagnostic mode (i.e. the client");
     println!("                        will try to connect to a given Arrow Service and it");
-    println!("                        will report succecc as its exit code; note: the");
+    println!("                        will report success as its exit code; note: the");
     println!("                        \"access denied\" response from the server is also");
-    println!("                        considered as a successes)\n");
+    println!("                        considered as a success)\n");
     process::exit(exit_code);
 }
 
@@ -783,92 +793,175 @@ impl<L: 'static + Logger + Clone + Send> Handler for CommandHandler<L> {
     }
 }
 
-/// Arrow Client main function.
-fn main() {
-    let mut logger = syslog::new();
-    let args       = env::args()
-        .collect::<Vec<_>>();
-    
-    if args.len() < 2 {
-        usage(1);
-    } else {
-        let arrow_mac = utils::result_or_error(get_first_mac(), 2, 
-            "unable to get any network interface MAC address");
-        
-        let arrow_addr = &args[1];
-        
-        let mut i = 2;
-        
+const EXIT_CODE_USAGE:         i32 = 1;
+const EXIT_CODE_NETWORK_ERROR: i32 = 2;
+const EXIT_CODE_CONFIG_ERROR:  i32 = 3;
+const EXIT_CODE_SSL_ERROR:     i32 = 4;
+const EXIT_CODE_CERT_ERROR:    i32 = 5;
+
+/// Helper struct for application configuration.
+struct AppConfiguration<L> {
+    logger:            L,
+    ssl_context:       SslContext,
+    app_context:       AppContext,
+    default_svc_table: ServiceTable,
+    arrow_svc_addr:    String,
+    arrow_mac:         MacAddr,
+}
+
+impl<L: Logger> AppConfiguration<L> {
+    /// Initialize application configuration.
+    fn init(logger: L) -> AppConfiguration<L> {
+        let ssl_context = utils::result_or_error(
+            init_ssl(SslMethod::Tlsv1_2, "HIGH:!aNULL:!kRSA:!PSK:!MD5:!RC4"),
+            EXIT_CODE_SSL_ERROR,
+            "unable to set up SSL context");
         let config = ArrowConfig::load(CONFIG_FILE)
             .unwrap_or(ArrowConfig::new());
+        let default_mac_addr = utils::result_or_error(
+            get_first_mac(),
+            EXIT_CODE_NETWORK_ERROR, 
+            "unable to get any network interface MAC address");
         
-        let mut default_svc_table = ServiceTable::new();
-        let mut ssl_context       = utils::result_or_error(init_ssl(
-            SslMethod::Tlsv1_2, "HIGH:!aNULL:!kRSA:!PSK:!MD5:!RC4"), 4,
-            "unable to set up SSL context");
-        let mut app_context       = AppContext::new(config);
+        let mut config = AppConfiguration {
+            logger:            logger,
+            ssl_context:       ssl_context,
+            app_context:       AppContext::new(config),
+            default_svc_table: ServiceTable::new(),
+            arrow_svc_addr:    String::new(),
+            arrow_mac:         default_mac_addr,
+        };
         
-        while i < args.len() {
-            match &args[i] as &str {
-                "-c" => {
-                    utils::result_or_error(load_ca_certificates(
-                        &mut logger, &mut ssl_context, &args[i + 1]), 5,
-                        format!("unable to load certificate(s) from \"{}\"", 
-                            &args[i + 1]));
-                    i += 1;
-                },
-                "-d" if cfg!(feature = "discovery") => {
-                    app_context.discovery = true;
-                },
-                "-r" => {
-                    let service = parse_rtsp_url(&args[i + 1]);
-                    let service = result_or_usage(service);
-                    app_context.config.add_static(service.clone());
-                    default_svc_table.add_static(service);
-                    i += 1;
-                },
-                "-v" => {
-                    logger.set_level(Severity::DEBUG);
-                },
-                "--diagnostic-mode" => {
-                    app_context.diagnostic_mode = true;
-                },
-                _ => {
-                    println!("unknown argument: {}\n", &args[i]);
-                    usage(1);
-                }
-            }
-            
-            i += 1;
+        config.parse_cmd_args(&mut env::args());
+        
+        config
+    }
+    
+    /// Parse given command line arguments.
+    fn parse_cmd_args(&mut self, args: &mut Args) {
+        // skip the application name
+        args.next();
+        
+        if let Some(arrow_svc_addr) = args.next() {
+            self.arrow_svc_addr = arrow_svc_addr;
+        } else {
+            usage(EXIT_CODE_USAGE);
         }
         
-        utils::result_or_error(app_context.config.save(CONFIG_FILE), 3, 
-            format!("unable to save config file \"{}\"", CONFIG_FILE));
-        
-        log_info!(logger, "application started (uuid: {}, mac: {})", 
-            app_context.config.uuid_string(), arrow_mac);
-        
-        let app_context = Shared::new(app_context);
-        
-        let mut event_loop = EventLoop::new()
-            .unwrap();
-        
-        let mut cmd_handler = CommandHandler::new(
-            logger.clone(),
-            default_svc_table,
-            app_context.clone());
-        
-        let cmd_sender = CommandSender::new(event_loop.channel());
-        
-        spawn_arrow_thread(logger, ssl_context, cmd_sender, 
-            arrow_addr, &arrow_mac, &app_context);
-        
-        event_loop.timeout(
-                TimerEvent::ScanNetwork,
-                Duration::new(0, 0))
-            .unwrap();
-        
-        event_loop.run(&mut cmd_handler)
-            .unwrap();
+        while let Some(ref arg) = args.next() {
+            match arg as &str {
+                "-c" => self.ca_certificates(args),
+                "-d" => self.discovery(),
+                "-i" => self.interface(args),
+                "-r" => self.rtsp_service(args),
+                "-v" => self.verbose(),
+                
+                "--diagnostic-mode" => self.diagnostic_mode(),
+                
+                arg => {
+                    println!("unknown argument: {}\n", arg);
+                    usage(EXIT_CODE_USAGE);
+                }
+            }
+        }
     }
+    
+    /// Process the CA certificate argument.
+    fn ca_certificates(&mut self, args: &mut Args) {
+        let path = args.next()
+            .ok_or(RuntimeError::from("CA certificate path expected"));
+        
+        let path = result_or_usage(path);
+        
+        utils::result_or_error(load_ca_certificates(
+            &mut self.logger, &mut self.ssl_context, &path),
+            EXIT_CODE_CERT_ERROR,
+            format!("unable to load certificate(s) from \"{}\"", &path));
+    }
+    
+    /// Process the discovery argument.
+    fn discovery(&mut self) {
+        if cfg!(feature = "discovery") {
+            self.app_context.discovery = true;
+        }
+    }
+    
+    /// Process the interface argument.
+    fn interface(&mut self, args: &mut Args) {
+        let iface = args.next()
+            .ok_or(RuntimeError::from("network interface name expected"));
+        
+        let iface = result_or_usage(iface);
+        
+        self.arrow_mac = utils::result_or_error(
+            get_mac(&iface),
+            EXIT_CODE_NETWORK_ERROR, 
+            "no such network interface");
+    }
+    
+    /// Process the RTSP service argument.
+    fn rtsp_service(&mut self, args: &mut Args) {
+        let url = args.next()
+            .ok_or(RuntimeError::from("URL expected"));
+        
+        let url     = result_or_usage(url);
+        let service = parse_rtsp_url(&url);
+        let service = result_or_usage(service);
+        
+        self.app_context.config.add_static(service.clone());
+        self.default_svc_table.add_static(service);
+    }
+    
+    /// Process the verbose argument.
+    fn verbose(&mut self) {
+        self.logger.set_level(Severity::DEBUG);
+    }
+    
+    /// Process the diagnostic mode argument.
+    fn diagnostic_mode(&mut self) {
+        self.app_context.diagnostic_mode = true;
+    }
+}
+
+/// Arrow Client main function.
+fn main() {
+    let mut app_config = AppConfiguration::init(syslog::new());
+    
+    let app_context = app_config.app_context;
+    
+    utils::result_or_error(app_context.config.save(CONFIG_FILE),
+        EXIT_CODE_CONFIG_ERROR, 
+        format!("unable to save config file \"{}\"", CONFIG_FILE));
+    
+    log_info!(&mut app_config.logger, 
+        "application started (uuid: {}, mac: {})", 
+        app_context.config.uuid_string(), app_config.arrow_mac);
+    
+    let app_context = Shared::new(app_context);
+    
+    let mut event_loop = EventLoop::new()
+        .unwrap();
+    
+    let mut cmd_handler = CommandHandler::new(
+        app_config.logger.clone(),
+        app_config.default_svc_table,
+        app_context.clone());
+    
+    let cmd_sender = CommandSender::new(event_loop.channel());
+    
+    spawn_arrow_thread(
+        app_config.logger,
+        app_config.ssl_context, 
+        cmd_sender, 
+        &app_config.arrow_svc_addr,
+        &app_config.arrow_mac,
+        &app_context);
+    
+    event_loop.timeout(
+            TimerEvent::ScanNetwork,
+            Duration::new(0, 0))
+        .unwrap();
+    
+    event_loop.run(&mut cmd_handler)
+        .unwrap();
 }

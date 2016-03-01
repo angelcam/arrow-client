@@ -218,7 +218,7 @@ pub unsafe fn cstr_to_string(ptr: *const i8) -> String {
 pub fn error<E, M>(err: E, exit_code: i32, msg: M) -> !
     where E: Error + Debug,
           M: Display {
-    println!("ERROR: {} ({})", msg, err);
+    println!("ERROR: {} ({})\n", msg, err);
     process::exit(exit_code);
 }
 
