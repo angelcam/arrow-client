@@ -44,6 +44,7 @@ const SVC_TYPE_RTSP:             u16 = 0x0001;
 const SVC_TYPE_LOCKED_RTSP:      u16 = 0x0002;
 const SVC_TYPE_UNKNOWN_RTSP:     u16 = 0x0003;
 const SVC_TYPE_UNSUPPORTED_RTSP: u16 = 0x0004;
+const SVC_TYPE_TCP:              u16 = 0xffff;
 
 /// Service Table item header.
 #[derive(Debug, Copy, Clone)]
@@ -140,6 +141,8 @@ pub enum Service {
     UnknownRTSP(MacAddr, SocketAddr),
     /// Remote RTSP service without any supported stream (mac, addr, path).
     UnsupportedRTSP(MacAddr, SocketAddr, String),
+    /// General purpose TCP service.
+    TCP(MacAddr, SocketAddr),
 }
 
 impl Service {
@@ -150,7 +153,8 @@ impl Service {
             &Service::RTSP(_, _, _)            => SVC_TYPE_RTSP,
             &Service::LockedRTSP(_, _)         => SVC_TYPE_LOCKED_RTSP,
             &Service::UnknownRTSP(_, _)        => SVC_TYPE_UNKNOWN_RTSP,
-            &Service::UnsupportedRTSP(_, _, _) => SVC_TYPE_UNSUPPORTED_RTSP
+            &Service::UnsupportedRTSP(_, _, _) => SVC_TYPE_UNSUPPORTED_RTSP,
+            &Service::TCP(_, _)                => SVC_TYPE_TCP
         }
     }
     
@@ -162,6 +166,7 @@ impl Service {
             &Service::LockedRTSP(ref addr, _)         => Some(addr),
             &Service::UnknownRTSP(ref addr, _)        => Some(addr),
             &Service::UnsupportedRTSP(ref addr, _, _) => Some(addr),
+            &Service::TCP(ref addr, _)                => Some(addr)
         }
     }
     
@@ -172,7 +177,8 @@ impl Service {
             &Service::RTSP(_, ref addr, _)            => Some(addr),
             &Service::LockedRTSP(_, ref addr)         => Some(addr),
             &Service::UnknownRTSP(_, ref addr)        => Some(addr),
-            &Service::UnsupportedRTSP(_, ref addr, _) => Some(addr)
+            &Service::UnsupportedRTSP(_, ref addr, _) => Some(addr),
+            &Service::TCP(_, ref addr)                => Some(addr)
         }
     }
     
@@ -248,6 +254,9 @@ impl JsonService {
             SVC_TYPE_UNSUPPORTED_RTSP => Ok(Service::UnsupportedRTSP(
                 try!(MacAddr::from_str(&self.mac)),
                 try!(parse_socket_addr(&self.address)), self.path)),
+            SVC_TYPE_TCP => Ok(Service::TCP(
+                try!(MacAddr::from_str(&self.mac)),
+                try!(parse_socket_addr(&self.address)))),
             _ => Err(ConfigError::from("unknown service type"))
         };
         

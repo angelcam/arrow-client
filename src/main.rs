@@ -215,7 +215,9 @@ fn usage(exit_code: i32) -> ! {
     if cfg!(feature = "discovery") {
         println!("    -d        automatic service discovery");
     }
-    println!("    -r URL    local RTSP service URL");
+    println!("    -r URL    add a given RTSP service");
+    println!("    -t addr   add a given TCP service (addr must be in the \"host:port\"");
+    println!("              format)");
     println!("    -v        enable debug logs\n");
     println!("    --diagnostic-mode   start the client in diagnostic mode (i.e. the client");
     println!("                        will try to connect to a given Arrow Service and it");
@@ -854,6 +856,7 @@ impl<L: Logger> AppConfiguration<L> {
                 "-d" => self.discovery(),
                 "-i" => self.interface(args),
                 "-r" => self.rtsp_service(args),
+                "-t" => self.tcp_service(args),
                 "-v" => self.verbose(),
                 
                 "--diagnostic-mode" => self.diagnostic_mode(),
@@ -907,6 +910,23 @@ impl<L: Logger> AppConfiguration<L> {
         let url     = result_or_usage(url);
         let service = parse_rtsp_url(&url);
         let service = result_or_usage(service);
+        
+        self.app_context.config.add_static(service.clone());
+        self.default_svc_table.add_static(service);
+    }
+    
+    /// Process the TCP service argument.
+    fn tcp_service(&mut self, args: &mut Args) {
+        let addr = args.next()
+            .ok_or(RuntimeError::from("TCP socket address expected"));
+        
+        let addr = result_or_usage(addr);
+        let addr = get_socket_address(&addr as &str);
+        let addr = result_or_usage(addr);
+        
+        let mac = get_fake_mac_address(0xffff, &addr);
+        
+        let service = Service::TCP(mac, addr);
         
         self.app_context.config.add_static(service.clone());
         self.default_svc_table.add_static(service);
