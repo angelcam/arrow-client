@@ -216,6 +216,8 @@ fn usage(exit_code: i32) -> ! {
         println!("    -d        automatic service discovery");
     }
     println!("    -r URL    add a given RTSP service");
+    println!("    -h addr   add a given HTTP service (addr must be in the \"host:port\"");
+    println!("              format)");
     println!("    -t addr   add a given TCP service (addr must be in the \"host:port\"");
     println!("              format)");
     println!("    -v        enable debug logs\n");
@@ -856,6 +858,7 @@ impl<L: Logger> AppConfiguration<L> {
                 "-d" => self.discovery(),
                 "-i" => self.interface(args),
                 "-r" => self.rtsp_service(args),
+                "-h" => self.http_service(args),
                 "-t" => self.tcp_service(args),
                 "-v" => self.verbose(),
                 
@@ -869,12 +872,17 @@ impl<L: Logger> AppConfiguration<L> {
         }
     }
     
+    /// Get next argument from a given list.
+    fn next_argument(&mut self, args: &mut Args, emsg: &str) -> String {
+        let arg = args.next()
+            .ok_or(RuntimeError::from(emsg));
+        
+        result_or_usage(arg)
+    }
+    
     /// Process the CA certificate argument.
     fn ca_certificates(&mut self, args: &mut Args) {
-        let path = args.next()
-            .ok_or(RuntimeError::from("CA certificate path expected"));
-        
-        let path = result_or_usage(path);
+        let path = self.next_argument(args, "CA certificate path expected");
         
         utils::result_or_error(load_ca_certificates(
             &mut self.logger, &mut self.ssl_context, &path),
@@ -891,10 +899,7 @@ impl<L: Logger> AppConfiguration<L> {
     
     /// Process the interface argument.
     fn interface(&mut self, args: &mut Args) {
-        let iface = args.next()
-            .ok_or(RuntimeError::from("network interface name expected"));
-        
-        let iface = result_or_usage(iface);
+        let iface = self.next_argument(args, "network interface name expected");
         
         self.arrow_mac = utils::result_or_error(
             get_mac(&iface),
@@ -904,10 +909,8 @@ impl<L: Logger> AppConfiguration<L> {
     
     /// Process the RTSP service argument.
     fn rtsp_service(&mut self, args: &mut Args) {
-        let url = args.next()
-            .ok_or(RuntimeError::from("URL expected"));
+        let url = self.next_argument(args, "URL expected");
         
-        let url     = result_or_usage(url);
         let service = parse_rtsp_url(&url);
         let service = result_or_usage(service);
         
@@ -915,12 +918,25 @@ impl<L: Logger> AppConfiguration<L> {
         self.default_svc_table.add_static(service);
     }
     
+    /// Process the HTTP service argument.
+    fn http_service(&mut self, args: &mut Args) {
+        let addr = self.next_argument(args, "TCP socket address expected");
+        
+        let addr = get_socket_address(&addr as &str);
+        let addr = result_or_usage(addr);
+        
+        let mac = get_fake_mac_address(0xffff, &addr);
+        
+        let service = Service::HTTP(mac, addr);
+        
+        self.app_context.config.add_static(service.clone());
+        self.default_svc_table.add_static(service);
+    }
+    
     /// Process the TCP service argument.
     fn tcp_service(&mut self, args: &mut Args) {
-        let addr = args.next()
-            .ok_or(RuntimeError::from("TCP socket address expected"));
+        let addr = self.next_argument(args, "TCP socket address expected");
         
-        let addr = result_or_usage(addr);
         let addr = get_socket_address(&addr as &str);
         let addr = result_or_usage(addr);
         

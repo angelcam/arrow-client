@@ -44,6 +44,7 @@ const SVC_TYPE_RTSP:             u16 = 0x0001;
 const SVC_TYPE_LOCKED_RTSP:      u16 = 0x0002;
 const SVC_TYPE_UNKNOWN_RTSP:     u16 = 0x0003;
 const SVC_TYPE_UNSUPPORTED_RTSP: u16 = 0x0004;
+const SVC_TYPE_HTTP:             u16 = 0x0005;
 const SVC_TYPE_TCP:              u16 = 0xffff;
 
 /// Service Table item header.
@@ -137,11 +138,13 @@ pub enum Service {
     RTSP(MacAddr, SocketAddr, String),
     /// Remote RTSP service requiring authorization (mac, addr).
     LockedRTSP(MacAddr, SocketAddr),
-    /// Remote RTSP service without any known path.
+    /// Remote RTSP service without any known path (mac, addr).
     UnknownRTSP(MacAddr, SocketAddr),
     /// Remote RTSP service without any supported stream (mac, addr, path).
     UnsupportedRTSP(MacAddr, SocketAddr, String),
-    /// General purpose TCP service.
+    /// Remote HTTP service (mac, addr).
+    HTTP(MacAddr, SocketAddr),
+    /// General purpose TCP service (mac, addr).
     TCP(MacAddr, SocketAddr),
 }
 
@@ -154,6 +157,7 @@ impl Service {
             &Service::LockedRTSP(_, _)         => SVC_TYPE_LOCKED_RTSP,
             &Service::UnknownRTSP(_, _)        => SVC_TYPE_UNKNOWN_RTSP,
             &Service::UnsupportedRTSP(_, _, _) => SVC_TYPE_UNSUPPORTED_RTSP,
+            &Service::HTTP(_, _)               => SVC_TYPE_HTTP,
             &Service::TCP(_, _)                => SVC_TYPE_TCP
         }
     }
@@ -166,6 +170,7 @@ impl Service {
             &Service::LockedRTSP(ref addr, _)         => Some(addr),
             &Service::UnknownRTSP(ref addr, _)        => Some(addr),
             &Service::UnsupportedRTSP(ref addr, _, _) => Some(addr),
+            &Service::HTTP(ref addr, _)               => Some(addr),
             &Service::TCP(ref addr, _)                => Some(addr)
         }
     }
@@ -178,6 +183,7 @@ impl Service {
             &Service::LockedRTSP(_, ref addr)         => Some(addr),
             &Service::UnknownRTSP(_, ref addr)        => Some(addr),
             &Service::UnsupportedRTSP(_, ref addr, _) => Some(addr),
+            &Service::HTTP(_, ref addr)               => Some(addr),
             &Service::TCP(_, ref addr)                => Some(addr)
         }
     }
@@ -254,6 +260,9 @@ impl JsonService {
             SVC_TYPE_UNSUPPORTED_RTSP => Ok(Service::UnsupportedRTSP(
                 try!(MacAddr::from_str(&self.mac)),
                 try!(parse_socket_addr(&self.address)), self.path)),
+            SVC_TYPE_HTTP => Ok(Service::HTTP(
+                try!(MacAddr::from_str(&self.mac)),
+                try!(parse_socket_addr(&self.address)))),
             SVC_TYPE_TCP => Ok(Service::TCP(
                 try!(MacAddr::from_str(&self.mac)),
                 try!(parse_socket_addr(&self.address)))),
