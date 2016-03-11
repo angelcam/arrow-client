@@ -345,7 +345,7 @@ pub mod scanner {
         /// ports. (It's expected the hosts are accessible through a local 
         /// Ethernet network, the EthernetDevice and the MAC address must 
         /// be also specified.)
-        pub fn scan_ipv4_hosts<HI: Iterator<Item=Host>>(
+        pub fn scan_ipv4_hosts<HI: Iterator<Item=(MacAddr, Ipv4Addr)>>(
             tc: ThreadingContext,
             device: &EthernetDevice, 
             hosts: HI,
