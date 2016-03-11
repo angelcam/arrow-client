@@ -45,6 +45,7 @@ macro_rules! log_error {
 }
 
 pub mod syslog;
+pub mod stderr;
 
 /// Log message severity.
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -68,7 +69,7 @@ pub trait Logger {
     /// Set minimum log level.
     ///
     /// Messages with lover level will be discarded.
-    fn set_level(&mut self, s: Severity) -> &mut Self;
+    fn set_level(&mut self, s: Severity);
     
     /// Get minimum log level.
     fn get_level(&self) -> Severity;
@@ -94,6 +95,87 @@ pub trait Logger {
     }
 }
 
+/// Helper trait for implementing Clone to the LoggerWrapper.
+pub trait CloneableLogger : Logger {
+    /// Clone as trait object.
+    fn clone(&self) -> Box<CloneableLogger>;
+}
+
+impl<T> CloneableLogger for T where T: 'static + Logger + Clone {
+    fn clone(&self) -> Box<CloneableLogger> {
+        Box::new(<T as Clone>::clone(self))
+    }
+}
+
+/// Abstraction from a concrete logger type.
+pub struct LoggerWrapper {
+    logger: Box<CloneableLogger>,
+}
+
+impl LoggerWrapper {
+    /// Create a new logger wrapper.
+    pub fn new<L: 'static + CloneableLogger>(logger: L) -> LoggerWrapper {
+        LoggerWrapper {
+            logger: Box::new(logger)
+        }
+    }
+}
+
+impl Clone for LoggerWrapper {
+    fn clone(&self) -> LoggerWrapper {
+        let logger = self.logger.as_ref()
+            .clone();
+        
+        LoggerWrapper {
+            logger: logger
+        }
+    }
+}
+
+impl Logger for LoggerWrapper {
+    fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str) {
+        self.logger.log(file, line, s, msg)
+    }
+    
+    fn set_level(&mut self, s: Severity) {
+        self.logger.set_level(s);
+    }
+    
+    fn get_level(&self) -> Severity {
+        self.logger.get_level()
+    }
+}
+
+unsafe impl Send for LoggerWrapper { }
+
+/// This logger does nothing but holds the severity level.
+#[derive(Debug, Copy, Clone)]
+pub struct DummyLogger {
+    level: Severity,
+}
+
+impl DummyLogger {
+    /// Create a new dummy logger.
+    pub fn new() -> DummyLogger {
+        DummyLogger {
+            level: Severity::INFO
+        }
+    }
+}
+
+impl Logger for DummyLogger {
+    fn log(&mut self, _: &str, _: u32, _: Severity, _: &str) {
+    }
+    
+    fn set_level(&mut self, s: Severity) {
+        self.level = s;
+    }
+    
+    fn get_level(&self) -> Severity {
+        self.level
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,7 +189,7 @@ mod tests {
             self.last_severity = s;
         }
     
-        fn set_level(&mut self, _: Severity) -> &mut Self { self }
+        fn set_level(&mut self, _: Severity) { }
         fn get_level(&self) -> Severity { Severity::DEBUG }
     }
     

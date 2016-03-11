@@ -43,7 +43,8 @@ use std::thread::JoinHandle;
 use std::io::{BufWriter, Write};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
 
-use utils::logger::syslog;
+use utils::logger;
+use utils::logger::{LoggerWrapper, DummyLogger};
 
 use utils::{Shared, RuntimeError};
 use utils::logger::{Logger, Severity};
@@ -225,7 +226,10 @@ fn usage(exit_code: i32) -> ! {
     println!("                        will try to connect to a given Arrow Service and it");
     println!("                        will report success as its exit code; note: the");
     println!("                        \"access denied\" response from the server is also");
-    println!("                        considered as a success)\n");
+    println!("                        considered as a success)");
+    println!("    --log-stderr        send log messages into stderr instead of syslog");
+    println!("    --log-stderr-pretty send log messages into stderr instead of syslog and use");
+    println!("                        colored messages\n");
     process::exit(exit_code);
 }
 
@@ -259,12 +263,10 @@ fn is_cert_file<P: AsRef<Path>>(path: P) -> bool {
 }
 
 /// Load all certificate files conained within a given directory structure.
-fn load_ca_certificate_dir<L, P>(
-    logger: &mut L, 
+fn load_ca_certificate_dir<P>(
     ssl_context: &mut SslContext, 
     path: P) -> Result<(), RuntimeError> 
-    where L: Logger,
-          P: AsRef<Path> {
+    where P: AsRef<Path> {
     let path = path.as_ref();
     let dir  = try!(path.read_dir()
         .map_err(|err| RuntimeError::from(format!("{}", err))));
@@ -276,12 +278,10 @@ fn load_ca_certificate_dir<L, P>(
         let path = entry.path();
         
         if path.is_dir() {
-            try!(load_ca_certificate_dir(logger, ssl_context, &path));
+            try!(load_ca_certificate_dir(ssl_context, &path));
         } else if is_cert_file(&path) {
-            utils::result_or_log(logger, Severity::WARN, 
-                format!("unable to load certificate file \"{}\"", 
-                    path.to_string_lossy()),
-                ssl_context.set_CA_file(&path));
+            try!(ssl_context.set_CA_file(&path)
+                .map_err(|err| RuntimeError::from(format!("{}", err))));
         }
     }
     
@@ -289,15 +289,13 @@ fn load_ca_certificate_dir<L, P>(
 }
 
 /// Load CA certificates from a given path.
-fn load_ca_certificates<L, P>(
-    logger: &mut L, 
+fn load_ca_certificates<P>(
     ssl_context: &mut SslContext, 
     path: P) -> Result<(), RuntimeError>
-    where L: Logger,
-          P: AsRef<Path> {
+    where P: AsRef<Path> {
     let path = path.as_ref();
     if path.is_dir() {
-        load_ca_certificate_dir(logger, ssl_context, path)
+        load_ca_certificate_dir(ssl_context, path)
     } else {
         ssl_context.set_CA_file(path)
             .map_err(|err| RuntimeError::from(format!("{}", err)))
@@ -803,9 +801,17 @@ const EXIT_CODE_CONFIG_ERROR:  i32 = 3;
 const EXIT_CODE_SSL_ERROR:     i32 = 4;
 const EXIT_CODE_CERT_ERROR:    i32 = 5;
 
+/// Type of the logger backend that should be used.
+enum LoggerType {
+    Syslog,
+    Stderr,
+    StderrPretty,
+}
+
 /// Helper struct for application configuration.
-struct AppConfiguration<L> {
-    logger:            L,
+struct AppConfiguration {
+    logger:            LoggerWrapper,
+    logger_type:       LoggerType,
     ssl_context:       SslContext,
     app_context:       AppContext,
     default_svc_table: ServiceTable,
@@ -813,9 +819,9 @@ struct AppConfiguration<L> {
     arrow_mac:         MacAddr,
 }
 
-impl<L: Logger> AppConfiguration<L> {
+impl AppConfiguration {
     /// Initialize application configuration.
-    fn init(logger: L) -> AppConfiguration<L> {
+    fn init() -> AppConfiguration {
         let ssl_context = utils::result_or_error(
             init_ssl(SslMethod::Tlsv1_2, "HIGH:!aNULL:!kRSA:!PSK:!MD5:!RC4"),
             EXIT_CODE_SSL_ERROR,
@@ -828,7 +834,8 @@ impl<L: Logger> AppConfiguration<L> {
             "unable to get any network interface MAC address");
         
         let mut config = AppConfiguration {
-            logger:            logger,
+            logger:            LoggerWrapper::new(DummyLogger::new()),
+            logger_type:       LoggerType::Syslog,
             ssl_context:       ssl_context,
             app_context:       AppContext::new(config),
             default_svc_table: ServiceTable::new(),
@@ -837,6 +844,16 @@ impl<L: Logger> AppConfiguration<L> {
         };
         
         config.parse_cmd_args(&mut env::args());
+        
+        let level = config.logger.get_level();
+        
+        config.logger = match config.logger_type {
+            LoggerType::Syslog       => LoggerWrapper::new(logger::syslog::new()),
+            LoggerType::Stderr       => LoggerWrapper::new(logger::stderr::new()),
+            LoggerType::StderrPretty => LoggerWrapper::new(logger::stderr::new_pretty()),
+        };
+        
+        config.logger.set_level(level);
         
         config
     }
@@ -862,7 +879,9 @@ impl<L: Logger> AppConfiguration<L> {
                 "-t" => self.tcp_service(args),
                 "-v" => self.verbose(),
                 
-                "--diagnostic-mode" => self.diagnostic_mode(),
+                "--diagnostic-mode"   => self.diagnostic_mode(),
+                "--log-stderr"        => self.log_stderr(),
+                "--log-stderr-pretty" => self.log_stderr_pretty(),
                 
                 arg => {
                     println!("unknown argument: {}\n", arg);
@@ -885,7 +904,7 @@ impl<L: Logger> AppConfiguration<L> {
         let path = self.next_argument(args, "CA certificate path expected");
         
         utils::result_or_error(load_ca_certificates(
-            &mut self.logger, &mut self.ssl_context, &path),
+            &mut self.ssl_context, &path),
             EXIT_CODE_CERT_ERROR,
             format!("unable to load certificate(s) from \"{}\"", &path));
     }
@@ -957,11 +976,21 @@ impl<L: Logger> AppConfiguration<L> {
     fn diagnostic_mode(&mut self) {
         self.app_context.diagnostic_mode = true;
     }
+    
+    /// Process the log-stderr argument.
+    fn log_stderr(&mut self) {
+        self.logger_type = LoggerType::Stderr;
+    }
+    
+    /// Process the log-stderr-pretty argument.
+    fn log_stderr_pretty(&mut self) {
+        self.logger_type = LoggerType::StderrPretty;
+    }
 }
 
 /// Arrow Client main function.
 fn main() {
-    let mut app_config = AppConfiguration::init(syslog::new());
+    let mut app_config = AppConfiguration::init();
     
     let app_context = app_config.app_context;
     

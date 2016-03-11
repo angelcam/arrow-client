@@ -78,9 +78,8 @@ impl Logger for Syslog {
         }
     }
     
-    fn set_level(&mut self, s: Severity) -> &mut Self {
+    fn set_level(&mut self, s: Severity) {
         self.level = s;
-        self
     }
     
     fn get_level(&self) -> Severity {

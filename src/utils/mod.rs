@@ -256,14 +256,6 @@ mod tests {
     use std::ffi::CString;
     use utils::logger::*;
     
-    struct DummyLogger;
-    
-    impl Logger for DummyLogger {
-        fn log(&mut self, _: &str, _: u32, _: Severity, _: &str) { }
-        fn set_level(&mut self, _: Severity) -> &mut Self { self }
-        fn get_level(&self) -> Severity { Severity::DEBUG }
-    }
-    
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     #[repr(packed)]
     struct TestType {
@@ -298,12 +290,15 @@ mod tests {
     
     #[test]
     fn test_result_or_log() {
+        let mut logger = DummyLogger::new();
+        
         assert_eq!(Some(1),
             result_or_log::<DummyLogger, i32, RuntimeError, &'static str>(
-            &mut DummyLogger, Severity::WARN, "", Ok(1)));
+            &mut logger, Severity::WARN, "", Ok(1)));
+        
         assert_eq!(None,
             result_or_log::<DummyLogger, i32, RuntimeError, &'static str>(
-            &mut DummyLogger, Severity::WARN, "", 
+            &mut logger, Severity::WARN, "", 
             Err(RuntimeError::from("foo"))));
     }
 }
