@@ -204,6 +204,7 @@ fn is_supported_service(sdp: &[u8]) -> bool {
 }
 
 /// RTSP DESCRIBE status.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum DescribeStatus {
     Ok,
     Locked,
@@ -327,6 +328,13 @@ fn find_rtsp_paths(
         .collect::<Vec<_>>();
     
     res.extend(unsupported);
+    
+    // Some RTSP servers respond with RTSP 200 to all paths even though they 
+    // cannot stream from all the paths. We should treat them as unknown RTSP 
+    // services.
+    if res.len() == paths.len() {
+        res.clear();
+    }
     
     if locked {
         res.push(Service::LockedRTSP(mac, addr));
