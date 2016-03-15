@@ -518,7 +518,8 @@ impl Client {
     /// Send DESCRIBE command.
     pub fn describe(&mut self, path: &str) -> Result<Response> {
         let request = Request::new(Method::DESCRIBE, &self.endpoint, path)
-            .add_header(("CSeq", 1));
+            .add_header(("CSeq", 1))
+            .add_header(("Accept", "application/sdp"));
         
         try!(self.connection.send(&request, &mut self.event_loop));
         
