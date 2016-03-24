@@ -18,6 +18,7 @@ use std::io;
 use std::ptr;
 
 use std::io::Write;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use time;
 
@@ -179,5 +180,67 @@ impl Write for WriteBuffer {
     /// Do nothing.
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+/// IpAddr extension.
+pub trait IpAddrEx {
+    /// Get left-aligned byte representation of the IP address.
+    fn bytes(&self) -> [u8; 16];
+    
+    /// Get IP address version.
+    fn version(&self) -> u8;
+}
+
+impl IpAddrEx for IpAddr {
+    fn bytes(&self) -> [u8; 16] {
+        match self {
+            &IpAddr::V4(ref ip_addr) => ip_addr.bytes(),
+            &IpAddr::V6(ref ip_addr) => ip_addr.bytes()
+        }
+    }
+    
+    fn version(&self) -> u8 {
+        match self {
+            &IpAddr::V4(ref ip_addr) => ip_addr.version(),
+            &IpAddr::V6(ref ip_addr) => ip_addr.version()
+        }
+    }
+}
+
+impl IpAddrEx for Ipv4Addr {
+    fn bytes(&self) -> [u8; 16] {
+        let octets  = self.octets();
+        let mut res = [0u8; 16];
+        
+        for i in 0..octets.len() {
+            res[i] = octets[i];
+        }
+        
+        res
+    }
+    
+    fn version(&self) -> u8 {
+        4
+    }
+}
+
+impl IpAddrEx for Ipv6Addr {
+    fn bytes(&self) -> [u8; 16] {
+        let segments = self.segments();
+        let mut res  = [0u8; 16];
+        
+        for i in 0..segments.len() {
+            let segment = segments[i];
+            let j       = i << 1;
+            res[j]      = (segment >> 8) as u8;
+            res[j + 1]  = (segment & 0xff) as u8;
+        }
+        
+        res
+    }
+    
+    fn version(&self) -> u8 {
+        6
     }
 }

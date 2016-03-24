@@ -25,7 +25,7 @@ use std::error::Error;
 use std::collections::HashSet;
 use std::io::{BufReader, BufRead};
 use std::fmt::{Display, Formatter};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, SocketAddr, SocketAddrV4};
 
 use net::rtsp;
 use net::raw::pcap;
@@ -33,9 +33,10 @@ use net::raw::pcap;
 use net::rtsp::Client as RtspClient;
 use net::raw::devices::EthernetDevice;
 use net::raw::ether::MacAddr;
-use net::arrow::protocol::Service;
 use net::raw::arp::scanner::Ipv4ArpScanner;
 use net::raw::icmp::scanner::IcmpScanner;
+use net::arrow::protocol::{Service, NetworkScanInfo};
+use net::arrow::protocol::{HINFO_FLAG_ARP, HINFO_FLAG_ICMP};
 use net::raw::tcp::scanner::{TcpPortScanner, PortCollection};
 use net::rtsp::sdp::{SessionDescription, MediaType, RTPMap, FromAttribute};
 
@@ -93,13 +94,8 @@ impl From<io::Error> for DiscoveryError {
 /// Discovery result type alias.
 pub type Result<T> = result::Result<T, DiscoveryError>;
 
-/// Discovery host type alias.
-type Host = (MacAddr, Ipv4Addr);
-/// Discovery service type alias.
-type Socket = (MacAddr, SocketAddrV4);
-
 /// Find all RTSP streams in all local networks.
-pub fn find_rtsp_streams() -> Result<Vec<Service>> {
+pub fn find_rtsp_streams() -> Result<NetworkScanInfo> {
     let tc      = pcap::new_threading_context();
     let devices = EthernetDevice::list();
     
@@ -118,22 +114,22 @@ pub fn find_rtsp_streams() -> Result<Vec<Service>> {
         threads.push(handle);
     }
     
-    let mut services = Vec::new();
+    let mut sinfo = NetworkScanInfo::new();
     
     for handle in threads {
-        match handle.join() {
-            Err(_)  => return Err(DiscoveryError::from("port scanner thread panicked")),
-            Ok(res) => services.extend(try!(res))
+        if let Ok(res) = handle.join() {
+            sinfo.merge(try!(res));
+        } else {
+            return Err(DiscoveryError::from("port scanner thread panicked"));
         }
     }
     
-    let rtsp_services = try!(find_rtsp_services(&services));
+    let rtsp_services = try!(find_rtsp_services(&sinfo));
     
     let mut threads = Vec::new();
     let paths       = Arc::new(try!(load_rtsp_paths(RTSP_PATH_FILE)));
     
     for (mac, addr) in rtsp_services {
-        let addr   = SocketAddr::V4(addr);
         let paths  = paths.clone();
         let handle = thread::spawn(move || {
             find_rtsp_paths(mac, addr, &paths)
@@ -141,17 +137,21 @@ pub fn find_rtsp_streams() -> Result<Vec<Service>> {
         threads.push(handle);
     }
     
-    let mut res = Vec::new();
+    let mut services = Vec::new();
     
     for handle in threads {
         match handle.join() {
             Err(_) => return Err(DiscoveryError::from(
                 "path testing thread panicked")),
-            Ok(svc) => res.extend(try!(svc))
+            Ok(svcs) => services.extend(try!(svcs))
         }
     }
     
-    Ok(res)
+    for svc in services {
+        sinfo.add_service(svc);
+    }
+    
+    Ok(sinfo)
 }
 
 /// Load all known RTSP path variants from a given file.
@@ -247,54 +247,71 @@ fn get_describe_status(addr: SocketAddr, path: &str) -> Result<DescribeStatus> {
 fn find_services(
     pc: pcap::ThreadingContext,
     device: &EthernetDevice,
-    ports: &PortCollection) -> Result<Vec<Socket>> {
-    let mut hosts  = HashSet::new();
-    let arp_hosts  = try!(Ipv4ArpScanner::scan_device(pc.clone(), device));
-    let icmp_hosts = try!(IcmpScanner::scan_device(pc.clone(), device));
+    ports: &PortCollection) -> Result<NetworkScanInfo> {
+    let mut sinfo  = NetworkScanInfo::new();
     
-    hosts.extend(arp_hosts);
-    hosts.extend(icmp_hosts);
+    for (mac, ip) in try!(Ipv4ArpScanner::scan_device(pc.clone(), device)) {
+        sinfo.add_host(mac, IpAddr::V4(ip), HINFO_FLAG_ARP);
+    }
     
-    let res = try!(find_open_ports(pc, device, 
-        hosts.into_iter(), ports));
+    for (mac, ip) in try!(IcmpScanner::scan_device(pc.clone(), device)) {
+        sinfo.add_host(mac, IpAddr::V4(ip), HINFO_FLAG_ICMP);
+    }
     
-    Ok(res)
+    let open_ports = {
+        let hosts = sinfo.hosts()
+            .map(|host| (host.mac_addr, host.ip_addr));
+        
+        try!(find_open_ports(pc, device, hosts, ports))
+    };
+    
+    for (mac, addr) in open_ports {
+        sinfo.add_port(mac, addr.ip(), addr.port());
+    }
+    
+    Ok(sinfo)
 }
 
 /// Check if any of given TCP ports is open on on any host from a given set.
-fn find_open_ports<HI: Iterator<Item=Host>>(
+fn find_open_ports<H: IntoIterator<Item=(MacAddr, IpAddr)>>(
     pc: pcap::ThreadingContext,
     device: &EthernetDevice,
-    hosts: HI, 
-    ports: &PortCollection) -> Result<Vec<Socket>> {
+    hosts: H, 
+    ports: &PortCollection) -> Result<Vec<(MacAddr, SocketAddr)>> {
+    let hosts = hosts.into_iter()
+        .filter_map(|(mac, ip)| match ip {
+            IpAddr::V4(ip) => Some((mac, ip)),
+            _              => None
+        });
+    
     let res = try!(TcpPortScanner::scan_ipv4_hosts(pc, device, hosts, ports))
         .into_iter()
-        .map(|(mac, ip, p)| (mac, SocketAddrV4::new(ip, p)))
+        .map(|(mac, ip, p)| (mac, SocketAddr::V4(SocketAddrV4::new(ip, p))))
         .collect::<Vec<_>>();
     
     Ok(res)
 }
 
 /// Find all RTSP services among a given set of sockets.
-fn find_rtsp_services(sockets: &[Socket]) -> Result<Vec<Socket>> {
+fn find_rtsp_services(
+    sinfo: &NetworkScanInfo) -> Result<Vec<(MacAddr, SocketAddr)>> {
     let mut threads = Vec::new();
     let mut res     = Vec::new();
     
-    for &(mac, addr) in sockets {
+    for (mac, addr) in sinfo.socket_addrs() {
         let handle = thread::spawn(move || {
-            (mac, addr, is_rtsp_service(SocketAddr::V4(addr)))
+            (mac, addr, is_rtsp_service(addr))
         });
         threads.push(handle);
     }
     
     for handle in threads {
-        match handle.join() {
-            Err(_) => return Err(DiscoveryError::from("RTSP service testing thread panicked")),
-            Ok((mac, addr, rtsp)) => {
-                if try!(rtsp) {
-                    res.push((mac, addr))
-                }
+        if let Ok((mac, addr, rtsp)) = handle.join() {
+            if try!(rtsp) {
+                res.push((mac, addr));
             }
+        } else {
+            return Err(DiscoveryError::from("RTSP service testing thread panicked"));
         }
     }
     

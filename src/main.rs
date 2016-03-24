@@ -576,17 +576,18 @@ fn network_scanner_thread<L: Logger + Clone>(
     mut logger: L, 
     app_context: Shared<AppContext>) {
     log_info!(logger, "looking for local services...");
-    let services = utils::result_or_log(&mut logger, Severity::WARN, 
+    let scan_info = utils::result_or_log(&mut logger, Severity::WARN, 
         "network scanner error", discovery::find_rtsp_streams());
     
-    if let Some(services) = services {
+    if let Some(scan_info) = scan_info {
         let mut app_context = app_context.lock()
             .unwrap();
-        let config = &mut app_context.config;
-        let count  = services.len();
+        let config   = &mut app_context.config;
+        let services = scan_info.services();
+        let count    = services.len();
         
         for svc in services {
-            config.add(svc);
+            config.add(svc.clone());
         }
         
         config.update_active_services();

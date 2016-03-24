@@ -24,12 +24,13 @@ use std::str::FromStr;
 use std::error::Error;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::net::{ToSocketAddrs, SocketAddr, SocketAddrV4, Ipv4Addr, Ipv6Addr};
+use std::net::{ToSocketAddrs, SocketAddr, SocketAddrV4, Ipv4Addr};
 
 use utils;
 
 use utils::Serialize;
 use utils::config::ConfigError;
+use net::utils::IpAddrEx;
 use net::raw::ether::MacAddr;
 use net::arrow::protocol::control::ControlMessageBody;
 
@@ -66,51 +67,16 @@ impl ServiceHeader {
         svc_type: u16, 
         haddr: &MacAddr, 
         saddr: &SocketAddr) -> ServiceHeader {
-        let ip_version = match saddr {
-            &SocketAddr::V4(_) => 4,
-            &SocketAddr::V6(_) => 6
-        };
-        
-        let ip_bytes   = match saddr {
-            &SocketAddr::V4(ref addr) => Self::ipv4_bytes(addr.ip()),
-            &SocketAddr::V6(ref addr) => Self::ipv6_bytes(addr.ip())
-        };
+        let ip_addr = saddr.ip();
         
         ServiceHeader {
             svc_id:     svc_id,
             svc_type:   svc_type,
             mac_addr:   haddr.octets(),
-            ip_version: ip_version,
-            ip_addr:    ip_bytes,
+            ip_version: ip_addr.version(),
+            ip_addr:    ip_addr.bytes(),
             port:       saddr.port(),
         }
-    }
-    
-    /// Get IPv6 bytes.
-    fn ipv6_bytes(addr: &Ipv6Addr) -> [u8; 16] {
-        let segments = addr.segments();
-        let mut res  = [0u8; 16];
-        
-        for i in 0..segments.len() {
-            let segment = segments[i];
-            let j       = i << 1;
-            res[j]      = (segment >> 8) as u8;
-            res[j + 1]  = (segment & 0xff) as u8;
-        }
-        
-        res
-    }
-    
-    /// Get IPv4 bytes left-aligned and padded to 16 bytes.
-    fn ipv4_bytes(addr: &Ipv4Addr) -> [u8; 16] {
-        let octets  = addr.octets();
-        let mut res = [0u8; 16];
-        
-        for i in 0..octets.len() {
-            res[i] = octets[i];
-        }
-        
-        res
     }
 }
 
@@ -198,7 +164,7 @@ impl Service {
     }
     
     /// Serialize this Service Table item in-place.
-    fn serialize<W: Write>(&self, w: &mut W, id: u16) -> io::Result<()> {
+    pub fn serialize<W: Write>(&self, w: &mut W, id: u16) -> io::Result<()> {
         let dhaddr = MacAddr::new(0, 0, 0, 0, 0, 0);
         let dsaddr = SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::new(0, 0, 0, 0), 0));
@@ -392,6 +358,15 @@ impl ServiceTable {
                 Some(elem) => Some(elem.service.clone()),
                 None       => None
             }
+        }
+    }
+    
+    /// Get ID of a given service.
+    pub fn get_id(&self, svc: &Service) -> Option<u16> {
+        match svc {
+            &Service::ControlProtocol => Some(0),
+            svc => self.map.get(&get_service_table_key(svc))
+                        .map(|id| *id as u16)
         }
     }
     
