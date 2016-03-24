@@ -17,7 +17,6 @@
 pub mod control;
 pub mod svc_table;
 
-#[cfg(feature = "discovery")]
 pub mod scan_info;
 
 pub use self::control::ACK_NO_ERROR;
@@ -43,13 +42,9 @@ pub use self::control::StatusMessage;
 pub use self::svc_table::Service;
 pub use self::svc_table::ServiceTable;
 
-#[cfg(feature = "discovery")]
 pub use self::scan_info::HostInfo;
-#[cfg(feature = "discovery")]
 pub use self::scan_info::NetworkScanInfo;
-#[cfg(feature = "discovery")]
 pub use self::scan_info::HINFO_FLAG_ARP;
-#[cfg(feature = "discovery")]
 pub use self::scan_info::HINFO_FLAG_ICMP;
 
 use std::io;

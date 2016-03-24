@@ -27,6 +27,8 @@ use std::fmt::{Display, Formatter};
 use utils;
 use net::raw::ether;
 
+use net::arrow::protocol::NetworkScanInfo;
+
 use net::arrow::protocol::{Service, ServiceTable};
 
 use uuid;
@@ -285,6 +287,8 @@ pub struct AppContext {
     pub diagnostic_mode: bool,
     /// Service discovery enabler.
     pub discovery:       bool,
+    /// Last report from the network scanner.
+    pub scan_info:       NetworkScanInfo,
 }
 
 impl AppContext {
@@ -294,7 +298,8 @@ impl AppContext {
             config:          config,
             scanning:        false,
             diagnostic_mode: false,
-            discovery:       false
+            discovery:       false,
+            scan_info:       NetworkScanInfo::new()
         }
     }
 }

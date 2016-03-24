@@ -582,18 +582,23 @@ fn network_scanner_thread<L: Logger + Clone>(
     if let Some(scan_info) = scan_info {
         let mut app_context = app_context.lock()
             .unwrap();
-        let config   = &mut app_context.config;
-        let services = scan_info.services();
-        let count    = services.len();
         
-        for svc in services {
-            config.add(svc.clone());
+        {
+            let config   = &mut app_context.config;
+            let services = scan_info.services();
+            let count    = services.len();
+            
+            for svc in services {
+                config.add(svc.clone());
+            }
+            
+            config.update_active_services();
+            
+            log_info!(logger, "{} services found, current service table: {}", 
+                count, config.service_table());
         }
         
-        config.update_active_services();
-        
-        log_info!(logger, "{} services found, current service table: {}", 
-            count, config.service_table());
+        app_context.scan_info = scan_info;
     }
 }
 
