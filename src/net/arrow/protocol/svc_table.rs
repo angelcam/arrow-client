@@ -186,7 +186,7 @@ impl Service {
     }
     
     /// Get size of this Service Table item in bytes.
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         let path_bytes = match self.path() {
             Some(path) => path.as_bytes(),
             None       => &[] as &[u8]

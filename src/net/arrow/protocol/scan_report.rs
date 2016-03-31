@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Scan info message definitions.
+//! Scan report definitions.
 
 use std::io;
+use std::mem;
 
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
@@ -22,9 +23,11 @@ use std::collections::{HashSet, HashMap};
 use std::collections::hash_set::Iter as HashSetIterator;
 use std::collections::hash_map::Iter as HashMapIterator;
 
+use utils;
+
 use utils::Serialize;
 use net::raw::ether::MacAddr;
-use net::arrow::protocol::{Service, ServiceTable};
+use net::arrow::protocol::{ControlMessageBody, Service, ServiceTable};
 
 pub use self::host_info::HINFO_FLAG_ARP;
 pub use self::host_info::HINFO_FLAG_ICMP;
@@ -33,17 +36,17 @@ pub use self::host_info::HostInfo;
 
 type HostInfoKey = (MacAddr, IpAddr);
 
-/// Network scan info.
+/// Network scan report.
 #[derive(Debug, Clone)]
-pub struct NetworkScanInfo {
+pub struct ScanReport {
     hosts:    HashMap<HostInfoKey, HostInfo>,
     services: HashSet<Service>
 }
 
-impl NetworkScanInfo {
-    /// Create a new network scan info record.
-    pub fn new() -> NetworkScanInfo {
-        NetworkScanInfo {
+impl ScanReport {
+    /// Create a new network scan report.
+    pub fn new() -> ScanReport {
+        ScanReport {
             hosts:    HashMap::new(),
             services: HashSet::new()
         }
@@ -96,6 +99,7 @@ impl NetworkScanInfo {
         HostInfoIterator::new(self.hosts.iter())
     }
     
+    /// Get socket addresses.
     pub fn socket_addrs(&self) -> SocketAddrIterator {
         SocketAddrIterator::new(self.hosts())
     }
@@ -105,8 +109,8 @@ impl NetworkScanInfo {
         ServiceIterator::new(self.services.iter())
     }
     
-    /// Merge with a given scan info.
-    pub fn merge(&mut self, other: NetworkScanInfo) {
+    /// Merge with a given scan report.
+    pub fn merge(&mut self, other: ScanReport) {
         for (key, other_host) in other.hosts {
             if !self.hosts.contains_key(&key) {
                 self.hosts.insert(key, other_host);
@@ -117,32 +121,6 @@ impl NetworkScanInfo {
         }
         
         self.services.extend(other.services);
-    }
-    
-    /// Serialize the scan info.
-    ///
-    /// Note: A service table is required in order to get service IDs for all
-    /// serialized services.
-    pub fn serialize<W: Write>(
-        &self, 
-        w: &mut W, 
-        svc_table: &ServiceTable) -> io::Result<()> {
-        let host_count = self.hosts.len() as u32;
-        try!(host_count.serialize(w));
-        for (_, ref host) in &self.hosts {
-            try!(host.serialize(w));
-        }
-        
-        for svc in &self.services {
-            let id = svc_table.get_id(svc)
-                .unwrap_or(0xffff);
-            
-            try!(svc.serialize(w, id));
-        }
-        
-        let cp_svc = Service::ControlProtocol;
-        
-        cp_svc.serialize(w, 0)
     }
 }
 
@@ -245,10 +223,105 @@ impl<'a> Iterator for SocketAddrIterator<'a> {
     }
 }
 
+/// Network scan report control protocol message.
+#[derive(Clone)]
+pub struct ScanReportMessage {
+    request_id:  u16,
+    scan_report: ScanReport,
+    svc_table:   ServiceTable,
+}
+
+impl ScanReportMessage {
+    /// Create a new network scan info control protocol message.
+    pub fn new(
+        request_id: u16,
+        scan_report: ScanReport, 
+        svc_table: ServiceTable) -> ScanReportMessage {
+        ScanReportMessage {
+            request_id:  request_id,
+            scan_report: scan_report,
+            svc_table:   svc_table
+        }
+    }
+}
+
+impl Serialize for ScanReportMessage {
+    fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()> {
+        let hosts    = self.scan_report.hosts();
+        let services = self.scan_report.services();
+        let header   = ScanReportMesssageHeader::new(self);
+        
+        try!(header.serialize(w));
+        
+        for host in hosts {
+            try!(host.serialize(w));
+        }
+        
+        for svc in services {
+            let id = self.svc_table.get_id(svc)
+                .unwrap_or(0xffff);
+            
+            try!(svc.serialize(w, id));
+        }
+        
+        let cp_svc = Service::ControlProtocol;
+        
+        cp_svc.serialize(w, 0)
+    }
+}
+
+impl ControlMessageBody for ScanReportMessage {
+    fn len(&self) -> usize {
+        let mut size = mem::size_of::<ScanReportMesssageHeader>();
+        
+        for host in self.scan_report.hosts() {
+            size += host.size();
+        }
+        
+        for svc in self.scan_report.services() {
+            size += svc.len();
+        }
+        
+        let cp_svc = Service::ControlProtocol;
+        
+        size + cp_svc.len()
+    }
+}
+
+/// Scan report message header.
+#[derive(Clone)]
+#[repr(packed)]
+struct ScanReportMesssageHeader {
+    request_id: u16,
+    host_count: u32,
+}
+
+impl ScanReportMesssageHeader {
+    /// Create a new scan report message header.
+    fn new(msg: &ScanReportMessage) -> ScanReportMesssageHeader {
+        ScanReportMesssageHeader {
+            request_id: msg.request_id,
+            host_count: msg.scan_report.hosts.len() as u32
+        }
+    }
+}
+
+impl Serialize for ScanReportMesssageHeader {
+    fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()> {
+        let be_header = ScanReportMesssageHeader {
+            request_id: self.request_id.to_be(),
+            host_count: self.host_count.to_be()
+        };
+        
+        w.write_all(utils::as_bytes(&be_header))
+    }
+}
+
 /// Host info submodule.
 mod host_info {
     
     use std::io;
+    use std::mem;
     
     use std::io::Write;
     use std::collections::HashSet;
@@ -302,6 +375,12 @@ mod host_info {
         /// Get socket address iterator.
         pub fn socket_addrs(&self) -> SocketAddrIterator {
             SocketAddrIterator::new(self)
+        }
+        
+        /// Get serialized size in bytes.
+        pub fn size(&self) -> usize {
+            mem::size_of::<HostInfoHeader>()
+                + self.ports.len() * mem::size_of::<u16>()
         }
     }
 

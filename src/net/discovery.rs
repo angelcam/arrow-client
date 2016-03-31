@@ -35,7 +35,7 @@ use net::raw::devices::EthernetDevice;
 use net::raw::ether::MacAddr;
 use net::raw::arp::scanner::Ipv4ArpScanner;
 use net::raw::icmp::scanner::IcmpScanner;
-use net::arrow::protocol::{Service, NetworkScanInfo};
+use net::arrow::protocol::{Service, ScanReport};
 use net::arrow::protocol::{HINFO_FLAG_ARP, HINFO_FLAG_ICMP};
 use net::raw::tcp::scanner::{TcpPortScanner, PortCollection};
 use net::rtsp::sdp::{SessionDescription, MediaType, RTPMap, FromAttribute};
@@ -95,7 +95,7 @@ impl From<io::Error> for DiscoveryError {
 pub type Result<T> = result::Result<T, DiscoveryError>;
 
 /// Find all RTSP streams in all local networks.
-pub fn find_rtsp_streams() -> Result<NetworkScanInfo> {
+pub fn find_rtsp_streams() -> Result<ScanReport> {
     let tc      = pcap::new_threading_context();
     let devices = EthernetDevice::list();
     
@@ -114,17 +114,17 @@ pub fn find_rtsp_streams() -> Result<NetworkScanInfo> {
         threads.push(handle);
     }
     
-    let mut sinfo = NetworkScanInfo::new();
+    let mut report = ScanReport::new();
     
     for handle in threads {
         if let Ok(res) = handle.join() {
-            sinfo.merge(try!(res));
+            report.merge(try!(res));
         } else {
             return Err(DiscoveryError::from("port scanner thread panicked"));
         }
     }
     
-    let rtsp_services = try!(find_rtsp_services(&sinfo));
+    let rtsp_services = try!(find_rtsp_services(&report));
     
     let mut threads = Vec::new();
     let paths       = Arc::new(try!(load_rtsp_paths(RTSP_PATH_FILE)));
@@ -148,10 +148,10 @@ pub fn find_rtsp_streams() -> Result<NetworkScanInfo> {
     }
     
     for svc in services {
-        sinfo.add_service(svc);
+        report.add_service(svc);
     }
     
-    Ok(sinfo)
+    Ok(report)
 }
 
 /// Load all known RTSP path variants from a given file.
@@ -247,29 +247,29 @@ fn get_describe_status(addr: SocketAddr, path: &str) -> Result<DescribeStatus> {
 fn find_services(
     pc: pcap::ThreadingContext,
     device: &EthernetDevice,
-    ports: &PortCollection) -> Result<NetworkScanInfo> {
-    let mut sinfo  = NetworkScanInfo::new();
+    ports: &PortCollection) -> Result<ScanReport> {
+    let mut report  = ScanReport::new();
     
     for (mac, ip) in try!(Ipv4ArpScanner::scan_device(pc.clone(), device)) {
-        sinfo.add_host(mac, IpAddr::V4(ip), HINFO_FLAG_ARP);
+        report.add_host(mac, IpAddr::V4(ip), HINFO_FLAG_ARP);
     }
     
     for (mac, ip) in try!(IcmpScanner::scan_device(pc.clone(), device)) {
-        sinfo.add_host(mac, IpAddr::V4(ip), HINFO_FLAG_ICMP);
+        report.add_host(mac, IpAddr::V4(ip), HINFO_FLAG_ICMP);
     }
     
     let open_ports = {
-        let hosts = sinfo.hosts()
+        let hosts = report.hosts()
             .map(|host| (host.mac_addr, host.ip_addr));
         
         try!(find_open_ports(pc, device, hosts, ports))
     };
     
     for (mac, addr) in open_ports {
-        sinfo.add_port(mac, addr.ip(), addr.port());
+        report.add_port(mac, addr.ip(), addr.port());
     }
     
-    Ok(sinfo)
+    Ok(report)
 }
 
 /// Check if any of given TCP ports is open on on any host from a given set.
@@ -294,11 +294,11 @@ fn find_open_ports<H: IntoIterator<Item=(MacAddr, IpAddr)>>(
 
 /// Find all RTSP services among a given set of sockets.
 fn find_rtsp_services(
-    sinfo: &NetworkScanInfo) -> Result<Vec<(MacAddr, SocketAddr)>> {
+    report: &ScanReport) -> Result<Vec<(MacAddr, SocketAddr)>> {
     let mut threads = Vec::new();
     let mut res     = Vec::new();
     
-    for (mac, addr) in sinfo.socket_addrs() {
+    for (mac, addr) in report.socket_addrs() {
         let handle = thread::spawn(move || {
             (mac, addr, is_rtsp_service(addr))
         });

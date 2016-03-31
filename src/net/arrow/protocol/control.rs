@@ -22,9 +22,8 @@ use std::io::Write;
 use utils;
 
 use utils::Serialize;
-use net::arrow::protocol::ArrowMessageBody;
-use net::arrow::protocol::svc_table::ServiceTable;
 use net::arrow::error::{ArrowError, Result};
+use net::arrow::protocol::{ArrowMessageBody, ServiceTable, ScanReportMessage};
 
 /// Arrow Control Protocol message types.
 #[allow(non_camel_case_types)]
@@ -41,11 +40,15 @@ pub enum ControlMessageType {
     GET_STATUS,
     STATUS,
     UNKNOWN,
+    GET_SCAN_REPORT,
+    SCAN_REPORT,
 }
 
 pub const ACK_NO_ERROR:                     u32 = 0x00000000;
 pub const ACK_UNSUPPORTED_PROTOCOL_VERSION: u32 = 0x00000001;
 pub const ACK_UNAUTHORIZED:                 u32 = 0x00000002;
+pub const ACK_CONNECTION_ERROR:             u32 = 0x00000003;
+pub const ACK_UNSUPPORTED_METHOD:           u32 = 0x00000004;
 pub const ACK_INTERNAL_SERVER_ERROR:        u32 = 0xffffffff;
 
 // message type constants
@@ -59,6 +62,8 @@ const CMSG_RESET_SVC_TABLE: u16 = 0x0006;
 const CMSG_SCAN_NETWORK:    u16 = 0x0007;
 const CMSG_GET_STATUS:      u16 = 0x0008;
 const CMSG_STATUS:          u16 = 0x0009;
+const CMSG_GET_SCAN_REPORT: u16 = 0x000a;
+const CMSG_SCAN_REPORT:     u16 = 0x000b;
 
 /// Common trait for Control Protocol payload types.
 pub trait ControlMessageBody : Serialize {
@@ -111,6 +116,8 @@ impl ControlMessageHeader {
             CMSG_SCAN_NETWORK    => ControlMessageType::SCAN_NETWORK,
             CMSG_GET_STATUS      => ControlMessageType::GET_STATUS,
             CMSG_STATUS          => ControlMessageType::STATUS,
+            CMSG_GET_SCAN_REPORT => ControlMessageType::GET_SCAN_REPORT,
+            CMSG_SCAN_REPORT     => ControlMessageType::SCAN_REPORT,
             _ => ControlMessageType::UNKNOWN
         }
     }
@@ -204,6 +211,14 @@ pub fn create_status_message(
     msg_id: u16, 
     status_msg: StatusMessage) -> ControlMessage<StatusMessage> {
     ControlMessage::new(msg_id, CMSG_STATUS, status_msg)
+}
+
+/// Create a new SCAN_REPORT control message for a given message ID and message 
+/// body.
+pub fn create_scan_report_message(
+    msg_id: u16,
+    scan_report_msg: ScanReportMessage) -> ControlMessage<ScanReportMessage> {
+    ControlMessage::new(msg_id, CMSG_SCAN_REPORT, scan_report_msg)
 }
 
 /// Arrow Control Protocol message parser.

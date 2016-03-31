@@ -757,6 +757,34 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         self.send_control_message(control_msg, event_loop);
     }
     
+    /// Send scan report message for a given request ID.
+    fn send_scan_report(
+        &mut self, 
+        request_id: u16, 
+        event_loop: &mut EventLoop<Self>) {
+        let scan_report;
+        
+        {
+            let app_context = self.app_context.lock()
+                .unwrap();
+            
+            scan_report = ScanReportMessage::new(
+                request_id, 
+                app_context.scan_report.clone(), 
+                app_context.config.service_table()
+                    .clone());
+        }
+        
+        let control_msg = control::create_scan_report_message(self.msg_id,
+            scan_report);
+        
+        self.msg_id += 1;
+        
+        log_debug!(self.logger, "sending a SCAN_REPORT message...");
+        
+        self.send_control_message(control_msg, event_loop);
+    }
+    
     /// Send ACK message with a given message id and error code.
     fn send_ack_message(
         &mut self,
@@ -765,7 +793,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         event_loop: &mut EventLoop<Self>) {
         let control_msg = control::create_ack_message(msg_id, error_code);
         
-        log_debug!(self.logger, "sending and ACK message...");
+        log_debug!(self.logger, "sending an ACK message...");
         
         self.send_control_message(control_msg, event_loop);
     }
@@ -1041,6 +1069,8 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
                 self.process_command(Command::ScanNetwork),
             ControlMessageType::GET_STATUS =>
                 self.process_status_request(header.msg_id, event_loop),
+            ControlMessageType::GET_SCAN_REPORT =>
+                self.process_scan_report_request(header.msg_id, event_loop),
             mt => Err(ArrowError::other(format!("cannot handle Control Protocol message type: {:?}", mt)))
         };
         
@@ -1205,6 +1235,29 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         msg_id: u16, 
         event_loop: &mut EventLoop<Self>) -> SocketEventResult {
         self.send_status(msg_id, event_loop);
+        Ok(None)
+    }
+    
+    /// Process scan report request (GET_SCAN_REPORT message) with a given ID.
+    fn process_scan_report_request(
+        &mut self, 
+        msg_id: u16, 
+        event_loop: &mut EventLoop<Self>) -> SocketEventResult {
+        let discovery;
+        
+        {
+            let app_context = self.app_context.lock()
+                .unwrap();
+            
+            discovery = app_context.discovery;
+        }
+        
+        if discovery {
+            self.send_scan_report(msg_id, event_loop);
+        } else {
+            self.send_ack_message(msg_id, ACK_UNSUPPORTED_METHOD, event_loop);
+        }
+        
         Ok(None)
     }
     

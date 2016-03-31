@@ -17,11 +17,12 @@
 pub mod control;
 pub mod svc_table;
 
-pub mod scan_info;
+pub mod scan_report;
 
 pub use self::control::ACK_NO_ERROR;
 pub use self::control::ACK_UNSUPPORTED_PROTOCOL_VERSION;
 pub use self::control::ACK_UNAUTHORIZED;
+pub use self::control::ACK_UNSUPPORTED_METHOD;
 pub use self::control::ACK_INTERNAL_SERVER_ERROR;
 
 pub use self::control::ControlMessage;
@@ -42,10 +43,11 @@ pub use self::control::StatusMessage;
 pub use self::svc_table::Service;
 pub use self::svc_table::ServiceTable;
 
-pub use self::scan_info::HostInfo;
-pub use self::scan_info::NetworkScanInfo;
-pub use self::scan_info::HINFO_FLAG_ARP;
-pub use self::scan_info::HINFO_FLAG_ICMP;
+pub use self::scan_report::HostInfo;
+pub use self::scan_report::ScanReport;
+pub use self::scan_report::ScanReportMessage;
+pub use self::scan_report::HINFO_FLAG_ARP;
+pub use self::scan_report::HINFO_FLAG_ICMP;
 
 use std::io;
 use std::mem;
@@ -56,6 +58,8 @@ use utils;
 
 use utils::Serialize;
 use net::arrow::error::{Result, ArrowError};
+
+const ARROW_PROTOCOL_VERSION: u8 = 1;
 
 /// Common trait for Arrow Message payload types.
 pub trait ArrowMessageBody : Serialize {
@@ -82,7 +86,7 @@ impl ArrowMessageHeader {
     /// and payload size.
     fn new(service: u16, session: u32, size: u32) -> ArrowMessageHeader {
         ArrowMessageHeader {
-            version: 0,
+            version: ARROW_PROTOCOL_VERSION,
             service: service,
             session: session & ((1 << 24) - 1),
             size:    size
@@ -102,7 +106,7 @@ impl ArrowMessageHeader {
             size:    u32::from_be(header.size)
         };
         
-        if res.version == 0 {
+        if res.version == ARROW_PROTOCOL_VERSION {
             Ok(res)
         } else {
             Err(ArrowError::unsupported_protocol_version("unsupported Arrow Protocol version"))
