@@ -147,7 +147,7 @@ pub fn find_rtsp_streams() -> Result<Vec<Service>> {
         match handle.join() {
             Err(_) => return Err(DiscoveryError::from(
                 "path testing thread panicked")),
-            Ok(svc) => res.extend(try!(svc))
+            Ok(svc) => res.push(try!(svc))
         }
     }
     
@@ -305,44 +305,25 @@ fn find_rtsp_services(sockets: &[Socket]) -> Result<Vec<Socket>> {
 fn find_rtsp_paths(
     mac: MacAddr, 
     addr: SocketAddr, 
-    paths: &[String]) -> Result<Vec<Service>> {
-    let mut ok          = Vec::new();
-    let mut unsupported = Vec::new();
-    let mut locked      = false;
+    paths: &[String]) -> Result<Service> {
+    let mut service = Service::UnknownRTSP(mac, addr);
     
     for path in paths {
-        match try!(get_describe_status(addr, path)) {
-            DescribeStatus::Ok          => ok.push(path.to_string()),
-            DescribeStatus::Unsupported => unsupported.push(path.to_string()),
-            DescribeStatus::Locked      => locked = true,
+        let status = try!(get_describe_status(addr, path));
+        if status == DescribeStatus::Ok {
+            service = Service::RTSP(mac, addr, path.to_string());
+        } else if status == DescribeStatus::Unsupported {
+            service = Service::UnsupportedRTSP(mac, addr, path.to_string());
+        } else if status == DescribeStatus::Locked {
+            service = Service::LockedRTSP(mac, addr);
+        }
+        
+        match status {
+            DescribeStatus::Ok     => break,
+            DescribeStatus::Locked => break,
             _ => ()
         }
     }
     
-    let mut res = ok.into_iter()
-        .map(|path| Service::RTSP(mac, addr, path))
-        .collect::<Vec<_>>();
-    
-    let unsupported = unsupported.into_iter()
-        .map(|path| Service::UnsupportedRTSP(mac, addr, path))
-        .collect::<Vec<_>>();
-    
-    res.extend(unsupported);
-    
-    // Some RTSP servers respond with RTSP 200 to all paths even though they 
-    // cannot stream from all the paths. We should treat them as unknown RTSP 
-    // services.
-    if res.len() == paths.len() {
-        res.clear();
-    }
-    
-    if locked {
-        res.push(Service::LockedRTSP(mac, addr));
-    }
-    
-    if res.is_empty() {
-        res.push(Service::UnknownRTSP(mac, addr));
-    }
-    
-    Ok(res)
+    Ok(service)
 }
