@@ -291,7 +291,7 @@ mod tests {
     
     #[test]
     fn test_message_serialization() {
-        let msg_data = [0x00,                    // version
+        let msg_data = [0x01,                    // version
                         0x10, 0x22,              // svc_id
                         0x00, 0x34, 0x56, 0x78,  // session_id
                         0x00, 0x00, 0x00, 0x02,  // body_size
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn test_message_deserialization() {
         let mut parser = ArrowMessageParser::new();
-        let msg        = [0x00,                    // version
+        let msg        = [0x01,                    // version
                           0x10, 0x22,              // svc_id
                           0x12, 0x34, 0x56, 0x78,  // session_id
                           0x00, 0x00, 0x00, 0x02,  // body_size
@@ -328,7 +328,7 @@ mod tests {
         {
             let header = parser.header().unwrap();
             
-            assert_eq!(header.version, 0);
+            assert_eq!(header.version, 1);
             assert_eq!(header.service, 0x1022);
             assert_eq!(header.session, 0x00345678);
         }
