@@ -23,9 +23,10 @@ use std::fs::File;
 use std::sync::Arc;
 use std::error::Error;
 use std::collections::HashSet;
+use std::collections::HashMap;
 use std::io::{BufReader, BufRead};
 use std::fmt::{Display, Formatter};
-use std::net::{IpAddr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use net::rtsp;
 use net::raw::pcap;
@@ -94,13 +95,19 @@ impl From<io::Error> for DiscoveryError {
 /// Discovery result type alias.
 pub type Result<T> = result::Result<T, DiscoveryError>;
 
+/// RTSP port candidates.
+static RTSP_PORT_CANDIDATES: &'static [u16] = &[
+      554,    88,    81,   555,  7447, 
+     8554,  7070, 10554,    80
+];
+
 /// Find all RTSP streams in all local networks.
 pub fn find_rtsp_streams() -> Result<ScanReport> {
     let tc      = pcap::new_threading_context();
     let devices = EthernetDevice::list();
     
     let port_candidates = PortCollection::new()
-        .add_all(&[554, 88, 81, 555, 7447, 8554, 7070, 10554, 80]);
+        .add_all(RTSP_PORT_CANDIDATES);
     
     let mut threads = Vec::new();
     
@@ -124,7 +131,14 @@ pub fn find_rtsp_streams() -> Result<ScanReport> {
         }
     }
     
-    let rtsp_services = try!(find_rtsp_services(&report));
+    // note: we permit only one RTSP service per host (some stupid RTSP servers 
+    // are accessible from more than one port and they tend to crash when they 
+    // are accessed from the "incorrect" one)
+    let rtsp_services   = try!(find_rtsp_services(&report));
+    let port_priorities = get_port_priorities(RTSP_PORT_CANDIDATES);
+    let rtsp_services   = filter_duplicit_services(
+        &rtsp_services,
+        &port_priorities);
     
     let mut threads = Vec::new();
     let paths       = Arc::new(try!(load_rtsp_paths(RTSP_PATH_FILE)));
@@ -337,4 +351,76 @@ fn find_rtsp_paths(
     }
     
     Ok(service)
+}
+
+/// Assuming the given list of ports is sorted according to port priority 
+/// (from highest to lowest), get a map of port -> port_priority pairs.
+fn get_port_priorities(ports: &[u16]) -> HashMap<u16, usize> {
+    let mut res = HashMap::new();
+    let len = ports.len();
+    for i in 0..len {
+        res.insert(ports[i], len - i);
+    }
+    
+    res
+}
+
+/// Filter out duplicit services from a given list using given priorities.
+fn filter_duplicit_services(
+    services: &[(MacAddr, SocketAddr)], 
+    port_priorities: &HashMap<u16, usize>) -> Vec<(MacAddr, SocketAddr)> {
+    let mut svc_map = HashMap::new();
+    
+    for &(ref mac, ref saddr) in services {
+        let mac  = *mac;
+        let ip   = saddr.ip();
+        let port = saddr.port();
+        
+        if svc_map.contains_key(&ip) {
+            let old_port = svc_map.get(&ip)
+                .map(|&(_, _, ref port)| *port)
+                .unwrap_or(0);
+            let old_priority = port_priorities.get(&old_port)
+                .map(|priority| *priority)
+                .unwrap_or(0);
+            let new_priority = port_priorities.get(&port)
+                .map(|priority| *priority)
+                .unwrap_or(0);
+            if new_priority > old_priority {
+                svc_map.insert(ip, (mac, ip, port));
+            }
+        } else {
+            svc_map.insert(ip, (mac, ip, port));
+        }
+    }
+    
+    svc_map.into_iter()
+        .map(|(_, (mac, ip, port))| match ip {
+            IpAddr::V4(ip) => (mac, SocketAddr::V4(SocketAddrV4::new(ip, port))),
+            IpAddr::V6(ip) => (mac, SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)))
+        })
+        .collect::<_>()
+}
+
+#[cfg(test)]
+use std::net::Ipv4Addr;
+
+#[cfg(test)]
+#[test]
+/// Test the service priority filtering function.
+fn test_service_filtering() {
+    let ports = [554, 80];
+    let mac   = MacAddr::new(0, 0, 0, 0, 0, 0);
+    let ip    = Ipv4Addr::new(0, 0, 0, 0);
+    
+    let mut services = Vec::new();
+    
+    services.push((mac, SocketAddr::V4(SocketAddrV4::new(ip, 80))));
+    services.push((mac, SocketAddr::V4(SocketAddrV4::new(ip, 554))));
+    
+    let port_priorities = get_port_priorities(&ports);
+    let services = filter_duplicit_services(&services, &port_priorities);
+    
+    assert_eq!(services.len(), 1);
+    assert_eq!(services[0].1.port(), 554);
 }

@@ -70,7 +70,7 @@ use mio::{EventLoop, Handler, NotifyError};
 use regex::Regex;
 
 /// Network scan period.
-const NETWORK_SCAN_PERIOD: u64 = 300000;
+const NETWORK_SCAN_PERIOD: f64 = 300.0;
 
 /// Connectionn retry timeout.
 const RETRY_TIMEOUT:       f64 = 60.0;
@@ -654,7 +654,7 @@ struct CommandHandler<L: Logger> {
     active_services:   Vec<Service>,
     app_context:       Shared<AppContext>,
     scanner:           Option<JoinHandle<()>>,
-    last_scan:         u64,
+    last_scan:         f64,
 }
 
 impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
@@ -663,7 +663,7 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
         logger: L, 
         default_svc_table: ServiceTable,
         app_context: Shared<AppContext>) -> CommandHandler<L> {
-        let now = time::precise_time_ns() / 1000000;
+        let now = time::precise_time_s();
         let active_services = {
             let app_context = app_context.lock()
                 .unwrap();
@@ -683,23 +683,21 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
     /// Scan the local network for new services and schedule the next network 
     /// scanning event.
     fn periodical_network_scan(&mut self, event_loop: &mut EventLoop<Self>) {
-        let now     = time::precise_time_ns() / 1000000;
-        let elapsed = (now - self.last_scan) as i64;
-        let period  = NETWORK_SCAN_PERIOD as i64;
-        let delta   = period - elapsed;
+        let now     = time::precise_time_s();
+        let elapsed = now - self.last_scan;
+        let delta   = NETWORK_SCAN_PERIOD - elapsed;
         
-        if delta <= 0 {
+        let timeout = if delta <= 0.0 {
             self.scan_network(event_loop);
-            event_loop.timeout(
-                    TimerEvent::ScanNetwork,
-                    Duration::from_millis(NETWORK_SCAN_PERIOD))
-                .unwrap();
+            NETWORK_SCAN_PERIOD
         } else {
-            event_loop.timeout(
-                    TimerEvent::ScanNetwork,
-                    Duration::from_millis(delta as u64))
-                .unwrap();
-        }
+            delta
+        };
+        
+        event_loop.timeout(
+                TimerEvent::ScanNetwork,
+                Duration::from_millis((timeout * 1000.0) as u64))
+            .unwrap();
     }
     
     /// Spawn a new network scanner thread (if it is not already running) and 
@@ -711,7 +709,7 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
         // check if the discovery is enabled and if there is another scanner 
         // running
         if app_context.discovery && self.scanner.is_none() {
-            self.last_scan = time::precise_time_ns() / 1000000;
+            self.last_scan = time::precise_time_s();
             
             app_context.scanning = true;
             

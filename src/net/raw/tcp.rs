@@ -169,11 +169,12 @@ impl RawTcpPacketHeader {
         ph.tcp_len = tcp_len.to_be();
         
         let mut sum = raw::utils::sum_type(&ph);
-        sum += raw::utils::sum_type(&rh);
-        sum += raw::utils::sum_slice(&tcp.options);
-        sum += raw::utils::sum_slice(&tcp.data);
+        sum = sum.wrapping_add(raw::utils::sum_type(&rh));
+        sum = sum.wrapping_add(raw::utils::sum_slice(&tcp.options));
+        sum = sum.wrapping_add(raw::utils::sum_slice(&tcp.data));
         
-        rh.checksum = raw::utils::sum_to_checksum(sum).to_be();
+        rh.checksum = raw::utils::sum_to_checksum(sum)
+            .to_be();
         
         rh
     }

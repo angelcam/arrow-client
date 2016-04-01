@@ -677,7 +677,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
             let control_msg = control::create_register_message(self.msg_id, 
                 msg);
             self.last_update = Some(config.version());
-            self.msg_id += 1;
+            self.msg_id = self.msg_id.wrapping_add(1);
             control_msg
         };
         
@@ -694,7 +694,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         let control_msg = control::create_update_message(self.msg_id, 
             svc_table);
             
-        self.msg_id += 1;
+        self.msg_id = self.msg_id.wrapping_add(1);
         
         log_debug!(self.logger, "sending an UPDATE message...");
         
@@ -705,7 +705,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
     fn send_ping_message(&mut self, event_loop: &mut EventLoop<Self>) {
         let control_msg = control::create_ping_message(self.msg_id);
         
-        self.msg_id += 1;
+        self.msg_id = self.msg_id.wrapping_add(1);
         
         log_debug!(self.logger, "sending a PING message...");
         
@@ -721,7 +721,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         let control_msg = control::create_hup_message(self.msg_id, 
             session_id, error_code);
         
-        self.msg_id += 1;
+        self.msg_id = self.msg_id.wrapping_add(1);
         
         log_debug!(self.logger, "sending a HUP message (session ID: {:08x}, error_code: {:08x})...", session_id, error_code);
         
@@ -750,7 +750,7 @@ impl<L: Logger + Clone, Q: Sender<Command>> ConnectionHandler<L, Q> {
         let control_msg = control::create_status_message(self.msg_id,
             status_msg);
         
-        self.msg_id += 1;
+        self.msg_id = self.msg_id.wrapping_add(1);
         
         log_debug!(self.logger, "sending a STATUS message...");
         

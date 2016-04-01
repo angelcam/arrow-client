@@ -44,11 +44,11 @@ pub unsafe fn sum_raw_be(data: *const u8, size: usize) -> u32 {
     let slice        = slice::from_raw_parts(data, size);
     let mut sum: u32 = 0;
     for w in sdata {
-        sum += u16::from_be(*w) as u32;
+        sum = sum.wrapping_add(u16::from_be(*w) as u32);
     }
     
     if (size & 0x01) != 0 {
-        sum + ((slice[size - 1] as u32) << 8)
+        sum.wrapping_add((slice[size - 1] as u32) << 8)
     } else {
         sum
     }
