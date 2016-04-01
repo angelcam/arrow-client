@@ -114,9 +114,9 @@ impl<B: Borrow<[u8]>> IcmpPacket<B> {
         
         let mut sum = ((icmp_type << 8) | icmp_code) as u32;
         
-        sum += self.rest >> 16;
-        sum += self.rest & 0xff;
-        sum += raw::utils::sum_slice(body_bytes);
+        sum = sum.wrapping_add(self.rest >> 16);
+        sum = sum.wrapping_add(self.rest & 0xff);
+        sum = sum.wrapping_add(raw::utils::sum_slice(body_bytes));
         
         raw::utils::sum_to_checksum(sum)
     }

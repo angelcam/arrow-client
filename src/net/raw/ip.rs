@@ -163,9 +163,10 @@ impl RawIpv4PacketHeader {
         };
         
         let mut sum = raw::utils::sum_type(&rh);
-        sum += raw::utils::sum_slice(&ip.options);
+        sum = sum.wrapping_add(raw::utils::sum_slice(&ip.options));
         
-        rh.checksum = raw::utils::sum_to_checksum(sum).to_be();
+        rh.checksum = raw::utils::sum_to_checksum(sum)
+            .to_be();
         
         rh
     }

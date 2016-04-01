@@ -359,7 +359,7 @@ impl Scanner {
         let mut t   = time::precise_time_ns();
         let mut end = false;
         
-        while !end || (time::precise_time_ns() - t) < timeout {
+        while !end || time::precise_time_ns() < (t + timeout) {
             match cap.next() {
                 Ok(Some(data)) => vec.push(data),
                 Err(error)     => panic!(error),
