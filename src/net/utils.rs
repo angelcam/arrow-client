@@ -18,9 +18,23 @@ use std::io;
 use std::ptr;
 
 use std::io::Write;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+
+use utils::RuntimeError;
 
 use time;
+
+/// Get socket address from a given argument.
+pub fn get_socket_address<T>(s: T) -> Result<SocketAddr, RuntimeError>
+    where T: ToSocketAddrs {
+    let mut addrs = try!(s.to_socket_addrs()
+        .or(Err(RuntimeError::from("unable get socket address"))));
+    
+    match addrs.next() {
+        Some(addr) => Ok(addr),
+        _          => Err(RuntimeError::from("unable get socket address"))
+    }
+}
 
 /// Timeout provider for various network protocols.
 #[derive(Debug)]
@@ -102,7 +116,7 @@ impl WriteBuffer {
         self.used == 0
     }
     
-    /// Get number of bytes availalbe until the soft limit is reached.
+    /// Get number of bytes available until the soft limit is reached.
     pub fn available(&self) -> usize {
         if self.is_full() {
             0

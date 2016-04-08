@@ -16,6 +16,9 @@
 pub mod rtsp;
 
 #[cfg(feature = "discovery")]
+pub mod http;
+
+#[cfg(feature = "discovery")]
 pub mod discovery;
 
 pub mod raw;

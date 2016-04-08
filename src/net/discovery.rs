@@ -28,9 +28,11 @@ use std::io::{BufReader, BufRead};
 use std::fmt::{Display, Formatter};
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
+use net::http;
 use net::rtsp;
 use net::raw::pcap;
 
+use net::http::Client as HttpClient;
 use net::rtsp::Client as RtspClient;
 use net::raw::devices::EthernetDevice;
 use net::raw::ether::MacAddr;
@@ -69,14 +71,19 @@ impl From<String> for DiscoveryError {
 
 impl<'a> From<&'a str> for DiscoveryError {
     fn from(msg: &'a str) -> DiscoveryError {
-        DiscoveryError { msg: msg.to_string() }
+        DiscoveryError::from(msg.to_string())
+    }
+}
+
+impl From<http::HttpError> for DiscoveryError {
+    fn from(err: http::HttpError) -> DiscoveryError {
+        DiscoveryError::from(format!("HTTP client error: {}", err))
     }
 }
 
 impl From<rtsp::RtspError> for DiscoveryError {
     fn from(err: rtsp::RtspError) -> DiscoveryError {
-        DiscoveryError::from(format!("RTSP client error: {}", 
-            err.description()))
+        DiscoveryError::from(format!("RTSP client error: {}", err))
     }
 }
 
@@ -88,7 +95,7 @@ impl From<pcap::PcapError> for DiscoveryError {
 
 impl From<io::Error> for DiscoveryError {
     fn from(err: io::Error) -> DiscoveryError {
-        DiscoveryError::from(format!("IO error: {}", err.description()))
+        DiscoveryError::from(format!("IO error: {}", err))
     }
 }
 
@@ -140,6 +147,9 @@ pub fn find_rtsp_streams() -> Result<ScanReport> {
         &rtsp_services,
         &port_priorities);
     
+    let rtsp_hosts    = get_hosts(&rtsp_services);
+    let http_services = try!(find_http_services(&rtsp_hosts));
+    
     let mut threads = Vec::new();
     let paths       = Arc::new(try!(load_rtsp_paths(RTSP_PATH_FILE)));
     
@@ -157,6 +167,10 @@ pub fn find_rtsp_streams() -> Result<ScanReport> {
                 "path testing thread panicked")),
             Ok(svc) => report.add_service(try!(svc))
         }
+    }
+    
+    for (mac, saddr) in http_services {
+        report.add_service(Service::HTTP(mac, saddr));
     }
     
     Ok(report)
@@ -248,6 +262,19 @@ fn get_describe_status(addr: SocketAddr, path: &str) -> Result<DescribeStatus> {
     } else {
         Ok(DescribeStatus::Error)
     }
+}
+
+/// Check if a given service is an HTTP service.
+fn is_http_service(addr: SocketAddr) -> Result<bool> {
+    let host = format!("{}", addr.ip());
+    let port = addr.port();
+    
+    let mut client = try!(HttpClient::new(&host, port));
+    try!(client.set_timeout(Some(1000)));
+    
+    let response = client.head("/");
+    
+    Ok(response.is_ok())
 }
 
 /// Find open ports on all available hosts within a given network and port 
@@ -353,6 +380,39 @@ fn find_rtsp_paths(
     Ok(service)
 }
 
+/// Find all HTTP services among a given set of sockets.
+fn find_http_services(
+    hosts: &[(MacAddr, IpAddr)]) -> Result<Vec<(MacAddr, SocketAddr)>> {
+    let mut threads = Vec::new();
+    let mut res     = Vec::new();
+    
+    for &(ref mac, ref ip) in hosts {
+        let mac  = *mac;
+        let addr = match *ip {
+            IpAddr::V4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, 80)),
+            IpAddr::V6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, 80, 0, 0)),
+        };
+        
+        let handle = thread::spawn(move || {
+            (mac, addr, is_http_service(addr))
+        });
+        
+        threads.push(handle);
+    }
+    
+    for handle in threads {
+        if let Ok((mac, addr, http)) = handle.join() {
+            if try!(http) {
+                res.push((mac, addr));
+            }
+        } else {
+            return Err(DiscoveryError::from("HTTP service testing thread panicked"));
+        }
+    }
+    
+    Ok(res)
+}
+
 /// Assuming the given list of ports is sorted according to port priority 
 /// (from highest to lowest), get a map of port -> port_priority pairs.
 fn get_port_priorities(ports: &[u16]) -> HashMap<u16, usize> {
@@ -399,6 +459,20 @@ fn filter_duplicit_services(
             IpAddr::V4(ip) => (mac, SocketAddr::V4(SocketAddrV4::new(ip, port))),
             IpAddr::V6(ip) => (mac, SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)))
         })
+        .collect::<_>()
+}
+
+/// Get a list of distinct hosts from a given list of services.
+fn get_hosts(services: &[(MacAddr, SocketAddr)]) -> Vec<(MacAddr, IpAddr)> {
+    let mut host_map = HashMap::new();
+    
+    for &(ref mac, ref saddr) in services {
+        let ip = saddr.ip();
+        host_map.insert(ip, (*mac, ip));
+    }
+    
+    host_map.into_iter()
+        .map(|(_, v)| v)
         .collect::<_>()
 }
 

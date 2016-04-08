@@ -41,7 +41,7 @@ use std::path::Path;
 use std::time::Duration;
 use std::thread::JoinHandle;
 use std::io::{BufWriter, Write};
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
+use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use utils::logger;
 use utils::logger::{LoggerWrapper, DummyLogger};
@@ -84,18 +84,6 @@ static CONFIG_FILE: &'static str = "/etc/arrow/config.json";
 
 /// Arrow Client connection state file.
 static STATE_FILE: &'static str = "/var/lib/arrow/state";
-
-/// Get socket address from a given argument.
-fn get_socket_address<T>(s: T) -> Result<SocketAddr, RuntimeError>
-    where T: ToSocketAddrs {
-    let mut addrs = try!(s.to_socket_addrs()
-        .or(Err(RuntimeError::from("unable get socket address"))));
-    
-    match addrs.next() {
-        Some(addr) => Ok(addr),
-        _          => Err(RuntimeError::from("unable get socket address"))
-    }
-}
 
 /// Get MAC address of the first configured ethernet device.
 fn get_first_mac() -> Result<MacAddr, RuntimeError> {
@@ -181,7 +169,7 @@ fn parse_rtsp_url(url: &str) -> Result<Service, RuntimeError> {
             _ => 554
         };
         
-        let socket_addr = try!(get_socket_address((host, port))
+        let socket_addr = try!(net::utils::get_socket_address((host, port))
             .or(Err(RuntimeError::from(
                 "unable to resolve RTSP service address"))));
         
@@ -557,7 +545,7 @@ fn connect<L: Logger + Clone, Q: Sender<Command>>(
     addr: &str,
     arrow_mac: &MacAddr,
     app_context: Shared<AppContext>) -> Result<String, ArrowError> {
-    let addr = try!(get_socket_address(addr)
+    let addr = try!(net::utils::get_socket_address(addr)
         .or(Err(ArrowError::connection_error(format!(
             "failed to lookup Arrow Service {} address information", addr)))));
     
@@ -945,7 +933,7 @@ impl AppConfiguration {
     fn http_service(&mut self, args: &mut Args) {
         let addr = self.next_argument(args, "TCP socket address expected");
         
-        let addr = get_socket_address(&addr as &str);
+        let addr = net::utils::get_socket_address(&addr as &str);
         let addr = result_or_usage(addr);
         
         let mac = get_fake_mac_address(0xffff, &addr);
@@ -960,7 +948,7 @@ impl AppConfiguration {
     fn tcp_service(&mut self, args: &mut Args) {
         let addr = self.next_argument(args, "TCP socket address expected");
         
-        let addr = get_socket_address(&addr as &str);
+        let addr = net::utils::get_socket_address(&addr as &str);
         let addr = result_or_usage(addr);
         
         let mac = get_fake_mac_address(0xffff, &addr);
