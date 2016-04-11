@@ -40,8 +40,6 @@ use net::raw::icmp::scanner::IcmpScanner;
 use net::raw::tcp::scanner::{TcpPortScanner, PortCollection};
 use net::rtsp::sdp::{SessionDescription, MediaType, RTPMap, FromAttribute};
 
-static RTSP_PATH_FILE: &'static str = "/etc/arrow/rtsp-paths";
-
 /// Discovery error.
 #[derive(Debug, Clone)]
 pub struct DiscoveryError {
@@ -106,7 +104,7 @@ static RTSP_PORT_CANDIDATES: &'static [u16] = &[
 ];
 
 /// Find all RTSP streams in all local networks.
-pub fn find_rtsp_streams() -> Result<Vec<Service>> {
+pub fn find_rtsp_streams(rtsp_paths_file: &str) -> Result<Vec<Service>> {
     let tc      = pcap::new_threading_context();
     let devices = EthernetDevice::list();
     
@@ -144,7 +142,7 @@ pub fn find_rtsp_streams() -> Result<Vec<Service>> {
         &port_priorities);
     
     let mut threads = Vec::new();
-    let paths       = Arc::new(try!(load_rtsp_paths(RTSP_PATH_FILE)));
+    let paths       = Arc::new(try!(load_rtsp_paths(rtsp_paths_file)));
     
     for (mac, addr) in rtsp_services {
         let addr   = SocketAddr::V4(addr);
