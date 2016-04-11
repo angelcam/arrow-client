@@ -19,24 +19,24 @@ pub mod sdp;
 
 use std::io;
 use std::fmt;
-use std::num;
 use std::result;
 use std::str;
 
 use std::error::Error;
 use std::str::FromStr;
 use std::time::Duration;
-use std::net::SocketAddr;
+use std::net::TcpStream;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::fmt::{Display, Formatter, Debug};
 
-use mio;
+use net::utils;
+
+use utils::RuntimeError;
+
+pub use net::http::{LineReader, ParseError, ParsingResult};
 
 use regex::Regex;
-
-use mio::{EventLoop, Handler, Token, EventSet, PollOpt};
-use mio::tcp::TcpStream;
 
 /// Error returned by RTSP client.
 #[derive(Debug, Clone)]
@@ -64,31 +64,25 @@ impl From<String> for RtspError {
 
 impl<'a> From<&'a str> for RtspError {
     fn from(msg: &'a str) -> RtspError {
-        RtspError { msg: msg.to_string() }
+        RtspError::from(msg.to_string())
     }
 }
 
 impl From<io::Error> for RtspError {
     fn from(err: io::Error) -> RtspError {
-        RtspError::from(format!("IO error: {}", err.description()))
+        RtspError::from(format!("IO error: {}", err))
     }
 }
 
-impl From<mio::TimerError> for RtspError {
-    fn from(_: mio::TimerError) -> RtspError {
-        RtspError::from(format!("timer error"))
+impl From<ParseError> for RtspError {
+    fn from(err: ParseError) -> RtspError {
+        RtspError::from(format!("parse error: {}", err))
     }
 }
 
-impl From<num::ParseIntError> for RtspError {
-    fn from(_: num::ParseIntError) -> RtspError {
-        RtspError::from("integer parsing error")
-    }
-}
-
-impl From<str::Utf8Error> for RtspError {
-    fn from(_: str::Utf8Error) -> RtspError {
-        RtspError::from("UTF-8 parsing error")
+impl From<RuntimeError> for RtspError {
+    fn from(err: RuntimeError) -> RtspError {
+        RtspError::from(format!("{}", err))
     }
 }
 
@@ -117,27 +111,24 @@ impl Method {
 
 /// RTSP request.
 struct Request {
-    method:  Method,
-    host:    SocketAddr,
-    path:    String,
-    headers: Vec<Header>,
+    method:   Method,
+    endpoint: String,
+    headers:  Vec<Header>,
 }
 
 impl Request {
     /// Create a new request.
-    fn new(method: Method, host: &SocketAddr, path: &str) -> Request {
+    fn new(method: Method, endpoint: &str) -> Request {
         Request {
-            method:  method,
-            host:    host.clone(),
-            path:    path.to_string(),
-            headers: Vec::new()
+            method:   method,
+            endpoint: endpoint.to_string(),
+            headers:  Vec::new()
         }
     }
     
     /// Add a new header field into the request.
-    fn add_header<N, V>(mut self, header: (N, V)) -> Request
+    fn add_header<N, V>(mut self, name: N, value: V) -> Request
         where N: ToString, V: ToString {
-        let (name, value) = header;
         self.headers.push((name.to_string(), value.to_string()));
         self
     }
@@ -145,8 +136,8 @@ impl Request {
 
 impl Display for Request {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
-        try!(f.write_str(&format!("{} rtsp://{}{} RTSP/1.0\r\n", 
-            self.method.name(), &self.host, &self.path)));
+        try!(f.write_str(&format!("{} {} RTSP/1.0\r\n", 
+            self.method.name(), &self.endpoint)));
         for &(ref name, ref val) in &self.headers {
             try!(f.write_str(&format!("{}: {}\r\n", name, val)));
         }
@@ -246,514 +237,351 @@ impl Display for ResponseHeader {
     }
 }
 
-/// Header or continuation (convenience enum for header field parsing).
-enum HeaderCont {
-    Header(Header),
-    Cont(String),
-    Empty,
-}
-
 /// RTSP response header parser.
 struct ResponseHeaderParser {
-    status_re: Regex,
-    header_re: Regex,
-    cont_re:   Regex,
+    status_re:   Regex,
+    header_re:   Regex,
+    cont_re:     Regex,
+    status_code: i32,
+    status_line: String,
+    headers:     Vec<Header>,
+    max_lines:   usize,
+    lines:       usize,
+    complete:    bool,
 }
 
 impl ResponseHeaderParser {
-    /// Create a new response header parser.
-    fn new() -> ResponseHeaderParser {
+    /// Create a new response header parser with a given header line limit.
+    fn new(max_lines: usize) -> ResponseHeaderParser {
         ResponseHeaderParser {
-            status_re: Regex::new(r"^RTSP/1.0 (\d+) (.*)$").unwrap(),
-            header_re: Regex::new(r"^([^ :]+):\s*(.*)$").unwrap(),
-            cont_re:   Regex::new(r"^\s+(.*)$").unwrap(),
+            status_re:   Regex::new(r"^RTSP/1.0 (\d+) (.*)$").unwrap(),
+            header_re:   Regex::new(r"^([^ :]+):\s*(.*)$").unwrap(),
+            cont_re:     Regex::new(r"^\s+(.*)$").unwrap(),
+            status_code: 0,
+            status_line: String::new(),
+            headers:     Vec::new(),
+            max_lines:   max_lines,
+            lines:       0,
+            complete:    false
         }
     }
     
-    /// Parse a given response header string.
-    fn parse(&self, s: &str) -> Result<ResponseHeader> {
-        let mut lines = s.split("\r\n");
-        
-        let mut headers = Vec::new();
-        let status_code;
-        let status;
-        
-        if let Some(line) = lines.next() {
-            let (sc, s) = try!(self.parse_status_line(line));
-            status_code = sc;
-            status      = s;
+    /// Check if the current header is complete.
+    fn is_complete(&self) -> bool {
+        self.complete
+    }
+    
+    /// Parse a given header line.
+    fn add(&mut self, line: &str) -> ParsingResult<()> {
+        if self.lines >= self.max_lines {
+            return Err(ParseError::from("maximum number of RTSP header lines exceeded"));
+        } else if self.lines > 0 {
+            try!(self.parse_header_line(line));
         } else {
-            return Err(RtspError::from("RTSP status line is missing"));
+            try!(self.parse_status_line(line));
         }
         
-        for line in lines {
-            match try!(self.parse_header_line(line)) {
-                HeaderCont::Empty     => break,
-                HeaderCont::Header(h) => headers.push(h),
-                HeaderCont::Cont(c)   => {
-                    if let Some((name, val)) = headers.pop() {
-                        headers.push((name, val + &c));
-                    } else {
-                        return Err(RtspError::from(
-                            "first RTSP header cannot be continuation"));
-                    }
-                },
-            }
-        }
+        self.lines += 1;
         
-        Ok(ResponseHeader::new(status_code, status, headers))
+        Ok(())
     }
     
     /// Parse RTSP status line.
-    fn parse_status_line(&self, line: &str) -> Result<(i32, String)> {
+    fn parse_status_line(&mut self, line: &str) -> ParsingResult<()> {
         if let Some(caps) = self.status_re.captures(line) {
             let status_code = caps.at(1).unwrap();
-            let status      = caps.at(2).unwrap();
-            let sc_int      = try!(i32::from_str(status_code));
-            Ok((sc_int, status.to_string()))
+            let status_line = caps.at(2).unwrap();
+            
+            self.status_code = try!(i32::from_str(status_code));
+            self.status_line = status_line.to_string();
+            
+            Ok(())
         } else {
-            Err(RtspError::from("invalid RTSP status line"))
+            Err(ParseError::from("invalid RTSP status line"))
         }
     }
     
     /// Parse RTSP header line.
-    fn parse_header_line(&self, line: &str) -> Result<HeaderCont> {
+    fn parse_header_line(&mut self, line: &str) -> ParsingResult<()> {
         if line.is_empty() {
-            Ok(HeaderCont::Empty)
+            self.complete = true;
         } else if let Some(caps) = self.header_re.captures(line) {
             let name  = caps.at(1).unwrap();
             let value = caps.at(2).unwrap();
-            Ok(HeaderCont::Header((name.to_string(), value.to_string())))
+            self.headers.push((name.to_string(), value.to_string()));
         } else if let Some(caps) = self.cont_re.captures(line) {
-            let value = caps.at(1).unwrap();
-            Ok(HeaderCont::Cont(value.to_string()))
+            let cont = caps.at(1).unwrap();
+            
+            if let Some((name, val)) = self.headers.pop() {
+                self.headers.push((name, val + cont));
+            } else {
+                return Err(ParseError::from("first RTSP header cannot be continuation"));
+            }
         } else {
-            Err(RtspError::from("invalid RTSP header line"))
+            return Err(ParseError::from("invalid RTSP header line"));
+        }
+        
+        Ok(())
+    }
+    
+    /// Clear the parser.
+    fn clear(&mut self) {
+        self.status_code = 0;
+        self.status_line = String::new();
+        self.lines       = 0;
+        self.complete    = false;
+        
+        self.headers.clear();
+    }
+    
+    /// Get current response header.
+    fn header(&self) -> ParsingResult<ResponseHeader> {
+        if self.complete {
+            let res = ResponseHeader::new(
+                self.status_code,
+                self.status_line.clone(),
+                self.headers.clone());
+            
+            Ok(res)
+        } else {
+            Err(ParseError::from("incomplete RTSP header"))
         }
     }
 }
 
 /// RTSP response parser.
 struct ResponseParser {
-    header_parser: ResponseHeaderParser,
-    buffer:        Vec<u8>,
-    buffer_limit:  usize,
-    last_line:     usize,
-    header:        Option<ResponseHeader>,
-    header_len:    usize,
-    expected:      usize,
+    line_reader:    LineReader,
+    header_parser:  ResponseHeaderParser,
+    header:         Option<ResponseHeader>,
+    body:           Vec<u8>,
+    expected:       usize,
 }
 
 impl ResponseParser {
     /// Create a new response parser.
-    fn new(buffer_limit: usize) -> ResponseParser {
+    fn new(max_line_length: usize, max_lines: usize) -> ResponseParser {
         ResponseParser {
-            header_parser: ResponseHeaderParser::new(),
-            buffer:        Vec::new(),
-            buffer_limit:  buffer_limit,
-            last_line:     0,
+            line_reader:   LineReader::new(max_line_length, b"\r\n"),
+            header_parser: ResponseHeaderParser::new(max_lines),
             header:        None,
-            header_len:    0,
+            body:          Vec::new(),
             expected:      0
         }
     }
     
-    /// Check if the last message is complete.
+    /// Check if the RTSP response is complete.
     fn is_complete(&self) -> bool {
         self.header.is_some() && self.expected == 0
     }
     
-    /// Get last response.
-    fn response(&self) -> Option<Response> {
-        let header = if let Some(ref header) = self.header {
-            header.clone()
-        } else {
-            return None;
-        };
-        
-        let body = if self.is_complete() {
-            self.buffer[self.header_len..].to_vec()
-        } else {
-            return None;
-        };
-        
-        Some(Response::new(header, body))
+    /// Get the last response.
+    fn response(&self) -> ParsingResult<Response> {
+        match self.header {
+            Some(ref header) if self.expected == 0 => {
+                let header = header.clone();
+                let body   = self.body.clone();
+                Ok(Response::new(header, body))
+            },
+            _ => Err(ParseError::from("incomplete RTSP response"))
+        }
     }
     
     /// Clear the current message.
     fn clear(&mut self) {
-        self.buffer.clear();
-        self.last_line  = 0;
-        self.header     = None;
-        self.header_len = 0;
-        self.expected   = 0;
+        self.line_reader.clear();
+        self.header_parser.clear();
+        self.body.clear();
+        
+        self.header   = None;
+        self.expected = 0;
     }
     
     /// Process a given chunk of data and return the number of bytes used.
-    fn add(&mut self, chunk: &[u8]) -> Result<usize> {
+    fn add(&mut self, chunk: &[u8]) -> ParsingResult<usize> {
         let mut pos = 0;
         
-        while pos < chunk.len() && 
-            (self.header.is_none() || self.expected > 0) {
+        while pos < chunk.len() && !self.is_complete() {
             if self.header.is_none() {
-                pos += try!(self.read_header(&chunk[pos..]));
-                if let Some(ref header) = self.header {
-                    if let Some(len) = header.get::<usize>("Content-Length") {
-                        self.expected = len;
-                    } else {
-                        self.expected = 0;
-                    }
-                }
-            } else if self.expected > 0 {
-                let end = if (pos + self.expected) > chunk.len() {
-                    chunk.len()
-                } else {
-                    pos + self.expected
-                };
-                // TODO: use resize (as soon as it is available) and memcpy 
-                // here as it is more effective
-                self.buffer.extend(chunk[pos..end].iter());
-                self.expected -= end - pos;
-                pos = end;
+                pos += try!(self.process_header_data(&chunk[pos..]));
+            } else {
+                pos += self.process_body_data(&chunk[pos..])
             }
         }
         
         Ok(pos)
     }
     
-    /// Read RTSP header.
-    fn read_header(&mut self, chunk: &[u8]) -> Result<usize> {
+    /// Process given header data.
+    fn process_header_data(&mut self, data: &[u8]) -> ParsingResult<usize> {
         let mut pos = 0;
         
-        while self.header.is_none() && pos < chunk.len() {
-            let (complete, used) = try!(self.read_line(&chunk[pos..]));
-            
-            pos += used;
-            
-            if complete {
-                let line_len = self.buffer.len() - self.last_line;
-                self.last_line = self.buffer.len();
+        while pos < data.len() && self.header.is_none() {
+            pos += try!(self.line_reader.add(&data[pos..]));
+            if self.line_reader.is_complete() {
+                {
+                    let line = self.line_reader.line();
+                    let line = try!(str::from_utf8(line));
+                    try!(self.header_parser.add(line));
+                }
                 
-                if line_len == 2 {
-                    let header_str = try!(str::from_utf8(&self.buffer));
-                    let header     = try!(self.header_parser.parse(header_str));
-                    self.header    = Some(header);
+                if self.header_parser.is_complete() {
+                    let header = try!(self.header_parser.header());
+                    
+                    self.expected = header.get("content-length")
+                        .unwrap_or(0);
+                    
+                    self.header = Some(header);
                 }
+                
+                self.line_reader.clear();
             }
         }
         
         Ok(pos)
     }
     
-    /// Read next line.
-    fn read_line(&mut self, chunk: &[u8]) -> Result<(bool, usize)> {
-        let mut complete = false;
+    /// Process given body data.
+    fn process_body_data(&mut self, data: &[u8]) -> usize {
         let mut pos = 0;
         
-        let mut last = match self.buffer[self.last_line..].last() {
-            Some(c) => Some(*c),
-            None    => None
-        };
-        
-        while !complete && pos < chunk.len() {
-            if self.buffer.len() >= self.buffer_limit {
-                return Err(RtspError::from(
-                    "unable to parse RTSP response, buffer limit exceeded"));
-            }
+        while pos < data.len() && !self.is_complete() {
+            let buffer = &data[pos..];
+            let len = if self.expected > buffer.len() {
+                buffer.len()
+            } else {
+                self.expected
+            };
             
-            let c = chunk[pos];
-            self.buffer.push(c);
-            pos += 1;
+            self.body.extend_from_slice(&buffer[..len]);
             
-            if let Some(last) = last {
-                if last == 0x0d && c == 0x0a {
-                    complete = true;
-                }
-            }
-            
-            last = Some(c);
+            self.expected -= len;
+            pos           += len;
         }
         
-        Ok((complete, pos))
+        pos
     }
 }
 
 /// RTSP client.
 pub struct Client {
-    connection: ClientHandler,
-    event_loop: EventLoop<ClientHandler>,
-    endpoint:   SocketAddr,
+    parser: ResponseParser,
+    stream: TcpStream,
+    host:   String,
+    port:   u16,
+    buffer: Vec<u8>,
+    offset: usize,
 }
 
 impl Client {
     /// Create a new RTSP client for a given remote service.
-    pub fn new(addr: SocketAddr) -> Result<Client> {
-        let stream         = try!(TcpStream::connect(&addr));
-        let mut event_loop = try!(EventLoop::new());
-        let connection     = try!(ClientHandler::new(stream, &mut event_loop));
+    pub fn new(host: &str, port: u16) -> Result<Client> {
+        let address        = try!(utils::get_socket_address((host, port)));
+        let stream         = try!(TcpStream::connect(&address));
         let client = Client {
-            connection: connection,
-            event_loop: event_loop,
-            endpoint:   addr
+            parser: ResponseParser::new(4096, 256),
+            stream: stream,
+            host:   host.to_string(),
+            port:   port,
+            buffer: Vec::new(),
+            offset: 0
         };
         
         Ok(client)
     }
     
     /// Set timeout for read and write operations.
-    pub fn set_timeout(&mut self, ms: Option<u64>) {
-        self.connection.set_timeout(ms)
+    pub fn set_timeout(&mut self, ms: Option<u64>) -> Result<()> {
+        let duration = ms.map(|ms| Duration::from_millis(ms));
+        try!(self.stream.set_read_timeout(duration));
+        try!(self.stream.set_write_timeout(duration));
+        Ok(())
     }
     
     /// Send OPTIONS command.
     pub fn options(&mut self) -> Result<Response> {
-        let request = Request::new(Method::OPTIONS, &self.endpoint, "/")
-            .add_header(("CSeq", 1));
+        let request = self.create_request(Method::OPTIONS, "/", 1);
         
-        try!(self.connection.send(&request, &mut self.event_loop));
-        
-        self.connection.read(&mut self.event_loop)
+        self.perform_request(&request)
     }
     
     /// Send DESCRIBE command.
     pub fn describe(&mut self, path: &str) -> Result<Response> {
-        let request = Request::new(Method::DESCRIBE, &self.endpoint, path)
-            .add_header(("CSeq", 1))
-            .add_header(("Accept", "application/sdp"));
+        let request = self.create_request(Method::DESCRIBE, path, 1)
+            .add_header("Accept", "application/sdp");
         
-        try!(self.connection.send(&request, &mut self.event_loop));
-        
-        self.connection.read(&mut self.event_loop)
-    }
-}
-
-/// RTSP client connection handler.
-struct ClientHandler {
-    stream:   TcpStream,
-    timeout:  Option<Duration>,
-    buffer:   Box<[u8]>,
-    buffered: usize,
-    read:     usize,
-    parser:   ResponseParser,
-    request:  Option<Vec<u8>>,
-    sent:     usize,
-    err:      Option<RtspError>,
-}
-
-impl ClientHandler {
-    /// Create a new connection handler.
-    fn new(
-        stream: TcpStream, 
-        event_loop: &mut EventLoop<Self>) -> Result<ClientHandler> {
-        let mut events = EventSet::all();
-        events.remove(EventSet::readable());
-        events.remove(EventSet::writable());
-        try!(event_loop.register(&stream, Token(0), 
-            events, PollOpt::level()));
-        
-        let res = ClientHandler {
-            stream:   stream,
-            timeout:  None,
-            buffer:   Box::new([0u8; 4096]),
-            buffered: 0,
-            read:     0,
-            parser:   ResponseParser::new(4096),
-            request:  None,
-            sent:     0,
-            err:      None
-        };
-        
-        Ok(res)
+        self.perform_request(&request)
     }
     
-    /// Set send/receive timeout.
-    fn set_timeout(&mut self, ms: Option<u64>) {
-        self.timeout = ms.map(|ms| Duration::from_millis(ms));
+    /// Create an RTSP request for a given method, path and sequence number.
+    fn create_request(
+        &self, 
+        method: Method, 
+        path: &str, 
+        cseq: usize) -> Request {
+        let version  = env!("CARGO_PKG_VERSION");
+        let uagent   = format!("ArrowClient/{}", version);
+        let endpoint = format!("rtsp://{}:{}{}", self.host, self.port, path);
+        
+        Request::new(method, &endpoint)
+            .add_header("CSeq", cseq)
+            .add_header("User-Agent", &uagent)
     }
     
-    /// Send a given request.
-    fn send(
-        &mut self, 
-        request: &Request, 
-        event_loop: &mut EventLoop<Self>) -> Result<()> {
-        self.init(Some(request));
+    /// Send a given request and wait for response.
+    fn perform_request(&mut self, request: &Request) -> Result<Response> {
+        let request = format!("{}", request)
+            .into_bytes();
         
-        let mut events = EventSet::all();
-        events.remove(EventSet::readable());
-        try!(event_loop.reregister(&self.stream, Token(0), 
-            events, PollOpt::level()));
+        try!(self.stream.write_all(&request));
         
-        let timeout = match self.timeout {
-            Some(ms) => Some(try!(event_loop.timeout(0, ms))),
-            None => None
-        };
-        
-        try!(event_loop.run(self));
-        
-        if let Some(timeout) = timeout {
-            event_loop.clear_timeout(&timeout);
+        // process buffered data
+        while self.offset < self.buffer.len() && !self.parser.is_complete() {
+            let data = &self.buffer[self.offset..];
+            self.offset += try!(self.parser.add(data));
         }
         
-        if let Some(ref err) = self.err {
-            Err(err.clone())
-        } else {
-            Ok(())
-        }
-    }
-    
-    /// Read RTSP response.
-    fn read(&mut self, event_loop: &mut EventLoop<Self>) -> Result<Response> {
-        self.init(None);
-        
-        let mut events = EventSet::all();
-        events.remove(EventSet::writable());
-        try!(event_loop.reregister(&self.stream, Token(0), 
-            events, PollOpt::level()));
-        
-        let timeout = match self.timeout {
-            Some(ms) => Some(try!(event_loop.timeout(0, ms))),
-            None => None
-        };
-        
-        try!(event_loop.run(self));
-        
-        if let Some(timeout) = timeout {
-            event_loop.clear_timeout(&timeout);
+        // reset the buffer if it's empty
+        if self.offset >= self.buffer.len() {
+            self.buffer.clear();
+            self.offset = 0;
         }
         
-        if let Some(ref err) = self.err {
-            Err(err.clone())
-        } else if let Some(response) = self.parser.response() {
-            Ok(response)
-        } else {
-            Err(RtspError::from("unable to get server response"))
+        let mut buffer = [0u8; 4096];
+        
+        while !self.parser.is_complete() {
+            let length = try!(self.stream.read(&mut buffer));
+            
+            if length == 0 {
+                break;
+            }
+            
+            let mut offset = 0;
+            
+            while offset < length && !self.parser.is_complete() {
+                offset += try!(self.parser.add(&buffer[offset..length]));
+            }
+            
+            // put all possible leftovers into the internal buffer
+            if offset < length {
+                self.buffer.extend_from_slice(&buffer[offset..length]);
+            }
         }
-    }
-    
-    /// Initialize handler.
-    fn init(&mut self, request: Option<&Request>) {
+        
+        let response = try!(self.parser.response());
+        
         self.parser.clear();
         
-        self.sent     = 0;
-        self.err      = None;
-        
-        self.request = match request {
-            None          => None,
-            Some(request) => {
-                let request_data = format!("{}", request);
-                Some(request_data.into_bytes())
-            }
-        };
-    }
-    
-    /// Check socket events.
-    fn socket_ready(&mut self, event_set: EventSet) -> Result<bool> {
-        let read_res = if self.request.is_none() && event_set.is_readable() {
-            try!(self.read_ready())
-        } else {
-            false
-        };
-        
-        let write_res = if self.request.is_some() && event_set.is_writable() {
-            try!(self.write_ready())
-        } else {
-            false
-        };
-        
-        if event_set.is_error() {
-            let socket_err = self.stream.take_socket_error();
-            Err(RtspError::from(socket_err.unwrap_err()))
-        } else if event_set.is_hup() {
-            Ok(false)
-        } else {
-            Ok(read_res || write_res)
-        }
-    }
-    
-    /// Check read event.
-    fn read_ready(&mut self) -> Result<bool> {
-        // process any leftovers
-        let read = try!(self.process_buffer());
-        
-        // check if we still need to read anything
-        if read {
-            self.buffered = try!(self.stream.read(&mut *self.buffer));
-            self.read     = 0;
-            
-            Ok(try!(self.process_buffer()))
-        } else {
-            Ok(false)
-        }
-    }
-    
-    /// Process buffered data.
-    fn process_buffer(&mut self) -> Result<bool> {
-        while self.read < self.buffered && !self.parser.is_complete() {
-            let buffer = &self.buffer[self.read..self.buffered];
-            self.read += try!(self.parser.add(buffer));
-        }
-        
-        Ok(!self.parser.is_complete())
-    }
-    
-    /// Check write event.
-    fn write_ready(&mut self) -> Result<bool> {
-        let mut discard = false;
-        
-        if let Some(ref request) = self.request {
-            self.sent += try!(self.stream.write(&request[self.sent..]));
-            if self.sent >= request.len() {
-                discard = true;
-            }
-        }
-        
-        if discard {
-            self.request = None;
-        }
-        
-        Ok(self.request.is_some())
+        Ok(response)
     }
 }
-
-impl Handler for ClientHandler {
-    type Timeout = u32;
-    type Message = ();
-    
-    fn ready(
-        &mut self, 
-        event_loop: &mut EventLoop<Self>, 
-        _: Token, 
-        event_set: EventSet) {
-        match self.socket_ready(event_set) {
-            Ok(true)  => (),
-            Ok(false) => event_loop.shutdown(),
-            Err(err)  => {
-                self.err = Some(err);
-                event_loop.shutdown();
-            }
-        }
-    }
-    
-    fn timeout(&mut self, event_loop: &mut EventLoop<Self>, _: u32) {
-        self.err = Some(RtspError::from("connection timeout"));
-        event_loop.shutdown();
-    }
-}
-
-#[cfg(test)]
-use std::net::ToSocketAddrs;
 
 #[cfg(test)]
 #[test]
 fn test_rtsp_request() {
-    let addr = "127.0.0.1:554".to_socket_addrs()
-        .unwrap()
-        .next()
-        .unwrap();
-    
-    let request = Request::new(Method::DESCRIBE, &addr, "/foo")
-        .add_header(("CSeq", 1))
-        .add_header(("Connection", "close"));
+    let request = Request::new(Method::DESCRIBE, "rtsp://127.0.0.1:554/foo")
+        .add_header("CSeq", 1)
+        .add_header("Connection", "close");
     
     let expected = "DESCRIBE rtsp://127.0.0.1:554/foo RTSP/1.0\r\n".to_string()
         + "CSeq: 1\r\n"
@@ -770,14 +598,17 @@ fn test_rtsp_request() {
 fn test_rtsp_response() {
     let mut header_fields = Vec::new();
     header_fields.push(("CSeq".to_string(), "1".to_string()));
+    header_fields.push(("Content-Length".to_string(), "5".to_string()));
     
     let header = ResponseHeader::new(200, "OK".to_string(), header_fields);
-    let body   = "hello".as_bytes().to_vec();
+    let body   = "hello".as_bytes()
+        .to_vec();
     
     let response = Response::new(header, body);
     
     let expected = "RTSP/1.0 200 OK\r\n".to_string()
         + "CSeq: 1\r\n"
+        + "Content-Length: 5\r\n"
         + "\r\n"
         + "hello";
     
@@ -785,10 +616,16 @@ fn test_rtsp_response() {
     
     assert_eq!(expected, msg);
     
-    let parser   = ResponseHeaderParser::new();
-    let response = parser.parse(&expected).unwrap();
+    let mut parser = ResponseParser::new(4096, 256);
     
-    assert_eq!(response.code, 200);
-    assert_eq!(response.line, "OK");
-    assert_eq!(response.get("cseq"), Some(1));
+    parser.add(expected.as_bytes())
+        .unwrap();
+    
+    let response = parser.response()
+        .unwrap();
+    
+    assert_eq!(response.header.code, 200);
+    assert_eq!(response.header.line, "OK");
+    assert_eq!(response.header.get("cseq"), Some(1));
+    assert_eq!(response.body, b"hello")
 }

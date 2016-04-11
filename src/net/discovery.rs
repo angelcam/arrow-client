@@ -194,9 +194,15 @@ fn load_rtsp_paths(file: &str) -> Result<Vec<String>> {
 
 /// Check if a given service is an RTSP service.
 fn is_rtsp_service(addr: SocketAddr) -> Result<bool> {
-    let mut client = try!(RtspClient::new(addr));
-    client.set_timeout(Some(1000));
-    Ok(client.options().is_ok())
+    let host = format!("{}", addr.ip());
+    let port = addr.port();
+    
+    let mut client = try!(RtspClient::new(&host, port));
+    try!(client.set_timeout(Some(1000)));
+    
+    let response = client.options();
+    
+    Ok(response.is_ok())
 }
 
 /// Check if a given session description contains at least one H.264 or 
@@ -237,8 +243,12 @@ enum DescribeStatus {
 
 /// Get describe status code for a given RTSP service and path.
 fn get_describe_status(addr: SocketAddr, path: &str) -> Result<DescribeStatus> {
-    let mut client = try!(RtspClient::new(addr));
-    client.set_timeout(Some(1000));
+    let host = format!("{}", addr.ip());
+    let port = addr.port();
+    
+    let mut client = try!(RtspClient::new(&host, port));
+    try!(client.set_timeout(Some(1000)));
+    
     if let Ok(response) = client.describe(path) {
         let header = response.header;
         let hipcam = match header.get_str("Server") {
