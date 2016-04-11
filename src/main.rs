@@ -44,7 +44,7 @@ use std::io::{BufWriter, Write};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use utils::logger;
-use utils::logger::{LoggerWrapper, DummyLogger};
+use utils::logger::LoggerWrapper;
 
 use utils::{Shared, RuntimeError};
 use utils::logger::{Logger, Severity};
@@ -84,6 +84,10 @@ static CONFIG_FILE: &'static str = "/etc/arrow/config.json";
 
 /// Arrow Client connection state file.
 static STATE_FILE: &'static str = "/var/lib/arrow/state";
+
+/// A file containing RTSP paths tested on service discovery (one path per 
+/// line).
+static RTSP_PATHS_FILE: &'static str = "/etc/arrow/rtsp-paths";
 
 /// Get MAC address of the first configured ethernet device.
 fn get_first_mac() -> Result<MacAddr, RuntimeError> {
@@ -210,14 +214,25 @@ fn usage(exit_code: i32) -> ! {
     println!("    -t addr   add a given TCP service (addr must be in the \"host:port\"");
     println!("              format)");
     println!("    -v        enable debug logs\n");
+    println!("    --config-file=path  alternative path to the client configuration file");
+    println!("                        (default value: /etc/arrow/config.json)");
+    println!("    --conn-state-file=path  alternative path to the client connection state");
+    println!("                        file (default value: /var/lib/arrow/state)");
     println!("    --diagnostic-mode   start the client in diagnostic mode (i.e. the client");
     println!("                        will try to connect to a given Arrow Service and it");
     println!("                        will report success as its exit code; note: the");
     println!("                        \"access denied\" response from the server is also");
     println!("                        considered as a success)");
     println!("    --log-stderr        send log messages into stderr instead of syslog");
-    println!("    --log-stderr-pretty send log messages into stderr instead of syslog and use");
-    println!("                        colored messages\n");
+    println!("    --log-stderr-pretty  send log messages into stderr instead of syslog and");
+    println!("                        use colored messages");
+    if cfg!(feature = "discovery") {
+        println!("    --rtsp-paths=path   alternative path to a file containing list of RTSP");
+        println!("                        paths used on service discovery (default value:");
+        println!("                        /etc/arrow/rtsp-paths)\n")
+    } else {
+        println!("");
+    }
     process::exit(exit_code);
 }
 
@@ -364,17 +379,20 @@ fn validate_hostname(x509_ctx: &X509StoreContext, hostname: &str) -> bool {
 
 /// Spawn a new Arrow Client thread.
 fn spawn_arrow_thread<L: 'static + Logger + Clone + Send>(
-    logger: L, 
+    logger: L,
+    state_file: &str,
     ssl_context: SslContext,
     cmd_sender: CommandSender,
     addr: &str,
     arrow_mac: &MacAddr,
     app_context: &Shared<AppContext>) {
+    let state_file  = state_file.to_string();
     let addr        = addr.to_string();
     let arrow_mac   = arrow_mac.clone();
     let app_context = app_context.clone();
     
-    thread::spawn(move || arrow_thread(logger, ssl_context, cmd_sender, 
+    thread::spawn(move || arrow_thread(logger, &state_file, 
+        ssl_context, cmd_sender, 
         &addr, &arrow_mac, app_context));
 }
 
@@ -383,6 +401,7 @@ fn spawn_arrow_thread<L: 'static + Logger + Clone + Send>(
 /// This function ensures maintaining connection with a remote Arrow Service.
 fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
     mut logger: L,
+    state_file: &str,
     mut ssl_context: SslContext,
     cmd_sender: Q,
     addr: &str,
@@ -415,7 +434,7 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
         
         utils::result_or_log(&mut logger, Severity::INFO,
             "unable to save current connection state", 
-            save_connection_state(CONN_STATE_CONNECTED));
+            save_connection_state(CONN_STATE_CONNECTED, state_file));
         
         let res = connect(lgr, &ssl_context, cmd_sender.clone(), 
             &cur_addr, arrow_mac, ctx);
@@ -435,8 +454,8 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
                 
                 let res = match err.kind() {
                     ErrorKind::Unauthorized => 
-                         save_connection_state(CONN_STATE_UNAUTHORIZED),
-                    _ => save_connection_state(CONN_STATE_DISCONNECTED)
+                         save_connection_state(CONN_STATE_UNAUTHORIZED, state_file),
+                    _ => save_connection_state(CONN_STATE_DISCONNECTED, state_file)
                 };
                 
                 utils::result_or_log(&mut logger, Severity::INFO,
@@ -462,8 +481,10 @@ fn arrow_thread<L: Logger + Clone, Q: Sender<Command> + Clone>(
 }
 
 /// Save current connection state.
-fn save_connection_state(state: &str) -> Result<(), io::Error> {
-    let file = try!(File::create(STATE_FILE));
+fn save_connection_state(
+    state: &str, 
+    state_file: &str) -> Result<(), io::Error> {
+    let file = try!(File::create(state_file));
     let mut bwriter = BufWriter::new(file);
     
     try!(bwriter.write(state.as_bytes()));
@@ -562,10 +583,11 @@ fn connect<L: Logger + Clone, Q: Sender<Command>>(
 /// Run device discovery and update a given service table.
 fn network_scanner_thread<L: Logger + Clone>(
     mut logger: L, 
+    rtsp_paths_file: &str,
     app_context: Shared<AppContext>) {
     log_info!(logger, "looking for local services...");
     let report = utils::result_or_log(&mut logger, Severity::WARN, 
-        "network scanner error", discovery::find_rtsp_streams());
+        "network scanner error", discovery::find_rtsp_streams(rtsp_paths_file));
     
     if let Some(report) = report {
         let mut app_context = app_context.lock()
@@ -592,7 +614,7 @@ fn network_scanner_thread<L: Logger + Clone>(
 
 #[cfg(not(feature = "discovery"))]
 /// Dummy scanner.
-fn network_scanner_thread<L>(_: L, _: Shared<AppContext>) {
+fn network_scanner_thread<L>(_: L, _: &str, _: Shared<AppContext>) {
 }
 
 /// Periodical event types.
@@ -638,6 +660,8 @@ impl Sender<Command> for CommandSender {
 /// Arrow command handler.
 struct CommandHandler<L: Logger> {
     logger:            L,
+    config_file:       String,
+    rtsp_paths_file:   String,
     default_svc_table: ServiceTable,
     active_services:   Vec<Service>,
     app_context:       Shared<AppContext>,
@@ -648,7 +672,9 @@ struct CommandHandler<L: Logger> {
 impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
     /// Create a new Arrow Command handler.
     fn new(
-        logger: L, 
+        logger: L,
+        config_file: &str,
+        rtsp_paths_file: &str,
         default_svc_table: ServiceTable,
         app_context: Shared<AppContext>) -> CommandHandler<L> {
         let now = time::precise_time_s();
@@ -660,6 +686,8 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
         
         CommandHandler {
             logger:            logger,
+            config_file:       config_file.to_string(),
+            rtsp_paths_file:   rtsp_paths_file.to_string(),
             default_svc_table: default_svc_table,
             active_services:   active_services,
             app_context:       app_context,
@@ -701,11 +729,13 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
             
             app_context.scanning = true;
             
-            let logger      = self.logger.clone();
-            let app_context = self.app_context.clone();
-            let sender      = event_loop.channel();
-            let handle      = thread::spawn(move || {
-                network_scanner_thread(logger, app_context);
+            let logger          = self.logger.clone();
+            let rtsp_paths_file = self.rtsp_paths_file.clone();
+            let app_context     = self.app_context.clone();
+            let sender          = event_loop.channel();
+            
+            let handle = thread::spawn(move || {
+                network_scanner_thread(logger, &rtsp_paths_file, app_context);
                 sender.send(CommandWrapper::ScanCompleted)
                     .unwrap();
             });
@@ -733,8 +763,8 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
             }
             
             utils::result_or_log(&mut self.logger, Severity::WARN, 
-                format!("unable to save config file \"{}\"", CONFIG_FILE), 
-                config.save(CONFIG_FILE));
+                format!("unable to save config file \"{}\"", self.config_file), 
+                config.save(&self.config_file));
         }
         
         app_context.scanning = false;
@@ -755,8 +785,8 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
         config.bump_version();
         
         utils::result_or_log(&mut self.logger, Severity::WARN, 
-            format!("unable to save config file \"{}\"", CONFIG_FILE), 
-            config.save(CONFIG_FILE));
+            format!("unable to save config file \"{}\"", self.config_file), 
+            config.save(&self.config_file));
     }
 }
 
@@ -793,6 +823,125 @@ const EXIT_CODE_CONFIG_ERROR:  i32 = 3;
 const EXIT_CODE_SSL_ERROR:     i32 = 4;
 const EXIT_CODE_CERT_ERROR:    i32 = 5;
 
+/// Helper struct for application configuration.
+struct AppConfiguration {
+    logger:            LoggerWrapper,
+    ssl_context:       SslContext,
+    app_context:       AppContext,
+    default_svc_table: ServiceTable,
+    arrow_svc_addr:    String,
+    arrow_mac:         MacAddr,
+    config_file:       String,
+    state_file:        String,
+    rtsp_paths_file:   String,
+}
+
+impl AppConfiguration {
+    /// Initialize application configuration.
+    fn init() -> AppConfiguration {
+        let parser = AppConfigurationParser::parse(&mut env::args());
+        
+        let logger = match parser.logger_type {
+            LoggerType::Syslog       => LoggerWrapper::new(logger::syslog::new()),
+            LoggerType::Stderr       => LoggerWrapper::new(logger::stderr::new()),
+            LoggerType::StderrPretty => LoggerWrapper::new(logger::stderr::new_pretty()),
+        };
+        
+        let ssl_context = utils::result_or_error(
+            init_ssl(SslMethod::Tlsv1_2, "HIGH:!aNULL:!kRSA:!PSK:!MD5:!RC4"),
+            EXIT_CODE_SSL_ERROR,
+            "unable to set up SSL context");
+        
+        let config = ArrowConfig::load(&parser.config_file)
+            .unwrap_or(ArrowConfig::new());
+        
+        let mut config = AppConfiguration {
+            logger:            logger,
+            ssl_context:       ssl_context,
+            app_context:       AppContext::new(config),
+            default_svc_table: ServiceTable::new(),
+            arrow_svc_addr:    parser.arrow_svc_addr,
+            arrow_mac:         parser.arrow_mac,
+            config_file:       parser.config_file,
+            state_file:        parser.state_file,
+            rtsp_paths_file:   parser.rtsp_paths_file
+        };
+        
+        if parser.verbose {
+            config.logger.set_level(Severity::DEBUG);
+        }
+        
+        if parser.discovery {
+            config.app_context.discovery = true;
+        }
+        
+        if parser.diagnostic_mode {
+            config.app_context.diagnostic_mode = true;
+        }
+        
+        for ca_certificates in parser.ca_certificates {
+            config.add_ca_certificates(&ca_certificates);
+        }
+        
+        for rtsp_service in parser.rtsp_services {
+            config.add_rtsp_service(&rtsp_service);
+        }
+        
+        for http_service in parser.http_services {
+            config.add_http_service(&http_service);
+        }
+        
+        for tcp_service in parser.tcp_services {
+            config.add_tcp_service(&tcp_service);
+        }
+        
+        config
+    }
+    
+    /// Add CA certificates from a given path.
+    fn add_ca_certificates(&mut self, path: &str) {
+        utils::result_or_error(load_ca_certificates(
+            &mut self.ssl_context, path),
+            EXIT_CODE_CERT_ERROR,
+            format!("unable to load certificate(s) from \"{}\"", path));
+    }
+    
+    /// Add a given RTSP service.
+    fn add_rtsp_service(&mut self, url: &str) {
+        let service = parse_rtsp_url(url);
+        let service = result_or_usage(service);
+        
+        self.app_context.config.add_static(service.clone());
+        self.default_svc_table.add_static(service);
+    }
+    
+    /// Add a given HTTP service.
+    fn add_http_service(&mut self, addr: &str) {
+        let addr = net::utils::get_socket_address(addr);
+        let addr = result_or_usage(addr);
+        
+        let mac = get_fake_mac_address(0xffff, &addr);
+        
+        let service = Service::HTTP(mac, addr);
+        
+        self.app_context.config.add_static(service.clone());
+        self.default_svc_table.add_static(service);
+    }
+    
+    /// Add a given TCP service.
+    fn add_tcp_service(&mut self, addr: &str) {
+        let addr = net::utils::get_socket_address(addr);
+        let addr = result_or_usage(addr);
+        
+        let mac = get_fake_mac_address(0xffff, &addr);
+        
+        let service = Service::TCP(mac, addr);
+        
+        self.app_context.config.add_static(service.clone());
+        self.default_svc_table.add_static(service);
+    }
+}
+
 /// Type of the logger backend that should be used.
 enum LoggerType {
     Syslog,
@@ -800,87 +949,91 @@ enum LoggerType {
     StderrPretty,
 }
 
-/// Helper struct for application configuration.
-struct AppConfiguration {
-    logger:            LoggerWrapper,
-    logger_type:       LoggerType,
-    ssl_context:       SslContext,
-    app_context:       AppContext,
-    default_svc_table: ServiceTable,
-    arrow_svc_addr:    String,
+/// App configuration parser.
+struct AppConfigurationParser {
     arrow_mac:         MacAddr,
+    arrow_svc_addr:    String,
+    ca_certificates:   Vec<String>,
+    rtsp_services:     Vec<String>,
+    http_services:     Vec<String>,
+    tcp_services:      Vec<String>,
+    logger_type:       LoggerType,
+    config_file:       String,
+    state_file:        String,
+    rtsp_paths_file:   String,
+    discovery:         bool,
+    verbose:           bool,
+    diagnostic_mode:   bool,
 }
 
-impl AppConfiguration {
-    /// Initialize application configuration.
-    fn init() -> AppConfiguration {
-        let ssl_context = utils::result_or_error(
-            init_ssl(SslMethod::Tlsv1_2, "HIGH:!aNULL:!kRSA:!PSK:!MD5:!RC4"),
-            EXIT_CODE_SSL_ERROR,
-            "unable to set up SSL context");
-        let config = ArrowConfig::load(CONFIG_FILE)
-            .unwrap_or(ArrowConfig::new());
+impl AppConfigurationParser {
+    /// Create a new app configuration parser.
+    fn new() -> AppConfigurationParser {
         let default_mac_addr = utils::result_or_error(
             get_first_mac(),
             EXIT_CODE_NETWORK_ERROR, 
             "unable to get any network interface MAC address");
         
-        let mut config = AppConfiguration {
-            logger:            LoggerWrapper::new(DummyLogger::new()),
-            logger_type:       LoggerType::Syslog,
-            ssl_context:       ssl_context,
-            app_context:       AppContext::new(config),
-            default_svc_table: ServiceTable::new(),
-            arrow_svc_addr:    String::new(),
+        AppConfigurationParser {
             arrow_mac:         default_mac_addr,
-        };
-        
-        config.parse_cmd_args(&mut env::args());
-        
-        let level = config.logger.get_level();
-        
-        config.logger = match config.logger_type {
-            LoggerType::Syslog       => LoggerWrapper::new(logger::syslog::new()),
-            LoggerType::Stderr       => LoggerWrapper::new(logger::stderr::new()),
-            LoggerType::StderrPretty => LoggerWrapper::new(logger::stderr::new_pretty()),
-        };
-        
-        config.logger.set_level(level);
-        
-        config
+            arrow_svc_addr:    String::new(),
+            ca_certificates:   Vec::new(),
+            rtsp_services:     Vec::new(),
+            http_services:     Vec::new(),
+            tcp_services:      Vec::new(),
+            logger_type:       LoggerType::Syslog,
+            config_file:       CONFIG_FILE.to_string(),
+            state_file:        STATE_FILE.to_string(),
+            rtsp_paths_file:   RTSP_PATHS_FILE.to_string(),
+            discovery:         false,
+            verbose:           false,
+            diagnostic_mode:   false
+        }
     }
     
     /// Parse given command line arguments.
-    fn parse_cmd_args(&mut self, args: &mut Args) {
+    fn parse(args: &mut Args) -> AppConfigurationParser {
+        let mut parser = AppConfigurationParser::new();
+        
         // skip the application name
         args.next();
         
         if let Some(arrow_svc_addr) = args.next() {
-            self.arrow_svc_addr = arrow_svc_addr;
+            parser.arrow_svc_addr = arrow_svc_addr;
         } else {
             usage(EXIT_CODE_USAGE);
         }
         
         while let Some(ref arg) = args.next() {
             match arg as &str {
-                "-c" => self.ca_certificates(args),
-                "-d" => self.discovery(),
-                "-i" => self.interface(args),
-                "-r" => self.rtsp_service(args),
-                "-h" => self.http_service(args),
-                "-t" => self.tcp_service(args),
-                "-v" => self.verbose(),
+                "-c" => parser.ca_certificates(args),
+                "-d" => parser.discovery(),
+                "-i" => parser.interface(args),
+                "-r" => parser.rtsp_service(args),
+                "-h" => parser.http_service(args),
+                "-t" => parser.tcp_service(args),
+                "-v" => parser.verbose(),
                 
-                "--diagnostic-mode"   => self.diagnostic_mode(),
-                "--log-stderr"        => self.log_stderr(),
-                "--log-stderr-pretty" => self.log_stderr_pretty(),
+                "--diagnostic-mode"   => parser.diagnostic_mode(),
+                "--log-stderr"        => parser.log_stderr(),
+                "--log-stderr-pretty" => parser.log_stderr_pretty(),
                 
                 arg => {
-                    println!("unknown argument: {}\n", arg);
-                    usage(EXIT_CODE_USAGE);
+                    if arg.starts_with("--config-file=") {
+                        parser.config_file(arg);
+                    } else if arg.starts_with("--conn-state-file=") {
+                        parser.conn_state_file(arg);
+                    } else if arg.starts_with("--rtsp-paths=") {
+                        parser.rtsp_paths(arg);
+                    } else {
+                        utils::error(RuntimeError::from(arg), 
+                            EXIT_CODE_USAGE, "unknown argument");
+                    }
                 }
             }
         }
+        
+        parser
     }
     
     /// Get next argument from a given list.
@@ -894,17 +1047,16 @@ impl AppConfiguration {
     /// Process the CA certificate argument.
     fn ca_certificates(&mut self, args: &mut Args) {
         let path = self.next_argument(args, "CA certificate path expected");
-        
-        utils::result_or_error(load_ca_certificates(
-            &mut self.ssl_context, &path),
-            EXIT_CODE_CERT_ERROR,
-            format!("unable to load certificate(s) from \"{}\"", &path));
+        self.ca_certificates.push(path);
     }
     
     /// Process the discovery argument.
     fn discovery(&mut self) {
         if cfg!(feature = "discovery") {
-            self.app_context.discovery = true;
+            self.discovery = true;
+        } else {
+            utils::error(RuntimeError::from("-d"), 
+                EXIT_CODE_USAGE, "unknown argument");
         }
     }
     
@@ -920,53 +1072,30 @@ impl AppConfiguration {
     
     /// Process the RTSP service argument.
     fn rtsp_service(&mut self, args: &mut Args) {
-        let url = self.next_argument(args, "URL expected");
-        
-        let service = parse_rtsp_url(&url);
-        let service = result_or_usage(service);
-        
-        self.app_context.config.add_static(service.clone());
-        self.default_svc_table.add_static(service);
+        let url = self.next_argument(args, "RTSP URL expected");
+        self.rtsp_services.push(url);
     }
     
     /// Process the HTTP service argument.
     fn http_service(&mut self, args: &mut Args) {
         let addr = self.next_argument(args, "TCP socket address expected");
-        
-        let addr = net::utils::get_socket_address(&addr as &str);
-        let addr = result_or_usage(addr);
-        
-        let mac = get_fake_mac_address(0xffff, &addr);
-        
-        let service = Service::HTTP(mac, addr);
-        
-        self.app_context.config.add_static(service.clone());
-        self.default_svc_table.add_static(service);
+        self.http_services.push(addr);
     }
     
     /// Process the TCP service argument.
     fn tcp_service(&mut self, args: &mut Args) {
         let addr = self.next_argument(args, "TCP socket address expected");
-        
-        let addr = net::utils::get_socket_address(&addr as &str);
-        let addr = result_or_usage(addr);
-        
-        let mac = get_fake_mac_address(0xffff, &addr);
-        
-        let service = Service::TCP(mac, addr);
-        
-        self.app_context.config.add_static(service.clone());
-        self.default_svc_table.add_static(service);
+        self.tcp_services.push(addr);
     }
     
     /// Process the verbose argument.
     fn verbose(&mut self) {
-        self.logger.set_level(Severity::DEBUG);
+        self.verbose = true;
     }
     
     /// Process the diagnostic mode argument.
     fn diagnostic_mode(&mut self) {
-        self.app_context.diagnostic_mode = true;
+        self.diagnostic_mode = true;
     }
     
     /// Process the log-stderr argument.
@@ -978,6 +1107,47 @@ impl AppConfiguration {
     fn log_stderr_pretty(&mut self) {
         self.logger_type = LoggerType::StderrPretty;
     }
+    
+    /// Process the config-file argument.
+    fn config_file(&mut self, arg: &str) {
+        let re = Regex::new(r"^--config-file=(.*)$")
+            .unwrap();
+        
+        self.config_file = re.captures(arg)
+            .unwrap()
+            .at(1)
+            .unwrap()
+            .to_string();
+    }
+    
+    /// Process the conn-state-file argument.
+    fn conn_state_file(&mut self, arg: &str) {
+        let re = Regex::new(r"^--conn-state-file=(.*)$")
+            .unwrap();
+        
+        self.state_file = re.captures(arg)
+            .unwrap()
+            .at(1)
+            .unwrap()
+            .to_string();
+    }
+    
+    /// Process the rtsp-paths argument.
+    fn rtsp_paths(&mut self, arg: &str) {
+        if cfg!(feature = "discovery") {
+            let re = Regex::new(r"^--rtsp-paths=(.*)$")
+                .unwrap();
+            
+            self.rtsp_paths_file = re.captures(arg)
+                .unwrap()
+                .at(1)
+                .unwrap()
+                .to_string();
+        } else {
+            utils::error(RuntimeError::from("--rtsp-paths"), 
+                EXIT_CODE_USAGE, "unknown argument");
+        }
+    }
 }
 
 /// Arrow Client main function.
@@ -986,9 +1156,9 @@ fn main() {
     
     let app_context = app_config.app_context;
     
-    utils::result_or_error(app_context.config.save(CONFIG_FILE),
+    utils::result_or_error(app_context.config.save(&app_config.config_file),
         EXIT_CODE_CONFIG_ERROR, 
-        format!("unable to save config file \"{}\"", CONFIG_FILE));
+        format!("unable to save config file \"{}\"", &app_config.config_file));
     
     log_info!(&mut app_config.logger, 
         "application started (uuid: {}, mac: {})", 
@@ -1001,6 +1171,8 @@ fn main() {
     
     let mut cmd_handler = CommandHandler::new(
         app_config.logger.clone(),
+        &app_config.config_file,
+        &app_config.rtsp_paths_file,
         app_config.default_svc_table,
         app_context.clone());
     
@@ -1008,6 +1180,7 @@ fn main() {
     
     spawn_arrow_thread(
         app_config.logger,
+        &app_config.state_file,
         app_config.ssl_context, 
         cmd_sender, 
         &app_config.arrow_svc_addr,
