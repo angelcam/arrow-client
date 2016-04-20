@@ -195,12 +195,14 @@ fn is_rtsp_service(addr: SocketAddr) -> Result<bool> {
     let host = format!("{}", addr.ip());
     let port = addr.port();
     
-    let mut client = try!(RtspClient::new(&host, port));
-    try!(client.set_timeout(Some(1000)));
-    
-    let response = client.options();
-    
-    Ok(response.is_ok())
+    // treat connection errors as error responses
+    if let Ok(mut client) = RtspClient::new(&host, port) {
+        try!(client.set_timeout(Some(1000)));
+        let response = client.options();
+        Ok(response.is_ok())
+    } else {
+        Ok(false)
+    }
 }
 
 /// Check if a given session description contains at least one H.264 or 
@@ -244,7 +246,14 @@ fn get_describe_status(addr: SocketAddr, path: &str) -> Result<DescribeStatus> {
     let host = format!("{}", addr.ip());
     let port = addr.port();
     
-    let mut client = try!(RtspClient::new(&host, port));
+    let mut client;
+    
+    // treat connection errors as DESCRIBE errors
+    match RtspClient::new(&host, port) {
+        Err(_) => return Ok(DescribeStatus::Error),
+        Ok(c)  => client = c
+    }
+    
     try!(client.set_timeout(Some(1000)));
     
     if let Ok(response) = client.describe(path) {
@@ -277,12 +286,14 @@ fn is_http_service(addr: SocketAddr) -> Result<bool> {
     let host = format!("{}", addr.ip());
     let port = addr.port();
     
-    let mut client = try!(HttpClient::new(&host, port));
-    try!(client.set_timeout(Some(1000)));
-    
-    let response = client.head("/");
-    
-    Ok(response.is_ok())
+    // treat connection errors as error responses
+    if let Ok(mut client) = HttpClient::new(&host, port) {
+        try!(client.set_timeout(Some(1000)));
+        let response = client.head("/");
+        Ok(response.is_ok())
+    } else {
+        Ok(false)
+    }
 }
 
 /// Find open ports on all available hosts within a given network and port 
