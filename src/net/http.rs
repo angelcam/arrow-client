@@ -174,27 +174,14 @@ pub struct ResponseHeader {
 
 impl ResponseHeader {
     /// Create a new HTTP response header.
-    fn new(
-        version: String,
-        code: i32,
-        line: String,
-        headers: Vec<Header>) -> ResponseHeader {
-        let mut res = ResponseHeader {
-            version:    version,
-            code:       code,
-            line:       line,
-            headers:    headers,
+    fn new() -> ResponseHeader {
+        ResponseHeader {
+            version:    String::new(),
+            code:       0,
+            line:       String::new(),
+            headers:    Vec::new(),
             header_map: HashMap::new()
-        };
-        
-        for i in 0..res.headers.len() {
-            let &(ref name, _) = res.headers.get(i)
-                .unwrap();
-            
-            res.header_map.insert(name.to_lowercase(), i);
         }
-        
-        res
     }
     
     /// Get response header value.
@@ -244,10 +231,7 @@ struct ResponseHeaderParser {
     status_re:   Regex,
     header_re:   Regex,
     cont_re:     Regex,
-    version:     String,
-    status_code: i32,
-    status_line: String,
-    headers:     Vec<Header>,
+    header:      ResponseHeader,
     max_lines:   usize,
     lines:       usize,
     complete:    bool,
@@ -260,10 +244,7 @@ impl ResponseHeaderParser {
             status_re:   Regex::new(r"^HTTP/(\d\.\d) (\d+) (.*)$").unwrap(),
             header_re:   Regex::new(r"^([^ :]+):\s*(.*)$").unwrap(),
             cont_re:     Regex::new(r"^\s+(.*)$").unwrap(),
-            version:     String::new(),
-            status_code: 0,
-            status_line: String::new(),
-            headers:     Vec::new(),
+            header:      ResponseHeader::new(),
             max_lines:   max_lines,
             lines:       0,
             complete:    false
@@ -297,9 +278,9 @@ impl ResponseHeaderParser {
             let status_code = caps.at(2).unwrap();
             let status_line = caps.at(3).unwrap();
             
-            self.status_code = try!(i32::from_str(status_code));
-            self.status_line = status_line.to_string();
-            self.version     = version.to_string();
+            self.header.code    = try!(i32::from_str(status_code));
+            self.header.line    = status_line.to_string();
+            self.header.version = version.to_string();
             
             Ok(())
         } else {
@@ -310,16 +291,22 @@ impl ResponseHeaderParser {
     /// Parse HTTP header line.
     fn parse_header_line(&mut self, line: &str) -> ParsingResult<()> {
         if line.is_empty() {
+            for i in 0..self.header.headers.len() {
+                let &(ref name, _) = self.header.headers.get(i)
+                    .unwrap();
+                
+                self.header.header_map.insert(name.to_lowercase(), i);
+            }
             self.complete = true;
         } else if let Some(caps) = self.header_re.captures(line) {
             let name  = caps.at(1).unwrap();
             let value = caps.at(2).unwrap();
-            self.headers.push((name.to_string(), value.to_string()));
+            self.header.headers.push((name.to_string(), value.to_string()));
         } else if let Some(caps) = self.cont_re.captures(line) {
             let cont = caps.at(1).unwrap();
             
-            if let Some((name, val)) = self.headers.pop() {
-                self.headers.push((name, val + cont));
+            if let Some((name, val)) = self.header.headers.pop() {
+                self.header.headers.push((name, val + cont));
             } else {
                 return Err(ParseError::from("first HTTP header cannot be continuation"));
             }
@@ -331,14 +318,9 @@ impl ResponseHeaderParser {
     }
     
     /// Get current response header.
-    fn header(&self) -> ParsingResult<ResponseHeader> {
+    fn header(&self) -> ParsingResult<&ResponseHeader> {
         if self.complete {
-            let res = ResponseHeader::new(self.version.clone(),
-                self.status_code,
-                self.status_line.clone(),
-                self.headers.clone());
-            
-            Ok(res)
+            Ok(&self.header)
         } else {
             Err(ParseError::from("incomplete HTTP header"))
         }
@@ -431,50 +413,168 @@ impl LineReader {
 }
 
 /// HTTP/1.0 response parser.
-struct ResponseParser {
-    line_reader:    LineReader,
-    header_parser:  ResponseHeaderParser,
-    body:           Vec<u8>,
+struct ResponseParser<'a, H: 'static + ResponseHandler> {
+    line_reader:      LineReader,
+    header_parser:    ResponseHeaderParser,
+    response_handler: &'a mut H,
 }
 
-impl ResponseParser {
+impl<'a, H> ResponseParser<'a, H> where H: 'static + ResponseHandler {
     /// Create a new response parser.
-    fn new(max_line_length: usize, max_lines: usize) -> ResponseParser {
+    fn new(
+        rhandler: &'a mut H,
+        max_line_length: usize, 
+        max_lines: usize) -> ResponseParser<'a, H> {
         ResponseParser {
-            line_reader:   LineReader::new(max_line_length, b"\r\n"),
-            header_parser: ResponseHeaderParser::new(max_lines),
-            body:          Vec::new(),
+            line_reader:      LineReader::new(max_line_length, b"\r\n"),
+            header_parser:    ResponseHeaderParser::new(max_lines),
+            response_handler: rhandler
         }
     }
     
-    /// Get the last response.
-    fn response(&self) -> ParsingResult<Response> {
-        let header = try!(self.header_parser.header());
-        Ok(Response::new(header, self.body.clone()))
-    }
-    
-    /// Process a given chunk of data.
-    fn add(&mut self, chunk: &[u8]) -> ParsingResult<()> {
+    /// Process a given chunk of data. This method returns true to keep 
+    /// processing, false otherwise.
+    fn add(&mut self, chunk: &[u8]) -> ParsingResult<bool> {
         let mut pos = 0;
         
         while pos < chunk.len() {
             if self.header_parser.is_complete() {
-                self.body.extend_from_slice(&chunk[pos..]);
-                pos = chunk.len();
+                if self.response_handler.body(&chunk[pos..]) {
+                    pos = chunk.len();
+                } else {
+                    return Ok(false);
+                }
             } else {
                 pos += try!(self.line_reader.add(&chunk[pos..]));
                 if self.line_reader.is_complete() {
-                    {
-                        let line = self.line_reader.line();
-                        let line = try!(str::from_utf8(line));
-                        try!(self.header_parser.add(line));
+                    if try!(self.process_header_line()) {
+                        self.line_reader.clear();
+                    } else {
+                        return Ok(false);
                     }
-                    self.line_reader.clear();
                 }
             }
         }
         
-        Ok(())
+        Ok(true)
+    }
+    
+    /// Process the current header line.
+    fn process_header_line(&mut self) -> ParsingResult<bool> {
+        {
+            let line = self.line_reader.line();
+            let line = try!(str::from_utf8(line));
+            
+            try!(self.header_parser.add(line));
+        }
+        
+        if self.header_parser.is_complete() {
+            self.process_header()
+        } else {
+            Ok(true)
+        }
+    }
+    
+    /// Process the current header.
+    fn process_header(&mut self) -> ParsingResult<bool> {
+        let header = try!(self.header_parser.header());
+        
+        Ok(self.response_handler.header(header))
+    }
+}
+
+/// Response handler trait. 
+trait ResponseHandler {
+    /// Process a given response header and return true in case you wish to 
+    /// continue processing the rest of the request.
+    fn header(&mut self, header: &ResponseHeader) -> bool;
+    
+    /// Process a given body chunk and return true in case you wish to continue 
+    /// processing the rest of the request.
+    fn body(&mut self, data: &[u8]) -> bool;
+    
+    /// Handle response end.
+    fn end(&mut self);
+}
+
+/// Simple implementation of the ResponseHandler trait storing the whole 
+/// response in memory.
+struct ResponseBuilder {
+    header: Option<ResponseHeader>,
+    body:   Vec<u8>,
+}
+
+impl ResponseBuilder {
+    /// Create a new ResponseBuilder.
+    fn new() -> ResponseBuilder {
+        ResponseBuilder {
+            header: None,
+            body:   Vec::new()
+        }
+    }
+    
+    /// Get the Response object.
+    fn response(self) -> ParsingResult<Response> {
+        if let Some(header) = self.header {
+            Ok(Response::new(header, self.body))
+        } else {
+            Err(ParseError::from("there is no response yet"))
+        }
+    }
+}
+
+impl ResponseHandler for ResponseBuilder {
+    fn header(&mut self, header: &ResponseHeader) -> bool {
+        self.header = Some(header.clone());
+        true
+    }
+    
+    fn body(&mut self, data: &[u8]) -> bool {
+        self.body.extend_from_slice(data);
+        true
+    }
+    
+    fn end(&mut self) {
+        // do nothing here
+    }
+}
+
+/// Simple implementation of the ResponseHandler trait storing only the 
+/// response header and refusing to process any other data.
+struct ResponseHeaderBuilder {
+    header: Option<ResponseHeader>,
+}
+
+impl ResponseHeaderBuilder {
+    /// Create a new response header builder.
+    fn new() -> ResponseHeaderBuilder {
+        ResponseHeaderBuilder {
+            header: None
+        }
+    }
+    
+    /// Get the ResponseHeader obejct.
+    fn header(self) -> ParsingResult<ResponseHeader> {
+        if let Some(header) = self.header {
+            Ok(header)
+        } else {
+            Err(ParseError::from("there is no response yet"))
+        }
+    }
+}
+
+impl ResponseHandler for ResponseHeaderBuilder {
+    fn header(&mut self, header: &ResponseHeader) -> bool {
+        self.header = Some(header.clone());
+        false
+    }
+    
+    fn body(&mut self, _: &[u8]) -> bool {
+        false
+    }
+    
+    fn end(&mut self) {
+        // do nothing here
     }
 }
 
@@ -531,7 +631,6 @@ pub type Result<T> = result::Result<T, HttpError>;
 
 /// HTTP/1.0 client.
 pub struct Client {
-    parser: ResponseParser,
     stream: TcpStream,
     host:   String,
 }
@@ -542,7 +641,6 @@ impl Client {
         let address        = try!(utils::get_socket_address((host, port)));
         let stream         = try!(TcpStream::connect(&address));
         let client = Client {
-            parser: ResponseParser::new(4096, 256),
             stream: stream,
             host:   host.to_string()
         };
@@ -559,11 +657,15 @@ impl Client {
     }
     
     /// Send a given HEAD request.
-    pub fn head(&mut self, path: &str) -> Result<Response> {
+    pub fn head(&mut self, path: &str) -> Result<ResponseHeader> {
         let request = self.create_request(Method::HEAD, path)
             .add_header("Accept", "*/*");
         
-        self.perform_request(&request)
+        let mut rbuilder = ResponseHeaderBuilder::new();
+        
+        try!(self.perform_request(&request, &mut rbuilder));
+        
+        Ok(try!(rbuilder.header()))
     }
     
     /// Send a given GET request.
@@ -572,8 +674,24 @@ impl Client {
         for &(ref name, ref value) in headers {
             request = request.add_header(name, value);
         }
+        let mut rbuilder = ResponseBuilder::new();
         
-        self.perform_request(&request)
+        try!(self.perform_request(&request, &mut rbuilder));
+        
+        Ok(try!(rbuilder.response()))
+    }
+    
+    /// Send a given GET request, wait for the response header and terminate 
+    /// the connection.
+    pub fn get_header(&mut self, path: &str) -> Result<ResponseHeader> {
+        let request = self.create_request(Method::HEAD, path)
+            .add_header("Accept", "*/*");
+        
+        let mut rbuilder = ResponseHeaderBuilder::new();
+        
+        try!(self.perform_request(&request, &mut rbuilder));
+        
+        Ok(try!(rbuilder.header()))
     }
     
     /// Create a HTTP request for a given method and path.
@@ -587,24 +705,33 @@ impl Client {
     }
     
     /// Send a given request and wait for response.
-    fn perform_request(&mut self, request: &Request) -> Result<Response> {
+    fn perform_request<H>(
+        &mut self,
+        request: &Request,
+        rhandler: &mut H) -> Result<()> where H: 'static + ResponseHandler {
         let request = format!("{}", request)
             .into_bytes();
         
         try!(self.stream.write_all(&request));
         
-        let mut buffer = [0u8; 4096];
-        
-        let mut length = try!(self.stream.read(&mut buffer));
-        
-        while length > 0 {
-            try!(self.parser.add(&buffer[..length]));
-            length = try!(self.stream.read(&mut buffer));
+        {
+            let mut parser = ResponseParser::new(rhandler, 4096, 256);
+            let mut buffer = [0u8; 4096];
+            
+            let mut length = try!(self.stream.read(&mut buffer));
+            
+            while length > 0 {
+                if try!(parser.add(&buffer[..length])) {
+                    length = try!(self.stream.read(&mut buffer));
+                } else {
+                    break;
+                }
+            }
         }
         
-        let response = try!(self.parser.response());
+        rhandler.end();
         
-        Ok(response)
+        Ok(())
     }
 }
 
@@ -627,14 +754,24 @@ fn test_http_request() {
 #[test]
 fn test_http_response() {
     let mut header_fields = Vec::new();
+    let mut header_map    = HashMap::new();
     
     header_fields.push(("Server".to_string(), "foo/1.0".to_string()));
     
-    let header = ResponseHeader::new(
-        "1.0".to_string(), 
-        200, 
-        "OK".to_string(), 
-        header_fields);
+    for i in 0..header_fields.len() {
+        let &(ref name, _) = header_fields.get(i)
+            .unwrap();
+        
+        header_map.insert(name.to_lowercase(), i);
+    }
+    
+    let header = ResponseHeader {
+        version:    "1.0".to_string(),
+        code:       200,
+        line:       "OK".to_string(),
+        headers:    header_fields,
+        header_map: header_map
+    };
     
     let body = "hello".as_bytes()
         .to_vec();
@@ -650,12 +787,16 @@ fn test_http_response() {
     
     assert_eq!(expected, msg);
     
-    let mut parser = ResponseParser::new(4096, 256);
+    let mut rbuilder = ResponseBuilder::new();
     
-    parser.add(expected.as_bytes())
-        .unwrap();
+    {
+        let mut parser = ResponseParser::new(&mut rbuilder, 4096, 256);
+        
+        parser.add(expected.as_bytes())
+            .unwrap();
+    }
     
-    let response = parser.response()
+    let response = rbuilder.response()
         .unwrap();
     
     assert_eq!(response.header.code, 200);
