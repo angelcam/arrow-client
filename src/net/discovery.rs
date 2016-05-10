@@ -112,7 +112,8 @@ pub fn find_rtsp_streams(rtsp_paths_file: &str) -> Result<ScanReport> {
     let devices = EthernetDevice::list();
     
     let port_candidates = PortCollection::new()
-        .add_all(RTSP_PORT_CANDIDATES);
+        .add_all(RTSP_PORT_CANDIDATES.iter()
+            .map(|p| *p));
     
     let mut threads = Vec::new();
     

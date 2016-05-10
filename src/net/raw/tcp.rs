@@ -276,11 +276,11 @@ pub mod scanner {
         }
         
         /// Add all ports/ranges in a given slice.
-        pub fn add_all<T>(mut self, v: &[T]) -> Self
-            where PortRange: From<T>,
-                  T: Clone {
-            for e in v {
-                self.ranges.push(PortRange::from(e.clone()));
+        pub fn add_all<C, I>(mut self, c: C) -> Self
+            where C: IntoIterator<Item=I>,
+                  PortRange: From<I> {
+            for i in c.into_iter() {
+                self.ranges.push(PortRange::from(i));
             }
             self
         }
@@ -478,7 +478,8 @@ mod tests {
     #[cfg(feature = "discovery")]
     fn test_port_collection() {
         let col = PortCollection::new()
-            .add_all(&[3, 5])
+            .add_all([3, 5].iter()
+                .map(|p| *p))
             .add(10..15)
             .add(100);
         
