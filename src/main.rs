@@ -194,6 +194,37 @@ fn parse_rtsp_url(url: &str) -> Result<Service, RuntimeError> {
     }
 }
 
+/// Parse a given HTTP URL and return Service::MJPEG, Service::LockedMJPEG or 
+/// an error.
+fn parse_mjpeg_url(url: &str) -> Result<Service, RuntimeError> {
+    let res = r"^http://([^/]+@)?([^/@:]+|\[[0-9a-fA-F:.]+\])(:(\d+))?(/.*)?$";
+    let re  = Regex::new(res).unwrap();
+    
+    if let Some(caps) = re.captures(url) {
+        let host = caps.at(2).unwrap();
+        let path = caps.at(5).unwrap();
+        let port = match caps.at(4) {
+            Some(port_str) => u16::from_str(port_str).unwrap(),
+            _ => 80
+        };
+        
+        let socket_addr = try!(net::utils::get_socket_address((host, port))
+            .or(Err(RuntimeError::from(
+                "unable to resolve HTTP service address"))));
+        
+        let mac = get_fake_mac_address(0xffff, &socket_addr);
+        
+        // note: we do not want to probe the service here as it might not be 
+        // available on app startup
+        match caps.at(1) {
+            Some(_) => Ok(Service::LockedMJPEG(mac, socket_addr)),
+            None    => Ok(Service::MJPEG(mac, socket_addr, path.to_string()))
+        }
+    } else {
+        Err(RuntimeError::from("invalid HTTP URL given"))
+    }
+}
+
 /// Print usage and exit the process with a given exit code.
 fn usage(exit_code: i32) -> ! {
     println!("USAGE: arrow-client arr-host[:arr-port] [OPTIONS]\n");
@@ -213,6 +244,7 @@ fn usage(exit_code: i32) -> ! {
         println!("    -d        automatic service discovery");
     }
     println!("    -r URL    add a given RTSP service");
+    println!("    -m URL    add a given MJPEG service");
     println!("    -h addr   add a given HTTP service (addr must be in the \"host:port\"");
     println!("              format)");
     println!("    -t addr   add a given TCP service (addr must be in the \"host:port\"");
@@ -908,6 +940,10 @@ impl AppConfiguration {
             config.add_rtsp_service(&rtsp_service);
         }
         
+        for mjpeg_service in parser.mjpeg_services {
+            config.add_mjpeg_service(&mjpeg_service);
+        }
+        
         for http_service in parser.http_services {
             config.add_http_service(&http_service);
         }
@@ -930,6 +966,15 @@ impl AppConfiguration {
     /// Add a given RTSP service.
     fn add_rtsp_service(&mut self, url: &str) {
         let service = parse_rtsp_url(url);
+        let service = result_or_usage(service);
+        
+        self.app_context.config.add_static(service.clone());
+        self.default_svc_table.add_static(service);
+    }
+    
+    /// Add a given MJPEG service.
+    fn add_mjpeg_service(&mut self, url: &str) {
+        let service = parse_mjpeg_url(url);
         let service = result_or_usage(service);
         
         self.app_context.config.add_static(service.clone());
@@ -976,6 +1021,7 @@ struct AppConfigurationParser {
     arrow_svc_addr:    String,
     ca_certificates:   Vec<String>,
     rtsp_services:     Vec<String>,
+    mjpeg_services:    Vec<String>,
     http_services:     Vec<String>,
     tcp_services:      Vec<String>,
     logger_type:       LoggerType,
@@ -1001,6 +1047,7 @@ impl AppConfigurationParser {
             arrow_svc_addr:    String::new(),
             ca_certificates:   Vec::new(),
             rtsp_services:     Vec::new(),
+            mjpeg_services:    Vec::new(),
             http_services:     Vec::new(),
             tcp_services:      Vec::new(),
             logger_type:       LoggerType::Syslog,
@@ -1033,6 +1080,7 @@ impl AppConfigurationParser {
                 "-d" => parser.discovery(),
                 "-i" => parser.interface(args),
                 "-r" => parser.rtsp_service(args),
+                "-m" => parser.mjpeg_service(args),
                 "-h" => parser.http_service(args),
                 "-t" => parser.tcp_service(args),
                 "-v" => parser.verbose(),
@@ -1099,6 +1147,12 @@ impl AppConfigurationParser {
     fn rtsp_service(&mut self, args: &mut Args) {
         let url = self.next_argument(args, "RTSP URL expected");
         self.rtsp_services.push(url);
+    }
+    
+    /// Process the MJPEG service argument.
+    fn mjpeg_service(&mut self, args: &mut Args) {
+        let url = self.next_argument(args, "HTTP URL expected");
+        self.mjpeg_services.push(url);
     }
     
     /// Process the HTTP service argument.
