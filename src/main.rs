@@ -756,9 +756,9 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
             delta
         };
         
-        event_loop.timeout(
+        event_loop.timeout_ms(
                 TimerEvent::ScanNetwork,
-                Duration::from_millis((timeout * 1000.0) as u64))
+                (timeout * 1000.0) as u64)
             .unwrap();
     }
     
@@ -1284,9 +1284,7 @@ fn main() {
         &app_config.arrow_mac,
         &app_context);
     
-    event_loop.timeout(
-            TimerEvent::ScanNetwork,
-            Duration::new(0, 0))
+    event_loop.timeout_ms(TimerEvent::ScanNetwork, 0)
         .unwrap();
     
     event_loop.run(&mut cmd_handler)
