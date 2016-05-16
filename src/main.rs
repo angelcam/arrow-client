@@ -89,6 +89,10 @@ static STATE_FILE: &'static str = "/var/lib/arrow/state";
 /// line).
 static RTSP_PATHS_FILE: &'static str = "/etc/arrow/rtsp-paths";
 
+/// A file containing MJPEG paths tested on service discovery (one path per 
+/// line).
+static MJPEG_PATHS_FILE: &'static str = "/etc/arrow/mjpeg-paths";
+
 /// Get MAC address of the first configured ethernet device.
 fn get_first_mac() -> Result<MacAddr, RuntimeError> {
     EthernetDevice::list()
@@ -229,7 +233,10 @@ fn usage(exit_code: i32) -> ! {
     if cfg!(feature = "discovery") {
         println!("    --rtsp-paths=path   alternative path to a file containing list of RTSP");
         println!("                        paths used on service discovery (default value:");
-        println!("                        /etc/arrow/rtsp-paths)\n")
+        println!("                        /etc/arrow/rtsp-paths)");
+        println!("    --mjpeg-paths=path  alternative path to a file containing list of MJPEG");
+        println!("                        paths used on service discovery (default value:");
+        println!("                        /etc/arrow/mjpeg-paths)\n");
     } else {
         println!("");
     }
@@ -584,10 +591,14 @@ fn connect<L: Logger + Clone, Q: Sender<Command>>(
 fn network_scanner_thread<L: Logger + Clone>(
     mut logger: L, 
     rtsp_paths_file: &str,
+    mjpeg_paths_file: &str,
     app_context: Shared<AppContext>) {
     log_info!(logger, "looking for local services...");
     let report = utils::result_or_log(&mut logger, Severity::WARN, 
-        "network scanner error", discovery::find_rtsp_streams(rtsp_paths_file));
+        "network scanner error",
+        discovery::scan_network(
+            rtsp_paths_file,
+            mjpeg_paths_file));
     
     if let Some(report) = report {
         let mut app_context = app_context.lock()
@@ -614,7 +625,7 @@ fn network_scanner_thread<L: Logger + Clone>(
 
 #[cfg(not(feature = "discovery"))]
 /// Dummy scanner.
-fn network_scanner_thread<L>(_: L, _: &str, _: Shared<AppContext>) {
+fn network_scanner_thread<L>(_: L, _: &str, _: &str, _: Shared<AppContext>) {
 }
 
 /// Periodical event types.
@@ -662,6 +673,7 @@ struct CommandHandler<L: Logger> {
     logger:            L,
     config_file:       String,
     rtsp_paths_file:   String,
+    mjpeg_paths_file:  String,
     default_svc_table: ServiceTable,
     active_services:   Vec<Service>,
     app_context:       Shared<AppContext>,
@@ -675,6 +687,7 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
         logger: L,
         config_file: &str,
         rtsp_paths_file: &str,
+        mjpeg_paths_file: &str,
         default_svc_table: ServiceTable,
         app_context: Shared<AppContext>) -> CommandHandler<L> {
         let now = time::precise_time_s();
@@ -688,6 +701,7 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
             logger:            logger,
             config_file:       config_file.to_string(),
             rtsp_paths_file:   rtsp_paths_file.to_string(),
+            mjpeg_paths_file:  mjpeg_paths_file.to_string(),
             default_svc_table: default_svc_table,
             active_services:   active_services,
             app_context:       app_context,
@@ -729,13 +743,18 @@ impl<L: 'static + Logger + Clone + Send> CommandHandler<L> {
             
             app_context.scanning = true;
             
-            let logger          = self.logger.clone();
-            let rtsp_paths_file = self.rtsp_paths_file.clone();
-            let app_context     = self.app_context.clone();
-            let sender          = event_loop.channel();
+            let logger           = self.logger.clone();
+            let rtsp_paths_file  = self.rtsp_paths_file.clone();
+            let mjpeg_paths_file = self.mjpeg_paths_file.clone();
+            let app_context      = self.app_context.clone();
+            let sender           = event_loop.channel();
             
             let handle = thread::spawn(move || {
-                network_scanner_thread(logger, &rtsp_paths_file, app_context);
+                network_scanner_thread(logger,
+                    &rtsp_paths_file,
+                    &mjpeg_paths_file,
+                    app_context);
+                
                 sender.send(CommandWrapper::ScanCompleted)
                     .unwrap();
             });
@@ -834,6 +853,7 @@ struct AppConfiguration {
     config_file:       String,
     state_file:        String,
     rtsp_paths_file:   String,
+    mjpeg_paths_file:  String,
 }
 
 impl AppConfiguration {
@@ -864,7 +884,8 @@ impl AppConfiguration {
             arrow_mac:         parser.arrow_mac,
             config_file:       parser.config_file,
             state_file:        parser.state_file,
-            rtsp_paths_file:   parser.rtsp_paths_file
+            rtsp_paths_file:   parser.rtsp_paths_file,
+            mjpeg_paths_file:  parser.mjpeg_paths_file,
         };
         
         if parser.verbose {
@@ -961,6 +982,7 @@ struct AppConfigurationParser {
     config_file:       String,
     state_file:        String,
     rtsp_paths_file:   String,
+    mjpeg_paths_file:  String,
     discovery:         bool,
     verbose:           bool,
     diagnostic_mode:   bool,
@@ -985,6 +1007,7 @@ impl AppConfigurationParser {
             config_file:       CONFIG_FILE.to_string(),
             state_file:        STATE_FILE.to_string(),
             rtsp_paths_file:   RTSP_PATHS_FILE.to_string(),
+            mjpeg_paths_file:  MJPEG_PATHS_FILE.to_string(),
             discovery:         false,
             verbose:           false,
             diagnostic_mode:   false
@@ -1025,6 +1048,8 @@ impl AppConfigurationParser {
                         parser.conn_state_file(arg);
                     } else if arg.starts_with("--rtsp-paths=") {
                         parser.rtsp_paths(arg);
+                    } else if arg.starts_with("--mjpeg-paths=") {
+                        parser.mjpeg_paths(arg);
                     } else {
                         utils::error(RuntimeError::from(arg), 
                             EXIT_CODE_USAGE, "unknown argument");
@@ -1148,6 +1173,23 @@ impl AppConfigurationParser {
                 EXIT_CODE_USAGE, "unknown argument");
         }
     }
+    
+    /// Process the mjpeg-paths argument.
+    fn mjpeg_paths(&mut self, arg: &str) {
+        if cfg!(feature = "discovery") {
+            let re = Regex::new(r"^--mjpeg-paths=(.*)$")
+                .unwrap();
+            
+            self.mjpeg_paths_file = re.captures(arg)
+                .unwrap()
+                .at(1)
+                .unwrap()
+                .to_string();
+        } else {
+            utils::error(RuntimeError::from("--mjpeg-paths"), 
+                EXIT_CODE_USAGE, "unknown argument");
+        }
+    }
 }
 
 /// Arrow Client main function.
@@ -1173,6 +1215,7 @@ fn main() {
         app_config.logger.clone(),
         &app_config.config_file,
         &app_config.rtsp_paths_file,
+        &app_config.mjpeg_paths_file,
         app_config.default_svc_table,
         app_context.clone());
     

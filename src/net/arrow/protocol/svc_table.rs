@@ -46,6 +46,8 @@ const SVC_TYPE_LOCKED_RTSP:      u16 = 0x0002;
 const SVC_TYPE_UNKNOWN_RTSP:     u16 = 0x0003;
 const SVC_TYPE_UNSUPPORTED_RTSP: u16 = 0x0004;
 const SVC_TYPE_HTTP:             u16 = 0x0005;
+const SVC_TYPE_MJPEG:            u16 = 0x0006;
+const SVC_TYPE_LOCKED_MJPEG:     u16 = 0x0007;
 const SVC_TYPE_TCP:              u16 = 0xffff;
 
 /// Service Table item header.
@@ -110,6 +112,10 @@ pub enum Service {
     UnsupportedRTSP(MacAddr, SocketAddr, String),
     /// Remote HTTP service (mac, addr).
     HTTP(MacAddr, SocketAddr),
+    /// Remote MJPEG service (mac, addr, path).
+    MJPEG(MacAddr, SocketAddr, String),
+    /// Remote MJPEG service requiring authorization (mac, addr).
+    LockedMJPEG(MacAddr, SocketAddr),
     /// General purpose TCP service (mac, addr).
     TCP(MacAddr, SocketAddr),
 }
@@ -124,6 +130,8 @@ impl Service {
             &Service::UnknownRTSP(_, _)        => SVC_TYPE_UNKNOWN_RTSP,
             &Service::UnsupportedRTSP(_, _, _) => SVC_TYPE_UNSUPPORTED_RTSP,
             &Service::HTTP(_, _)               => SVC_TYPE_HTTP,
+            &Service::MJPEG(_, _, _)           => SVC_TYPE_MJPEG,
+            &Service::LockedMJPEG(_, _)        => SVC_TYPE_LOCKED_MJPEG,
             &Service::TCP(_, _)                => SVC_TYPE_TCP
         }
     }
@@ -137,6 +145,8 @@ impl Service {
             &Service::UnknownRTSP(ref addr, _)        => Some(addr),
             &Service::UnsupportedRTSP(ref addr, _, _) => Some(addr),
             &Service::HTTP(ref addr, _)               => Some(addr),
+            &Service::MJPEG(ref addr, _, _)           => Some(addr),
+            &Service::LockedMJPEG(ref addr, _)        => Some(addr),
             &Service::TCP(ref addr, _)                => Some(addr)
         }
     }
@@ -150,6 +160,8 @@ impl Service {
             &Service::UnknownRTSP(_, ref addr)        => Some(addr),
             &Service::UnsupportedRTSP(_, ref addr, _) => Some(addr),
             &Service::HTTP(_, ref addr)               => Some(addr),
+            &Service::MJPEG(_, ref addr, _)           => Some(addr),
+            &Service::LockedMJPEG(_, ref addr)        => Some(addr),
             &Service::TCP(_, ref addr)                => Some(addr)
         }
     }
@@ -159,6 +171,7 @@ impl Service {
         match self {
             &Service::RTSP(_, _, ref path)            => Some(path),
             &Service::UnsupportedRTSP(_, _, ref path) => Some(path),
+            &Service::MJPEG(_, _, ref path)           => Some(path),
             _ => None
         }
     }
@@ -227,6 +240,12 @@ impl JsonService {
                 try!(MacAddr::from_str(&self.mac)),
                 try!(parse_socket_addr(&self.address)), self.path)),
             SVC_TYPE_HTTP => Ok(Service::HTTP(
+                try!(MacAddr::from_str(&self.mac)),
+                try!(parse_socket_addr(&self.address)))),
+            SVC_TYPE_MJPEG => Ok(Service::MJPEG(
+                try!(MacAddr::from_str(&self.mac)),
+                try!(parse_socket_addr(&self.address)), self.path)),
+            SVC_TYPE_LOCKED_MJPEG => Ok(Service::LockedMJPEG(
                 try!(MacAddr::from_str(&self.mac)),
                 try!(parse_socket_addr(&self.address)))),
             SVC_TYPE_TCP => Ok(Service::TCP(
