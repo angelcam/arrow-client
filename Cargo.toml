@@ -1,6 +1,6 @@
 [package]
 name    = "arrow-client"
-version = "0.5.1"
+version = "0.6.0"
 authors = ["Ondrej Perutka <ondrej.perutka@angelcam.com>"]
 license = "Apache-2.0"
 readme  = "README.md"
