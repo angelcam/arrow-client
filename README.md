@@ -20,21 +20,22 @@ a little, please see our
 
 ## Features
 
-- Automatic RTSP service discovery
+- Automatic RTSP and MJPEG service discovery
 - Zero-conf IP camera connection
+- Remote access to HTTP-based IP camera admin interfaces
 - Connection to Angelcam cloud services secured using TLS v1.2
 - Secure pairing with your Angelcam account
 
 ## Usage
 
 The application requires `/etc/arrow` directory for storing its configuration 
-file generated on the first start. The directory must also contain a file named 
-`rtsp-paths` in case the network scanning feature is enabled. The file should 
-contain RTSP paths that will be checked on an RTSP service discovery. You can 
-use the `rtsp-paths` file from this repository. In order to start the 
-application, you have to pass address of the Angelcam Arrow Service and 
-certificate file for the service verification. Address of the Angelcam Arrow 
-Service is:
+file generated on the first start. The directory must also contain files named 
+`rtsp-paths` and `mjpeg-paths` in case the network scanning feature is enabled. 
+The files should contain RTSP paths and MJPEG paths that will be checked on 
+service discovery. You can use the files from this repository. In order to 
+start the application, you have to pass address of the Angelcam Arrow Service 
+and certificate file for the service verification. Address of the Angelcam 
+Arrow Service is:
 
 ```
 arr-rs.angelcam.com:8900
