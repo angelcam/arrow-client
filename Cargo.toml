@@ -27,7 +27,9 @@ gcc = "0.3"
 [profile.dev]
 opt-level = 0
 debug     = true
+panic     = "unwind"
 
 [profile.release]
 opt-level = 3
 debug     = false
+panic     = "abort"
