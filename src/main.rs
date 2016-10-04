@@ -263,6 +263,11 @@ fn usage(exit_code: i32) -> ! {
     println!("    --log-stderr        send log messages into stderr instead of syslog");
     println!("    --log-stderr-pretty  send log messages into stderr instead of syslog and");
     println!("                        use colored messages");
+    println!("    --log-file=path     send log messages into a given file instead of syslog");
+    println!("    --log-file-size=n   size limit for the log file (in bytes; default value:");
+    println!("                        10240)");
+    println!("    --log-file-rotations=n  number of backup files (i.e. rotations) for the");
+    println!("                        log file (default value: 1)");
     if cfg!(feature = "discovery") {
         println!("    --rtsp-paths=path   alternative path to a file containing list of RTSP");
         println!("                        paths used on service discovery (default value:");
@@ -875,6 +880,14 @@ const EXIT_CODE_CONFIG_ERROR:  i32 = 3;
 const EXIT_CODE_SSL_ERROR:     i32 = 4;
 const EXIT_CODE_CERT_ERROR:    i32 = 5;
 
+/// Init file logger for a given file, file size limit and a given number of rotations.
+fn init_file_logger(file: &str, limit: usize, rotations: usize) -> logger::file::FileLogger {
+    utils::result_or_error(
+        logger::file::new(file, limit, rotations),
+        EXIT_CODE_CONFIG_ERROR,
+        "unable to open the given log file")
+}
+
 /// Helper struct for application configuration.
 struct AppConfiguration {
     logger:            LoggerWrapper,
@@ -898,6 +911,11 @@ impl AppConfiguration {
             LoggerType::Syslog       => LoggerWrapper::new(logger::syslog::new()),
             LoggerType::Stderr       => LoggerWrapper::new(logger::stderr::new()),
             LoggerType::StderrPretty => LoggerWrapper::new(logger::stderr::new_pretty()),
+            LoggerType::FileLogger   => LoggerWrapper::new(init_file_logger(
+                &parser.log_file,
+                parser.log_file_size,
+                parser.log_file_rotations
+            )),
         };
 
         let ssl_context = utils::result_or_error(
@@ -1014,25 +1032,29 @@ enum LoggerType {
     Syslog,
     Stderr,
     StderrPretty,
+    FileLogger,
 }
 
 /// App configuration parser.
 struct AppConfigurationParser {
-    arrow_mac:         MacAddr,
-    arrow_svc_addr:    String,
-    ca_certificates:   Vec<String>,
-    rtsp_services:     Vec<String>,
-    mjpeg_services:    Vec<String>,
-    http_services:     Vec<String>,
-    tcp_services:      Vec<String>,
-    logger_type:       LoggerType,
-    config_file:       String,
-    state_file:        String,
-    rtsp_paths_file:   String,
-    mjpeg_paths_file:  String,
-    discovery:         bool,
-    verbose:           bool,
-    diagnostic_mode:   bool,
+    arrow_mac:          MacAddr,
+    arrow_svc_addr:     String,
+    ca_certificates:    Vec<String>,
+    rtsp_services:      Vec<String>,
+    mjpeg_services:     Vec<String>,
+    http_services:      Vec<String>,
+    tcp_services:       Vec<String>,
+    logger_type:        LoggerType,
+    config_file:        String,
+    state_file:         String,
+    rtsp_paths_file:    String,
+    mjpeg_paths_file:   String,
+    log_file:           String,
+    discovery:          bool,
+    verbose:            bool,
+    diagnostic_mode:    bool,
+    log_file_size:      usize,
+    log_file_rotations: usize,
 }
 
 impl AppConfigurationParser {
@@ -1044,21 +1066,24 @@ impl AppConfigurationParser {
             "unable to get any network interface MAC address");
 
         AppConfigurationParser {
-            arrow_mac:         default_mac_addr,
-            arrow_svc_addr:    String::new(),
-            ca_certificates:   Vec::new(),
-            rtsp_services:     Vec::new(),
-            mjpeg_services:    Vec::new(),
-            http_services:     Vec::new(),
-            tcp_services:      Vec::new(),
-            logger_type:       LoggerType::Syslog,
-            config_file:       CONFIG_FILE.to_string(),
-            state_file:        STATE_FILE.to_string(),
-            rtsp_paths_file:   RTSP_PATHS_FILE.to_string(),
-            mjpeg_paths_file:  MJPEG_PATHS_FILE.to_string(),
-            discovery:         false,
-            verbose:           false,
-            diagnostic_mode:   false
+            arrow_mac:          default_mac_addr,
+            arrow_svc_addr:     String::new(),
+            ca_certificates:    Vec::new(),
+            rtsp_services:      Vec::new(),
+            mjpeg_services:     Vec::new(),
+            http_services:      Vec::new(),
+            tcp_services:       Vec::new(),
+            logger_type:        LoggerType::Syslog,
+            config_file:        CONFIG_FILE.to_string(),
+            state_file:         STATE_FILE.to_string(),
+            rtsp_paths_file:    RTSP_PATHS_FILE.to_string(),
+            mjpeg_paths_file:   MJPEG_PATHS_FILE.to_string(),
+            log_file:           String::new(),
+            discovery:          false,
+            verbose:            false,
+            diagnostic_mode:    false,
+            log_file_size:      10 * 1024,
+            log_file_rotations: 1,
         }
     }
 
@@ -1099,6 +1124,12 @@ impl AppConfigurationParser {
                         parser.rtsp_paths(arg);
                     } else if arg.starts_with("--mjpeg-paths=") {
                         parser.mjpeg_paths(arg);
+                    } else if arg.starts_with("--log-file=") {
+                        parser.log_file(arg);
+                    } else if arg.starts_with("--log-file-size=") {
+                        parser.log_file_size(arg);
+                    } else if arg.starts_with("--log-file-rotations=") {
+                        parser.log_file_rotations(arg);
                     } else {
                         utils::error(RuntimeError::from(arg),
                             EXIT_CODE_USAGE, "unknown argument");
@@ -1186,6 +1217,48 @@ impl AppConfigurationParser {
     /// Process the log-stderr-pretty argument.
     fn log_stderr_pretty(&mut self) {
         self.logger_type = LoggerType::StderrPretty;
+    }
+
+    /// Process the log-file argument.
+    fn log_file(&mut self, arg: &str) {
+        self.logger_type = LoggerType::FileLogger;
+
+        let re = Regex::new(r"^--log-file=(.*)$")
+            .unwrap();
+
+        self.log_file = re.captures(arg)
+            .unwrap()
+            .at(1)
+            .unwrap()
+            .to_string();
+    }
+
+    /// Process the log-file-size argument.
+    fn log_file_size(&mut self, arg: &str) {
+        let re = Regex::new(r"^--log-file-size=(\d+)$")
+            .unwrap();
+
+        if let Some(caps) = re.captures(arg) {
+            self.log_file_size = usize::from_str(caps.at(1).unwrap())
+                .unwrap();
+        } else {
+            utils::error(RuntimeError::from(arg),
+                EXIT_CODE_USAGE, "number expected");
+        }
+    }
+
+    /// Process the log-file-rotations argument.
+    fn log_file_rotations(&mut self, arg: &str) {
+        let re = Regex::new(r"^--log-file-rotations=(\d+)$")
+            .unwrap();
+
+        if let Some(caps) = re.captures(arg) {
+            self.log_file_rotations = usize::from_str(caps.at(1).unwrap())
+                .unwrap();
+        } else {
+            utils::error(RuntimeError::from(arg),
+                EXIT_CODE_USAGE, "number expected");
+        }
     }
 
     /// Process the config-file argument.
