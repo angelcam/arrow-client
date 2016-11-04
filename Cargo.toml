@@ -13,9 +13,12 @@ discovery = []
 libc            = "0.2"
 mio             = "=0.5.1"
 regex           = "0.1"
-uuid            = "0.1"
 time            = "0.1"
 rustc-serialize = "0.3"
+
+[dependencies.uuid]
+version  = "0.3"
+features = ["use_std", "v4"]
 
 [dependencies.openssl]
 version  = "0.8.3"
