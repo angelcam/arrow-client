@@ -17,6 +17,7 @@
 #[macro_use]
 pub mod error;
 pub mod protocol;
+pub mod proto;
 
 use std::cmp;
 use std::mem;
