@@ -17,8 +17,33 @@ use std::io;
 use bytes::BytesMut;
 use tokio_io::codec::{Decoder, Encoder};
 
-use net::arrow::proto::{Decode, Encode};
+use net::arrow::proto::buffer::{InputBuffer, OutputBuffer};
 use net::arrow::proto::msg::ArrowMessage;
+use net::arrow::proto::error::DecodeError;
+
+/// Common trait for objects that can be encoded as a sequence of bytes.
+pub trait Encode {
+    /// Serialize this object into a given buffer.
+    fn encode(&self, buf: &mut OutputBuffer);
+}
+
+impl<T: AsRef<[u8]>> Encode for T {
+    fn encode(&self, buf: &mut OutputBuffer) {
+        buf.append(self.as_ref())
+    }
+}
+
+/// Common trait for types that can be decoded from a sequence of bytes.
+pub trait FromBytes : Sized {
+    /// Deserialize an object from a given buffer if possible.
+    fn from_bytes(bytes: &[u8]) -> Result<Option<Self>, DecodeError>;
+}
+
+/// Common trait for types that can be decoded from a sequence of bytes.
+pub trait Decode : Sized {
+    /// Deserialize an object from a given buffer if possible and drop the used data.
+    fn decode(buf: &mut InputBuffer) -> Result<Option<Self>, DecodeError>;
+}
 
 /// ArrowMessage codec used in tokio.
 pub struct ArrowCodec;

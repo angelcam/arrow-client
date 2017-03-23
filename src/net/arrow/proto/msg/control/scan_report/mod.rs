@@ -23,7 +23,7 @@ use std::collections::hash_map::Iter as HashMapIterator;
 
 use utils;
 
-use net::arrow::proto::Encode;
+use net::arrow::proto::codec::Encode;
 use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;

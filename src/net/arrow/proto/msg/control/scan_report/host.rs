@@ -20,7 +20,7 @@ use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use utils;
 
-use net::arrow::proto::Encode;
+use net::arrow::proto::codec::Encode;
 use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::raw::ether::MacAddr;

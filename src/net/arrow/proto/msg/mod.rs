@@ -20,11 +20,8 @@ use utils;
 
 use utils::AsAny;
 
-use net::arrow::proto::{
-    ARROW_PROTOCOL_VERSION,
-    ByteVec, FromBytes, Decode, Encode
-};
-
+use net::arrow::proto::ARROW_PROTOCOL_VERSION;
+use net::arrow::proto::codec::{FromBytes, Decode, Encode};
 use net::arrow::proto::buffer::{InputBuffer, OutputBuffer};
 use net::arrow::proto::msg::control::ControlMessage;
 use net::arrow::proto::error::DecodeError;
@@ -107,7 +104,7 @@ impl FromBytes for ArrowMessageHeader {
 pub trait ArrowMessageBody : MessageBody + AsAny {
 }
 
-impl ArrowMessageBody for ByteVec {
+impl ArrowMessageBody for Vec<u8> {
 }
 
 /// Arrow Message.

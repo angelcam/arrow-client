@@ -14,7 +14,7 @@
 
 use std::str;
 
-use net::arrow::proto::{FromBytes, Encode};
+use net::arrow::proto::codec::{FromBytes, Encode};
 use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;

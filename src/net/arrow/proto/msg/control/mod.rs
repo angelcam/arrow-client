@@ -28,7 +28,7 @@ use utils;
 
 use utils::AsAny;
 
-use net::arrow::proto::{FromBytes, Encode};
+use net::arrow::proto::codec::{FromBytes, Encode};
 use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::{ArrowMessageBody, MessageBody};
 use net::arrow::proto::error::DecodeError;

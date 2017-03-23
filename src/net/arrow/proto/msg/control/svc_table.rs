@@ -18,7 +18,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use utils;
 
-use net::arrow::proto::Encode;
+use net::arrow::proto::codec::Encode;
 use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::raw::ether::MacAddr;
