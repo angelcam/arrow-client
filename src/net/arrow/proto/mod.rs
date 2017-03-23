@@ -14,6 +14,7 @@
 
 pub mod msg;
 pub mod buffer;
+pub mod codec;
 pub mod error;
 
 use net::arrow::proto::error::DecodeError;
