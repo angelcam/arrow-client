@@ -18,6 +18,8 @@ use std::mem;
 
 use utils;
 
+use utils::AsAny;
+
 use net::arrow::proto::{
     ARROW_PROTOCOL_VERSION,
     ByteVec, FromBytes, Decode, Encode
@@ -26,7 +28,6 @@ use net::arrow::proto::{
 use net::arrow::proto::buffer::{InputBuffer, OutputBuffer};
 use net::arrow::proto::msg::control::ControlMessage;
 use net::arrow::proto::error::DecodeError;
-use net::arrow::proto::utils::AsAny;
 
 /// Common trait for message body types.
 pub trait MessageBody : Encode {

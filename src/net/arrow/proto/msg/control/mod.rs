@@ -26,11 +26,12 @@ use std::str;
 
 use utils;
 
+use utils::AsAny;
+
 use net::arrow::proto::{FromBytes, Encode};
 use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::{ArrowMessageBody, MessageBody};
 use net::arrow::proto::error::DecodeError;
-use net::arrow::proto::utils::AsAny;
 
 pub use self::ack::AckMessage;
 pub use self::hup::HupMessage;

@@ -15,7 +15,6 @@
 pub mod msg;
 pub mod buffer;
 pub mod error;
-pub mod utils;
 
 use net::arrow::proto::error::DecodeError;
 use net::arrow::proto::buffer::{InputBuffer, OutputBuffer};

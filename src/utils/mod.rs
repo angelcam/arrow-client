@@ -1,11 +1,11 @@
 // Copyright 2015 click2stream, Inc.
-// 
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// 
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -26,6 +26,7 @@ use std::fmt;
 use std::slice;
 use std::process;
 
+use std::any::Any;
 use std::ffi::CStr;
 use std::error::Error;
 use std::ops::Deref;
@@ -34,6 +35,25 @@ use std::sync::{Arc, Mutex};
 use std::fmt::{Debug, Display, Formatter};
 
 use utils::logger::{Logger, Severity};
+
+/// Helper trait for getting Any reference to an object.
+pub trait AsAny {
+    /// Get Any reference to this object.
+    fn as_any(&self) -> &Any;
+
+    /// Get mutable Any reference to this object.
+    fn as_any_mut(&mut self) -> &mut Any;
+}
+
+impl<T: Any + 'static> AsAny for T {
+    fn as_any(&self) -> &Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut Any {
+        self
+    }
+}
 
 /// General purpose runtime error.
 #[derive(Debug, Clone)]
@@ -82,7 +102,7 @@ impl<T> Shared<T> {
 
 impl<T> Deref for Shared<T> {
     type Target = Mutex<T>;
-    
+
     fn deref(&self) -> &Mutex<T> {
         self.object.deref()
     }
@@ -201,7 +221,7 @@ pub fn slice_as_bytes<'a, T: Sized>(data: &'a [T]) -> &'a [u8] {
 
 /// Convert a given typed pointer into a new vector (copying the dats).
 pub unsafe fn vec_from_raw_parts<T: Clone>(
-    ptr: *const T, 
+    ptr: *const T,
     len: usize) -> Vec<T> {
     slice::from_raw_parts(ptr, len)
         .to_vec()
@@ -223,7 +243,7 @@ pub fn error<E, M>(err: E, exit_code: i32, msg: M) -> !
 }
 
 /// Unwrap a given result or exit the process printing the error.
-pub fn result_or_error<T, E, M>(res: Result<T, E>, exit_code: i32, msg: M) -> T 
+pub fn result_or_error<T, E, M>(res: Result<T, E>, exit_code: i32, msg: M) -> T
     where E: Error + Debug,
           M: Display {
     match res {
@@ -234,9 +254,9 @@ pub fn result_or_error<T, E, M>(res: Result<T, E>, exit_code: i32, msg: M) -> T
 
 /// Unwrap a given result or log an error with a given severity and return None.
 pub fn result_or_log<L, T, E, M>(
-    logger: &mut L, 
-    severity: Severity, 
-    msg: M, 
+    logger: &mut L,
+    severity: Severity,
+    msg: M,
     res: Result<T, E>) -> Option<T>
     where E: Error + Debug,
           L: Logger,
@@ -255,24 +275,24 @@ mod tests {
     use super::*;
     use std::ffi::CString;
     use utils::logger::*;
-    
+
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     #[repr(packed)]
     struct TestType {
         b1: u8,
         b2: u8,
     }
-    
+
     #[test]
     fn test_vec_from_raw_parts() {
         let val  = TestType { b1: 1, b2: 2 };
         let vec  = vec![val, val];
         let ptr  = vec.as_ptr();
         let vec2 = unsafe { vec_from_raw_parts(ptr, vec.len()) };
-        
+
         assert_eq!(vec, vec2);
     }
-    
+
     #[test]
     fn test_cstr_to_string() {
         let cstr = CString::new("hello").unwrap();
@@ -281,24 +301,24 @@ mod tests {
             assert!("world" != &cstr_to_string(cstr.as_ptr() as *const i8));
         }
     }
-    
+
     #[test]
     fn test_result_or_error() {
         assert_eq!(1, result_or_error::<i32, RuntimeError, &'static str>(
             Ok(1), 0, ""));
     }
-    
+
     #[test]
     fn test_result_or_log() {
         let mut logger = DummyLogger::new();
-        
+
         assert_eq!(Some(1),
             result_or_log::<DummyLogger, i32, RuntimeError, &'static str>(
             &mut logger, Severity::WARN, "", Ok(1)));
-        
+
         assert_eq!(None,
             result_or_log::<DummyLogger, i32, RuntimeError, &'static str>(
-            &mut logger, Severity::WARN, "", 
+            &mut logger, Severity::WARN, "",
             Err(RuntimeError::from("foo"))));
     }
 }
