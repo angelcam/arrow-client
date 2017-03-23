@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::ptr;
+use bytes::{Bytes, BytesMut};
 
 /// Common trait for input buffer implementations.
 pub trait InputBuffer {
@@ -23,75 +23,42 @@ pub trait InputBuffer {
     fn drop(&mut self, len: usize);
 }
 
+impl InputBuffer for Bytes {
+    fn as_bytes(&self) -> &[u8] {
+        self.as_ref()
+    }
+
+    fn drop(&mut self, mut len: usize) {
+        if len > self.len() {
+            len = self.len();
+        }
+
+        self.split_to(len);
+    }
+}
+
+impl InputBuffer for BytesMut {
+    fn as_bytes(&self) -> &[u8] {
+        self.as_ref()
+    }
+
+    fn drop(&mut self, mut len: usize) {
+        if len > self.len() {
+            len = self.len();
+        }
+
+        self.split_to(len);
+    }
+}
+
 /// Common trait for outpur buffer implementations.
 pub trait OutputBuffer {
     /// Append given data at the end of the buffer.
     fn append(&mut self, data: &[u8]);
 }
 
-/// Byte buffer for IO operations.
-pub struct Buffer {
-    /// Buffered data.
-    buffer: Vec<u8>,
-    /// Offset in the internal buffer.
-    offset: usize,
-}
-
-impl Buffer {
-    /// Create a new buffer.
-    pub fn new() -> Buffer {
-        Buffer {
-            buffer: Vec::new(),
-            offset: 0,
-        }
-    }
-
-    /// Clear the buffer.
-    pub fn clear(&mut self) {
-        self.buffer.clear();
-        self.offset = 0;
-    }
-}
-
-impl InputBuffer for Buffer {
-    fn as_bytes(&self) -> &[u8] {
-        &self.buffer[self.offset..]
-    }
-
-    fn drop(&mut self, len: usize) {
-        if (self.offset + len) < self.buffer.len() {
-            self.offset += len;
-        } else {
-            self.clear();
-        }
-    }
-}
-
-impl OutputBuffer for Buffer {
+impl OutputBuffer for BytesMut {
     fn append(&mut self, data: &[u8]) {
-        let clen = self.buffer.len();
-
-        // make some space in the buffer if the capacity is insufficient
-        // in order to avoid reallocations
-        if (clen + data.len()) > self.buffer.capacity() {
-            let nlen = clen - self.offset;
-
-            unsafe {
-                let dst = self.buffer.as_mut_ptr();
-                let src = self.buffer.as_ptr()
-                    .offset(self.offset as isize);
-
-                ptr::copy(src, dst, nlen);
-                self.buffer.set_len(nlen);
-            }
-        }
-
-        self.buffer.extend_from_slice(data);
-    }
-}
-
-impl AsRef<[u8]> for Buffer {
-    fn as_ref(&self) -> &[u8] {
-        self.as_bytes()
+        self.extend(data);
     }
 }
