@@ -17,10 +17,10 @@ use std::mem;
 use utils;
 
 use net::arrow::proto::{FromBytes, Encode};
+use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
 use net::arrow::proto::error::DecodeError;
-use net::arrow::proto::utils::Buffer;
 
 /// HUP message.
 #[repr(packed)]
@@ -42,13 +42,13 @@ impl HupMessage {
 }
 
 impl Encode for HupMessage {
-    fn encode(&self, buf: &mut Buffer) {
+    fn encode(&self, buf: &mut OutputBuffer) {
         let be_msg = HupMessage {
             session_id: self.session_id.to_be(),
             error_code: self.error_code.to_be(),
         };
 
-        buf.extend(utils::as_bytes(&be_msg))
+        buf.append(utils::as_bytes(&be_msg))
     }
 }
 

@@ -15,10 +15,10 @@
 use std::str;
 
 use net::arrow::proto::{FromBytes, Encode};
+use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
 use net::arrow::proto::error::DecodeError;
-use net::arrow::proto::utils::Buffer;
 
 /// REDIRECT message.
 pub struct RedirectMessage {
@@ -38,9 +38,9 @@ impl RedirectMessage {
 }
 
 impl Encode for RedirectMessage {
-    fn encode(&self, buf: &mut Buffer) {
-        buf.extend(self.target.as_bytes());
-        buf.extend(&[0]);
+    fn encode(&self, buf: &mut OutputBuffer) {
+        buf.append(self.target.as_bytes());
+        buf.append(&[0]);
     }
 }
 

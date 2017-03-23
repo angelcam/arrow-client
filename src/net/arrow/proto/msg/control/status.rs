@@ -17,9 +17,9 @@ use std::mem;
 use utils;
 
 use net::arrow::proto::Encode;
+use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
-use net::arrow::proto::utils::Buffer;
 
 /// STATUS message.
 #[repr(packed)]
@@ -30,14 +30,14 @@ pub struct StatusMessage {
 }
 
 impl Encode for StatusMessage {
-    fn encode(&self, buf: &mut Buffer) {
+    fn encode(&self, buf: &mut OutputBuffer) {
         let be_msg = StatusMessage {
             request_id:      self.request_id.to_be(),
             status_flags:    self.status_flags.to_be(),
             active_sessions: self.active_sessions.to_be()
         };
 
-        buf.extend(utils::as_bytes(&be_msg))
+        buf.append(utils::as_bytes(&be_msg))
     }
 }
 

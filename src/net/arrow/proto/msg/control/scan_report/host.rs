@@ -21,8 +21,8 @@ use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use utils;
 
 use net::arrow::proto::Encode;
+use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
-use net::arrow::proto::utils::Buffer;
 use net::raw::ether::MacAddr;
 use net::utils::IpAddrEx;
 
@@ -52,7 +52,7 @@ impl<'a> From<&'a HostRecord> for HostRecordHeader {
 }
 
 impl Encode for HostRecordHeader {
-    fn encode(&self, buf: &mut Buffer) {
+    fn encode(&self, buf: &mut OutputBuffer) {
         let be_header = HostRecordHeader {
             flags:      self.flags,
             mac:        self.mac,
@@ -61,7 +61,7 @@ impl Encode for HostRecordHeader {
             port_count: self.port_count.to_be(),
         };
 
-        buf.extend(utils::as_bytes(&be_header))
+        buf.append(utils::as_bytes(&be_header))
     }
 }
 
@@ -107,12 +107,12 @@ impl HostRecord {
 }
 
 impl Encode for HostRecord {
-    fn encode(&self, buf: &mut Buffer) {
+    fn encode(&self, buf: &mut OutputBuffer) {
         HostRecordHeader::from(self)
             .encode(buf);
 
         for port in &self.ports {
-            buf.extend(utils::as_bytes(&port.to_be()));
+            buf.append(utils::as_bytes(&port.to_be()));
         }
     }
 }

@@ -32,26 +32,3 @@ impl<T: Any + 'static> AsAny for T {
         self
     }
 }
-
-/// Byte buffer for IO operations.
-pub struct Buffer {
-    // TODO
-}
-
-impl Buffer {
-    /// Append given data at the end of the buffer.
-    pub fn extend(&mut self, data: &[u8]) {
-        // TODO
-    }
-
-    /// Drop a given number of bytes from the begining of the buffer.
-    pub fn drop(&mut self, len: usize) {
-        // TODO
-    }
-}
-
-impl AsRef<[u8]> for Buffer {
-    fn as_ref(&self) -> &[u8] {
-        &[] // TODO
-    }
-}

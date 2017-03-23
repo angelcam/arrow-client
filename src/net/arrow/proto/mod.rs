@@ -13,11 +13,12 @@
 // limitations under the License.
 
 pub mod msg;
+pub mod buffer;
 pub mod error;
 pub mod utils;
 
 use net::arrow::proto::error::DecodeError;
-use net::arrow::proto::utils::Buffer;
+use net::arrow::proto::buffer::{InputBuffer, OutputBuffer};
 
 /// Currently supported version of the Arrow protocol.
 pub const ARROW_PROTOCOL_VERSION: u8 = 1;
@@ -28,12 +29,12 @@ pub type ByteVec = Vec<u8>;
 /// Common trait for objects that can be encoded as a sequence of bytes.
 pub trait Encode {
     /// Serialize this object into a given buffer.
-    fn encode(&self, buf: &mut Buffer);
+    fn encode(&self, buf: &mut OutputBuffer);
 }
 
 impl<T: AsRef<[u8]>> Encode for T {
-    fn encode(&self, buf: &mut Buffer) {
-        buf.extend(self.as_ref())
+    fn encode(&self, buf: &mut OutputBuffer) {
+        buf.append(self.as_ref())
     }
 }
 
@@ -46,5 +47,5 @@ pub trait FromBytes : Sized {
 /// Common trait for types that can be decoded from a sequence of bytes.
 pub trait Decode : Sized {
     /// Deserialize an object from a given buffer if possible and drop the used data.
-    fn decode(buf: &mut Buffer) -> Result<Option<Self>, DecodeError>;
+    fn decode(buf: &mut InputBuffer) -> Result<Option<Self>, DecodeError>;
 }

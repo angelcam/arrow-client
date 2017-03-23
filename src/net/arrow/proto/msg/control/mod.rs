@@ -27,9 +27,10 @@ use std::str;
 use utils;
 
 use net::arrow::proto::{FromBytes, Encode};
+use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::{ArrowMessageBody, MessageBody};
 use net::arrow::proto::error::DecodeError;
-use net::arrow::proto::utils::{AsAny, Buffer};
+use net::arrow::proto::utils::AsAny;
 
 pub use self::ack::AckMessage;
 pub use self::hup::HupMessage;
@@ -108,13 +109,13 @@ impl ControlMessageHeader {
 }
 
 impl Encode for ControlMessageHeader {
-    fn encode(&self, buf: &mut Buffer) {
+    fn encode(&self, buf: &mut OutputBuffer) {
         let be_header = ControlMessageHeader {
             msg_id:   self.msg_id.to_be(),
             msg_type: self.msg_type.to_be()
         };
 
-        buf.extend(utils::as_bytes(&be_header))
+        buf.append(utils::as_bytes(&be_header))
     }
 }
 
@@ -142,7 +143,7 @@ pub trait ControlMessageBody : MessageBody + AsAny {
 pub struct EmptyMessage;
 
 impl Encode for EmptyMessage {
-    fn encode(&self, _: &mut Buffer) {
+    fn encode(&self, _: &mut OutputBuffer) {
     }
 }
 
@@ -230,7 +231,7 @@ impl ControlMessage {
 }
 
 impl Encode for ControlMessage {
-    fn encode(&self, buf: &mut Buffer) {
+    fn encode(&self, buf: &mut OutputBuffer) {
         self.header.encode(buf);
         self.body.encode(buf);
     }

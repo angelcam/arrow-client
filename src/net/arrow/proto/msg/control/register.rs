@@ -17,10 +17,10 @@ use std::mem;
 use utils;
 
 use net::arrow::proto::Encode;
+use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
 use net::arrow::proto::msg::control::svc_table::ServiceTable;
-use net::arrow::proto::utils::Buffer;
 
 /// REGISTER message header.
 #[repr(packed)]
@@ -31,8 +31,8 @@ struct RegisterMessageHeader {
 }
 
 impl Encode for RegisterMessageHeader {
-    fn encode(&self, buf: &mut Buffer) {
-        buf.extend(utils::as_bytes(self))
+    fn encode(&self, buf: &mut OutputBuffer) {
+        buf.append(utils::as_bytes(self))
     }
 }
 
@@ -43,7 +43,7 @@ pub struct RegisterMessage {
 }
 
 impl Encode for RegisterMessage {
-    fn encode(&self, buf: &mut Buffer) {
+    fn encode(&self, buf: &mut OutputBuffer) {
         self.header.encode(buf);
         self.svc_table.encode(buf);
     }

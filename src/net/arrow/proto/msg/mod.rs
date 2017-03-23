@@ -23,9 +23,10 @@ use net::arrow::proto::{
     ByteVec, FromBytes, Decode, Encode
 };
 
+use net::arrow::proto::buffer::{InputBuffer, OutputBuffer};
 use net::arrow::proto::msg::control::ControlMessage;
 use net::arrow::proto::error::DecodeError;
-use net::arrow::proto::utils::{AsAny, Buffer};
+use net::arrow::proto::utils::AsAny;
 
 /// Common trait for message body types.
 pub trait MessageBody : Encode {
@@ -67,7 +68,7 @@ impl ArrowMessageHeader {
 }
 
 impl Encode for ArrowMessageHeader {
-    fn encode(&self, buf: &mut Buffer) {
+    fn encode(&self, buf: &mut OutputBuffer) {
         let be_header = ArrowMessageHeader {
             version: self.version,
             service: self.service.to_be(),
@@ -75,7 +76,7 @@ impl Encode for ArrowMessageHeader {
             size:    self.size.to_be()
         };
 
-        buf.extend(utils::as_bytes(&be_header))
+        buf.append(utils::as_bytes(&be_header))
     }
 }
 
@@ -140,7 +141,7 @@ impl ArrowMessage {
 }
 
 impl Encode for ArrowMessage {
-    fn encode(&self, buf: &mut Buffer) {
+    fn encode(&self, buf: &mut OutputBuffer) {
         let header = ArrowMessageHeader::new(
             self.header.service,
             self.header.session,
@@ -194,8 +195,8 @@ impl FromBytes for ArrowMessage {
 }
 
 impl Decode for ArrowMessage {
-    fn decode(buf: &mut Buffer) -> Result<Option<ArrowMessage>, DecodeError> {
-        let msg = ArrowMessage::from_bytes(buf.as_ref())?;
+    fn decode(buf: &mut InputBuffer) -> Result<Option<ArrowMessage>, DecodeError> {
+        let msg = ArrowMessage::from_bytes(buf.as_bytes())?;
 
         if let Some(ref msg) = msg {
             buf.drop(msg.header.size as usize + mem::size_of::<ArrowMessageHeader>());
