@@ -20,6 +20,7 @@ pub mod error;
 use std::io;
 
 use std::net::ToSocketAddrs;
+use std::collections::VecDeque;
 
 use futures::{StartSend, Async, AsyncSink, Poll};
 use futures::future::Future;
@@ -44,6 +45,8 @@ pub const ARROW_PROTOCOL_VERSION: u8 = 1;
 /// Arrow Client implementation.
 struct ArrowClient {
     tc_handle: TokioCoreHandle,
+    messages:  VecDeque<ArrowMessage>,
+    closed:    bool,
 }
 
 impl ArrowClient {
@@ -51,6 +54,8 @@ impl ArrowClient {
     fn new(tc_handle: TokioCoreHandle) -> ArrowClient {
         ArrowClient {
             tc_handle: tc_handle,
+            messages:  VecDeque::new(),
+            closed:    false,
         }
     }
 }
@@ -59,12 +64,12 @@ impl Sink for ArrowClient {
     type SinkItem  = ArrowMessage;
     type SinkError = ArrowError;
 
-    fn start_send(&mut self, _: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+    fn start_send(&mut self, _: ArrowMessage) -> StartSend<ArrowMessage, ArrowError> {
         // TODO: process a given message
         Ok(AsyncSink::Ready)
     }
 
-    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+    fn poll_complete(&mut self) -> Poll<(), ArrowError> {
         Ok(Async::Ready(()))
     }
 }
@@ -73,9 +78,14 @@ impl Stream for ArrowClient {
     type Item  = ArrowMessage;
     type Error = ArrowError;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        // TODO: return any messages that are ready to be sent
-        Ok(Async::Ready(None))
+    fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
+        if self.closed {
+            Ok(Async::Ready(None))
+        } else if let Some(msg) = self.messages.pop_front() {
+            Ok(Async::Ready(Some(msg)))
+        } else {
+            Ok(Async::NotReady)
+        }
     }
 }
 
