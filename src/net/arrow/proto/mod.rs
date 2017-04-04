@@ -38,7 +38,7 @@ use futures_ex::StreamEx;
 use net::arrow::proto::codec::ArrowCodec;
 use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
-use net::arrow::proto::msg::control::{ControlMessage, ControlMessageType};
+use net::arrow::proto::msg::control::{ControlMessage, ControlMessageType, RedirectMessage};
 
 /// Currently supported version of the Arrow protocol.
 pub const ARROW_PROTOCOL_VERSION: u8 = 1;
@@ -112,8 +112,12 @@ impl ArrowClient {
     }
 
     /// Process a given REDIRECT message.
-    fn process_redirect_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
-        // TODO
+    fn process_redirect_message(&mut self, msg: &ControlMessage) -> Result<(), ArrowError> {
+        let msg = msg.body::<RedirectMessage>()
+            .expect("REDIRECT message expected");
+
+        self.redirect = Some(msg.target.clone());
+
         Ok(())
     }
 
