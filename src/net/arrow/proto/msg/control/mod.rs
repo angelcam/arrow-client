@@ -137,7 +137,7 @@ impl FromBytes for ControlMessageHeader {
 }
 
 /// Common trait for Arrow Control Protocol message body implementations.
-pub trait ControlMessageBody : MessageBody + AsAny {
+pub trait ControlMessageBody : MessageBody + AsAny + Send {
 }
 
 /// Dummy type representing empty payload.

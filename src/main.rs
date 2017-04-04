@@ -23,9 +23,14 @@ extern crate uuid;
 extern crate rustc_serialize;
 
 extern crate bytes;
+
+#[macro_use]
 extern crate futures;
+
 extern crate tokio_core;
 extern crate tokio_io;
+
+pub mod futures_ex;
 
 #[macro_use]
 pub mod utils;

@@ -101,7 +101,7 @@ impl FromBytes for ArrowMessageHeader {
 }
 
 /// Common trait for Arrow Message body implementations.
-pub trait ArrowMessageBody : MessageBody + AsAny {
+pub trait ArrowMessageBody : MessageBody + AsAny + Send {
 }
 
 impl ArrowMessageBody for Vec<u8> {
