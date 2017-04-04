@@ -45,6 +45,11 @@ impl<T, U> Pipe<T, U>
           U::SinkError: From<T::Error>,
           U::Error: From<U::SinkError>,
 {
+    /// Break the pipe and return the stream, sink and any possibly buffered object.
+    pub fn unpipe(self) -> (Option<T::Item>, T, U) {
+        (self.buffered, self.stream.into_inner(), self.sink)
+    }
+
     fn poll_stream_item(&mut self) -> Poll<Option<T::Item>, T::Error> {
         // take the buffered item if there is one
         if let Some(item) = self.buffered.take() {

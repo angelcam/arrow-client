@@ -38,6 +38,7 @@ use futures_ex::StreamEx;
 use net::arrow::proto::codec::ArrowCodec;
 use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
+use net::arrow::proto::msg::control::{ControlMessage, ControlMessageType};
 
 /// Currently supported version of the Arrow protocol.
 pub const ARROW_PROTOCOL_VERSION: u8 = 1;
@@ -46,7 +47,7 @@ pub const ARROW_PROTOCOL_VERSION: u8 = 1;
 struct ArrowClient {
     tc_handle: TokioCoreHandle,
     messages:  VecDeque<ArrowMessage>,
-    closed:    bool,
+    redirect:  Option<String>,
 }
 
 impl ArrowClient {
@@ -55,8 +56,95 @@ impl ArrowClient {
         ArrowClient {
             tc_handle: tc_handle,
             messages:  VecDeque::new(),
-            closed:    false,
+            redirect:  None,
         }
+    }
+
+    /// Get redirect address (if any).
+    fn get_redirect(&self) -> Option<&str> {
+        self.redirect.as_ref()
+            .map(|r| r as &str)
+    }
+
+    /// Check if the client has been closed.
+    fn is_closed(&self) -> bool {
+        self.redirect.is_some()
+    }
+
+    /// Process a given Control Protocol message.
+    fn process_control_protocol_message(&mut self, msg: &ArrowMessage) -> Result<(), ArrowError> {
+        let msg = msg.body::<ControlMessage>()
+            .expect("control protocol message expected");
+
+        let header = msg.header();
+
+        match header.message_type() {
+            ControlMessageType::ACK             => self.process_ack_message(msg),
+            ControlMessageType::PING            => self.process_ping_message(msg),
+            ControlMessageType::HUP             => self.process_hup_message(msg),
+            ControlMessageType::REDIRECT        => self.process_redirect_message(msg),
+            ControlMessageType::GET_STATUS      => self.process_get_status_message(msg),
+            ControlMessageType::GET_SCAN_REPORT => self.process_get_scan_report_message(msg),
+            ControlMessageType::RESET_SVC_TABLE => self.process_reset_svc_table_message(msg),
+            ControlMessageType::SCAN_NETWORK    => self.process_scan_network_message(msg),
+            ControlMessageType::UNKNOWN
+                => Err(ArrowError::from("unknow control message received")),
+            _   => Err(ArrowError::from("unexpected control message received")),
+        }
+    }
+
+    /// Process a given ACK message.
+    fn process_ack_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+        // TODO
+        Ok(())
+    }
+
+    /// Process a given PING message.
+    fn process_ping_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+        // TODO
+        Ok(())
+    }
+
+    /// Process a given HUP message.
+    fn process_hup_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+        // TODO
+        Ok(())
+    }
+
+    /// Process a given REDIRECT message.
+    fn process_redirect_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+        // TODO
+        Ok(())
+    }
+
+    /// Process a given GET_STATUS message.
+    fn process_get_status_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+        // TODO
+        Ok(())
+    }
+
+    /// Process a given GET_SCAN_REPORT message.
+    fn process_get_scan_report_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+        // TODO
+        Ok(())
+    }
+
+    /// Process a given RESET_SVC_TABLE message.
+    fn process_reset_svc_table_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+        // TODO
+        Ok(())
+    }
+
+    /// Process a given SCAN_NETWORK message.
+    fn process_scan_network_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+        // TODO
+        Ok(())
+    }
+
+    /// Process a given service request message.
+    fn process_service_request_message(&mut self, _: &ArrowMessage) -> Result<(), ArrowError> {
+        // TODO
+        Ok(())
     }
 }
 
@@ -64,8 +152,20 @@ impl Sink for ArrowClient {
     type SinkItem  = ArrowMessage;
     type SinkError = ArrowError;
 
-    fn start_send(&mut self, _: ArrowMessage) -> StartSend<ArrowMessage, ArrowError> {
-        // TODO: process a given message
+    fn start_send(&mut self, msg: ArrowMessage) -> StartSend<ArrowMessage, ArrowError> {
+        // ignore the message if the client has been closed
+        if self.is_closed() {
+            return Ok(AsyncSink::Ready)
+        }
+
+        let header = msg.header();
+
+        if header.service == 0 {
+            self.process_control_protocol_message(&msg)?;
+        } else {
+            self.process_service_request_message(&msg)?;
+        }
+
         Ok(AsyncSink::Ready)
     }
 
@@ -79,7 +179,7 @@ impl Stream for ArrowClient {
     type Error = ArrowError;
 
     fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
-        if self.closed {
+        if self.is_closed() {
             Ok(Async::Ready(None))
         } else if let Some(msg) = self.messages.pop_front() {
             Ok(Async::Ready(Some(msg)))
@@ -89,8 +189,8 @@ impl Stream for ArrowClient {
     }
 }
 
-/// Connect Arrow Client to a given address.
-pub fn connect(addr: &str) -> Result<(), ArrowError> {
+/// Connect Arrow Client to a given address and return either a redirect address or an error.
+pub fn connect(addr: &str) -> Result<String, ArrowError> {
     let mut core = TokioCore::new()?;
 
     let addr = addr.to_socket_addrs()?
@@ -108,8 +208,13 @@ pub fn connect(addr: &str) -> Result<(), ArrowError> {
             let messages = stream.pipe(aclient);
 
             sink.send_all(messages)
-                .and_then(|_| {
-                    Ok(())
+                .and_then(|(_, pipe)| {
+                    let (_, _, context) = pipe.unpipe();
+                    let redirect = context.get_redirect()
+                        .expect("connection closed, redirect expected")
+                        .to_string();
+
+                    Ok(redirect)
                 })
         });
 
