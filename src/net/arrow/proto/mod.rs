@@ -35,6 +35,7 @@ use tokio_io::AsyncRead;
 use futures_ex::StreamEx;
 
 use net::arrow::proto::codec::ArrowCodec;
+use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
 
 /// Currently supported version of the Arrow protocol.
@@ -56,7 +57,7 @@ impl ArrowClient {
 
 impl Sink for ArrowClient {
     type SinkItem  = ArrowMessage;
-    type SinkError = io::Error;
+    type SinkError = ArrowError;
 
     fn start_send(&mut self, _: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
         // TODO: process a given message
@@ -70,7 +71,7 @@ impl Sink for ArrowClient {
 
 impl Stream for ArrowClient {
     type Item  = ArrowMessage;
-    type Error = io::Error;
+    type Error = ArrowError;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         // TODO: return any messages that are ready to be sent
@@ -79,7 +80,7 @@ impl Stream for ArrowClient {
 }
 
 /// Connect Arrow Client to a given address.
-pub fn connect(addr: &str) -> io::Result<()> {
+pub fn connect(addr: &str) -> Result<(), ArrowError> {
     let mut core = TokioCore::new()?;
 
     let addr = addr.to_socket_addrs()?
@@ -89,6 +90,7 @@ pub fn connect(addr: &str) -> io::Result<()> {
     let aclient = ArrowClient::new(core.handle());
 
     let client = TcpStream::connect(&addr, &core.handle())
+        .map_err(|err| ArrowError::from(err))
         .and_then(|stream| {
             let framed = stream.framed(ArrowCodec);
             let (sink, stream) = framed.split();

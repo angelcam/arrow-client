@@ -12,14 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io;
-
 use bytes::BytesMut;
 use tokio_io::codec::{Decoder, Encoder};
 
 use net::arrow::proto::buffer::{InputBuffer, OutputBuffer};
+use net::arrow::proto::error::{ArrowError, DecodeError};
 use net::arrow::proto::msg::ArrowMessage;
-use net::arrow::proto::error::DecodeError;
 
 /// Common trait for objects that can be encoded as a sequence of bytes.
 pub trait Encode {
@@ -49,20 +47,18 @@ pub trait Decode : Sized {
 pub struct ArrowCodec;
 
 impl Decoder for ArrowCodec {
-    // TODO: we should probably use a custom error type here
     type Item  = ArrowMessage;
-    type Error = io::Error;
+    type Error = ArrowError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         ArrowMessage::decode(src)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+            .map_err(|err| ArrowError::from(err))
     }
 }
 
 impl Encoder for ArrowCodec {
-    // TODO: we should probably use a custom error type here
     type Item  = ArrowMessage;
-    type Error = io::Error;
+    type Error = ArrowError;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
         item.encode(dst);
