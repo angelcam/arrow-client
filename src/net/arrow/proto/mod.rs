@@ -71,6 +71,11 @@ impl ArrowClient {
         self.redirect.is_some()
     }
 
+    /// Insert a given Control Protocol message into the output message queue.
+    fn send_control_protocol_message(&mut self, msg: ControlMessage) {
+        self.messages.push_back(ArrowMessage::new(0, 0, msg))
+    }
+
     /// Process a given Control Protocol message.
     fn process_control_protocol_message(&mut self, msg: &ArrowMessage) -> Result<(), ArrowError> {
         let msg = msg.body::<ControlMessage>()
@@ -100,8 +105,12 @@ impl ArrowClient {
     }
 
     /// Process a given PING message.
-    fn process_ping_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
-        // TODO
+    fn process_ping_message(&mut self, msg: &ControlMessage) -> Result<(), ArrowError> {
+        let header = msg.header();
+
+        self.send_control_protocol_message(
+            ControlMessage::ack(header.msg_id, 0));
+
         Ok(())
     }
 

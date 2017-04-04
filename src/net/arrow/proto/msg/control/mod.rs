@@ -78,6 +78,26 @@ pub enum ControlMessageType {
     SCAN_REPORT,
 }
 
+impl ControlMessageType {
+    fn code(&self) -> u16 {
+        match *self {
+            ControlMessageType::ACK             => CMSG_ACK,
+            ControlMessageType::PING            => CMSG_PING,
+            ControlMessageType::REGISTER        => CMSG_REGISTER,
+            ControlMessageType::REDIRECT        => CMSG_REDIRECT,
+            ControlMessageType::UPDATE          => CMSG_UPDATE,
+            ControlMessageType::HUP             => CMSG_HUP,
+            ControlMessageType::RESET_SVC_TABLE => CMSG_RESET_SVC_TABLE,
+            ControlMessageType::SCAN_NETWORK    => CMSG_SCAN_NETWORK,
+            ControlMessageType::GET_STATUS      => CMSG_GET_STATUS,
+            ControlMessageType::STATUS          => CMSG_STATUS,
+            ControlMessageType::GET_SCAN_REPORT => CMSG_GET_SCAN_REPORT,
+            ControlMessageType::SCAN_REPORT     => CMSG_SCAN_REPORT,
+            ControlMessageType::UNKNOWN         => panic!("UNKNOWN Control Protocol message type has no code"),
+        }
+    }
+}
+
 /// Arrow Control Protocol message header.
 #[derive(Debug, Copy, Clone)]
 #[repr(packed)]
@@ -89,6 +109,14 @@ pub struct ControlMessageHeader {
 }
 
 impl ControlMessageHeader {
+    /// Create a new Control Protocol message header.
+    fn new(msg_id: u16, msg_type: u16) -> ControlMessageHeader {
+        ControlMessageHeader {
+            msg_id:   msg_id,
+            msg_type: msg_type,
+        }
+    }
+
     /// Get message type.
     pub fn message_type(&self) -> ControlMessageType {
         match self.msg_type {
@@ -166,6 +194,20 @@ pub struct ControlMessage {
 }
 
 impl ControlMessage {
+    /// Create a new ACK Control Protocol message.
+    pub fn ack(msg_id: u16, err: u32) -> ControlMessage {
+        ControlMessage::new(msg_id, ControlMessageType::ACK, AckMessage::new(err))
+    }
+
+    /// Create a new Control Protocol message.
+    fn new<B>(msg_id: u16, msg_type: ControlMessageType, body: B) -> ControlMessage
+        where B: ControlMessageBody + 'static {
+        ControlMessage {
+            header: ControlMessageHeader::new(msg_id, msg_type.code()),
+            body:   Box::new(body),
+        }
+    }
+
     /// Get reference to the message header.
     pub fn header(&self) -> &ControlMessageHeader {
         &self.header
