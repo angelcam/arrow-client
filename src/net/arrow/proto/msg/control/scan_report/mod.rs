@@ -21,10 +21,11 @@ use std::collections::{HashMap, HashSet};
 use std::collections::hash_set::Iter as HashSetIterator;
 use std::collections::hash_map::Iter as HashMapIterator;
 
+use bytes::BytesMut;
+
 use utils;
 
 use net::arrow::proto::codec::Encode;
-use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
 use net::arrow::proto::msg::control::svc_table::Service;
@@ -50,12 +51,12 @@ impl<'a> From<&'a ScanReport> for ScanReportHeader {
 }
 
 impl Encode for ScanReportHeader {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         let be_header = ScanReportHeader {
             host_count: self.host_count.to_be(),
         };
 
-        buf.append(utils::as_bytes(&be_header))
+        buf.extend(utils::as_bytes(&be_header))
     }
 }
 
@@ -149,7 +150,7 @@ impl ScanReport {
 }
 
 impl Encode for ScanReport {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         ScanReportHeader::from(self)
             .encode(buf);
 
@@ -298,12 +299,12 @@ impl ScanReportMessageHeader {
 }
 
 impl Encode for ScanReportMessageHeader {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         let be_header = ScanReportMessageHeader {
             request_id: self.request_id.to_be(),
         };
 
-        buf.append(utils::as_bytes(&be_header))
+        buf.extend(utils::as_bytes(&be_header))
     }
 }
 
@@ -326,7 +327,7 @@ impl ScanReportMessage {
 }
 
 impl Encode for ScanReportMessage {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         self.header.encode(buf);
         self.scan_report.encode(buf);
     }

@@ -14,10 +14,11 @@
 
 use std::mem;
 
+use bytes::BytesMut;
+
 use utils;
 
 use net::arrow::proto::codec::{FromBytes, Encode};
-use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
 use net::arrow::proto::error::DecodeError;
@@ -38,12 +39,12 @@ impl AckMessage {
 }
 
 impl Encode for AckMessage {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         let be_msg = AckMessage {
             err: self.err.to_be(),
         };
 
-        buf.append(utils::as_bytes(&be_msg))
+        buf.extend(utils::as_bytes(&be_msg))
     }
 }
 

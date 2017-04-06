@@ -18,10 +18,11 @@ use std::collections::HashSet;
 use std::collections::hash_set::Iter as HashSetIterator;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
+use bytes::BytesMut;
+
 use utils;
 
 use net::arrow::proto::codec::Encode;
-use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::raw::ether::MacAddr;
 use net::utils::IpAddrEx;
@@ -52,7 +53,7 @@ impl<'a> From<&'a HostRecord> for HostRecordHeader {
 }
 
 impl Encode for HostRecordHeader {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         let be_header = HostRecordHeader {
             flags:      self.flags,
             mac:        self.mac,
@@ -61,7 +62,7 @@ impl Encode for HostRecordHeader {
             port_count: self.port_count.to_be(),
         };
 
-        buf.append(utils::as_bytes(&be_header))
+        buf.extend(utils::as_bytes(&be_header))
     }
 }
 
@@ -107,12 +108,12 @@ impl HostRecord {
 }
 
 impl Encode for HostRecord {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         HostRecordHeader::from(self)
             .encode(buf);
 
         for port in &self.ports {
-            buf.append(utils::as_bytes(&port.to_be()));
+            buf.extend(utils::as_bytes(&port.to_be()));
         }
     }
 }

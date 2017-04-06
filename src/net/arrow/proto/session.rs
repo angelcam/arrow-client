@@ -99,8 +99,7 @@ impl SessionContext {
             return Err(io::Error::new(io::ErrorKind::ConnectionReset, "connection has been closed"))
         }
 
-        let data = msg.body::<Bytes>()
-            .expect("bytes expected");
+        let data = msg.payload();
 
         // we cannot backpressure here, so we'll return an error if size
         // of the output buffer gets greater than a given hard limit

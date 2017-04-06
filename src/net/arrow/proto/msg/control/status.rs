@@ -14,10 +14,11 @@
 
 use std::mem;
 
+use bytes::BytesMut;
+
 use utils;
 
 use net::arrow::proto::codec::Encode;
-use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
 
@@ -30,14 +31,14 @@ pub struct StatusMessage {
 }
 
 impl Encode for StatusMessage {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         let be_msg = StatusMessage {
             request_id:      self.request_id.to_be(),
             status_flags:    self.status_flags.to_be(),
             active_sessions: self.active_sessions.to_be()
         };
 
-        buf.append(utils::as_bytes(&be_msg))
+        buf.extend(utils::as_bytes(&be_msg))
     }
 }
 

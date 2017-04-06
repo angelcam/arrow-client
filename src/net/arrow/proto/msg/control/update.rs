@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use bytes::BytesMut;
+
 use net::arrow::proto::codec::Encode;
-use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
 use net::arrow::proto::msg::control::svc_table::ServiceTable;
@@ -24,7 +25,7 @@ pub struct UpdateMessage {
 }
 
 impl Encode for UpdateMessage {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         self.svc_table.encode(buf)
     }
 }

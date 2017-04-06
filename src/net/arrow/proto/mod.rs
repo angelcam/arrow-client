@@ -13,7 +13,6 @@
 // limitations under the License.
 
 pub mod msg;
-pub mod buffer;
 pub mod codec;
 pub mod error;
 
@@ -37,7 +36,7 @@ use tokio_io::AsyncRead;
 
 use futures_ex::StreamEx;
 
-use net::arrow::proto::codec::ArrowCodec;
+use net::arrow::proto::codec::{ArrowCodec, FromBytes};
 use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
 use net::arrow::proto::msg::control::{ControlMessage, ControlMessageType, RedirectMessage};
@@ -79,11 +78,11 @@ impl ArrowClient {
     }
 
     /// Process a given Control Protocol message.
-    fn process_control_protocol_message(&mut self, msg: &ArrowMessage) -> Result<(), ArrowError> {
-        let msg = msg.body::<ControlMessage>()
-            .expect("control protocol message expected");
+    fn process_control_protocol_message(&mut self, msg: ArrowMessage) -> Result<(), ArrowError> {
+        let msg = ControlMessage::from_bytes(msg.payload())?
+            .expect("unable to decode an Arrow Control Protocol message");
 
-        let header = msg.header();
+        let header = *msg.header();
 
         match header.message_type() {
             ControlMessageType::ACK             => self.process_ack_message(msg),
@@ -101,13 +100,13 @@ impl ArrowClient {
     }
 
     /// Process a given ACK message.
-    fn process_ack_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+    fn process_ack_message(&mut self, _: ControlMessage) -> Result<(), ArrowError> {
         // TODO
         Ok(())
     }
 
     /// Process a given PING message.
-    fn process_ping_message(&mut self, msg: &ControlMessage) -> Result<(), ArrowError> {
+    fn process_ping_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
         let header = msg.header();
 
         self.send_control_protocol_message(
@@ -117,13 +116,13 @@ impl ArrowClient {
     }
 
     /// Process a given HUP message.
-    fn process_hup_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+    fn process_hup_message(&mut self, _: ControlMessage) -> Result<(), ArrowError> {
         // TODO
         Ok(())
     }
 
     /// Process a given REDIRECT message.
-    fn process_redirect_message(&mut self, msg: &ControlMessage) -> Result<(), ArrowError> {
+    fn process_redirect_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
         let msg = msg.body::<RedirectMessage>()
             .expect("REDIRECT message expected");
 
@@ -133,31 +132,31 @@ impl ArrowClient {
     }
 
     /// Process a given GET_STATUS message.
-    fn process_get_status_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+    fn process_get_status_message(&mut self, _: ControlMessage) -> Result<(), ArrowError> {
         // TODO
         Ok(())
     }
 
     /// Process a given GET_SCAN_REPORT message.
-    fn process_get_scan_report_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+    fn process_get_scan_report_message(&mut self, _: ControlMessage) -> Result<(), ArrowError> {
         // TODO
         Ok(())
     }
 
     /// Process a given RESET_SVC_TABLE message.
-    fn process_reset_svc_table_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+    fn process_reset_svc_table_message(&mut self, _: ControlMessage) -> Result<(), ArrowError> {
         // TODO
         Ok(())
     }
 
     /// Process a given SCAN_NETWORK message.
-    fn process_scan_network_message(&mut self, _: &ControlMessage) -> Result<(), ArrowError> {
+    fn process_scan_network_message(&mut self, _: ControlMessage) -> Result<(), ArrowError> {
         // TODO
         Ok(())
     }
 
     /// Process a given service request message.
-    fn process_service_request_message(&mut self, _: &ArrowMessage) -> Result<(), ArrowError> {
+    fn process_service_request_message(&mut self, _: ArrowMessage) -> Result<(), ArrowError> {
         // TODO
         Ok(())
     }
@@ -173,12 +172,12 @@ impl Sink for ArrowClient {
             return Ok(AsyncSink::Ready)
         }
 
-        let header = msg.header();
+        let header = *msg.header();
 
         if header.service == 0 {
-            self.process_control_protocol_message(&msg)?;
+            self.process_control_protocol_message(msg)?;
         } else {
-            self.process_service_request_message(&msg)?;
+            self.process_service_request_message(msg)?;
         }
 
         Ok(AsyncSink::Ready)

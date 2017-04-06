@@ -16,10 +16,11 @@ use std::mem;
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
+use bytes::BytesMut;
+
 use utils;
 
 use net::arrow::proto::codec::Encode;
-use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::raw::ether::MacAddr;
 use net::utils::IpAddrEx;
@@ -111,7 +112,7 @@ impl<'a> From<&'a Service> for ServiceHeader {
 }
 
 impl Encode for ServiceHeader {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         let be_header = ServiceHeader {
             svc_id:     self.svc_id.to_be(),
             svc_type:   self.svc_type.to_be(),
@@ -121,7 +122,7 @@ impl Encode for ServiceHeader {
             port:       self.port.to_be(),
         };
 
-        buf.append(utils::as_bytes(&be_header))
+        buf.extend(utils::as_bytes(&be_header))
     }
 }
 
@@ -263,15 +264,15 @@ impl Service {
 }
 
 impl Encode for Service {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         ServiceHeader::from(self)
             .encode(buf);
 
         let path = self.path()
             .unwrap_or("");
 
-        buf.append(path.as_bytes());
-        buf.append(&[0]);
+        buf.extend(path.as_bytes());
+        buf.extend(&[0]);
     }
 }
 
@@ -306,7 +307,7 @@ impl ServiceTable {
 }
 
 impl Encode for ServiceTable {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         for svc in &self.services {
             svc.encode(buf);
         }

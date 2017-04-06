@@ -16,7 +16,9 @@ pub mod control;
 
 use std::mem;
 
-use bytes::Bytes;
+use std::any::Any;
+
+use bytes::{Bytes, BytesMut};
 
 use utils;
 
@@ -24,7 +26,6 @@ use utils::AsAny;
 
 use net::arrow::proto::ARROW_PROTOCOL_VERSION;
 use net::arrow::proto::codec::{FromBytes, Decode, Encode};
-use net::arrow::proto::buffer::{InputBuffer, OutputBuffer};
 use net::arrow::proto::msg::control::ControlMessage;
 use net::arrow::proto::error::DecodeError;
 
@@ -42,6 +43,7 @@ impl<T: AsRef<[u8]>> MessageBody for T {
 }
 
 /// Arrow Message header.
+#[derive(Debug, Copy, Clone)]
 #[repr(packed)]
 pub struct ArrowMessageHeader {
     /// Arrow Protocol major version.
@@ -68,7 +70,7 @@ impl ArrowMessageHeader {
 }
 
 impl Encode for ArrowMessageHeader {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         let be_header = ArrowMessageHeader {
             version: self.version,
             service: self.service.to_be(),
@@ -76,7 +78,7 @@ impl Encode for ArrowMessageHeader {
             size:    self.size.to_be()
         };
 
-        buf.append(utils::as_bytes(&be_header))
+        buf.extend(utils::as_bytes(&be_header))
     }
 }
 
@@ -112,18 +114,22 @@ impl ArrowMessageBody for Bytes {
 /// Arrow Message.
 pub struct ArrowMessage {
     /// Message header.
-    header: ArrowMessageHeader,
-    /// Message body.
-    body:   Box<ArrowMessageBody>,
+    header:  ArrowMessageHeader,
+    /// Encoded message body.
+    payload: Bytes,
 }
 
 impl ArrowMessage {
     /// Create a new Arrow Message with a given service ID, session ID and payload.
     pub fn new<B>(service: u16, session: u32, body: B) -> ArrowMessage
         where B: ArrowMessageBody + 'static {
+        let mut payload = BytesMut::with_capacity(body.len());
+
+        body.encode(&mut payload);
+
         ArrowMessage {
-            header: ArrowMessageHeader::new(service, session, 0),
-            body:   Box::new(body)
+            header:  ArrowMessageHeader::new(service, session, 0),
+            payload: payload.freeze(),
         }
     }
 
@@ -132,78 +138,52 @@ impl ArrowMessage {
         &self.header
     }
 
-    /// Get reference to the message body or None if the type of the message body does not match
-    /// to the expected one.
-    pub fn body<T: ArrowMessageBody + 'static>(&self) -> Option<&T> {
-        self.body.as_any()
-            .downcast_ref()
+    /// Get encoded message body.
+    pub fn payload(&self) -> &[u8] {
+        self.payload.as_ref()
     }
 }
 
 impl Encode for ArrowMessage {
-    fn encode(&self, buf: &mut OutputBuffer) {
+    fn encode(&self, buf: &mut BytesMut) {
         let header = ArrowMessageHeader::new(
             self.header.service,
             self.header.session,
-            self.body.len() as u32);
+            self.payload.len() as u32);
 
         header.encode(buf);
 
-        self.body.encode(buf)
+        buf.extend(self.payload.as_ref())
     }
 }
 
-impl FromBytes for ArrowMessage {
-    fn from_bytes(bytes: &[u8]) -> Result<Option<ArrowMessage>, DecodeError> {
+impl Decode for ArrowMessage {
+    fn decode(buf: &mut BytesMut) -> Result<Option<ArrowMessage>, DecodeError> {
         let hsize = mem::size_of::<ArrowMessageHeader>();
 
-        if bytes.len() < hsize {
+        if buf.len() < hsize {
             return Ok(None);
         }
 
-        if let Some(header) = ArrowMessageHeader::from_bytes(&bytes[..hsize])? {
+        if let Some(header) = ArrowMessageHeader::from_bytes(&buf[..hsize])? {
             let msize = header.size as usize + hsize;
 
-            if bytes.len() < msize {
+            if buf.len() < msize {
                 return Ok(None);
             }
 
-            let payload = &bytes[hsize..msize];
-
-            let body: Box<ArrowMessageBody>;
-
-            if header.service == 0 {
-                if let Some(cmsg) = ControlMessage::from_bytes(payload)? {
-                    body = Box::new(cmsg);
-                } else {
-                    panic!("unable to decode an Arrow Control Protocol message");
-                }
-            } else {
-                // TODO: we should not copy the data, we should
-                // reuse the data passed to the decode method!!!
-                body = Box::new(Bytes::from(payload));
-            }
+            let message = buf.split_to(msize);
+            let payload = message.freeze()
+                .split_off(hsize);
 
             let msg = ArrowMessage {
-                header: header,
-                body:   body,
+                header:  header,
+                payload: payload,
             };
 
             Ok(Some(msg))
         } else {
             panic!("unable to decode an Arrow Message header")
         }
-    }
-}
-
-impl Decode for ArrowMessage {
-    fn decode(buf: &mut InputBuffer) -> Result<Option<ArrowMessage>, DecodeError> {
-        let msg = ArrowMessage::from_bytes(buf.as_bytes())?;
-
-        if let Some(ref msg) = msg {
-            buf.drop(msg.header.size as usize + mem::size_of::<ArrowMessageHeader>());
-        }
-
-        Ok(msg)
     }
 }

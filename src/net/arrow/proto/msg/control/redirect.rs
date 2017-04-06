@@ -14,8 +14,9 @@
 
 use std::str;
 
+use bytes::BytesMut;
+
 use net::arrow::proto::codec::{FromBytes, Encode};
-use net::arrow::proto::buffer::OutputBuffer;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
 use net::arrow::proto::error::DecodeError;
@@ -38,9 +39,9 @@ impl RedirectMessage {
 }
 
 impl Encode for RedirectMessage {
-    fn encode(&self, buf: &mut OutputBuffer) {
-        buf.append(self.target.as_bytes());
-        buf.append(&[0]);
+    fn encode(&self, buf: &mut BytesMut) {
+        buf.extend(self.target.as_bytes());
+        buf.extend(&[0]);
     }
 }
 
