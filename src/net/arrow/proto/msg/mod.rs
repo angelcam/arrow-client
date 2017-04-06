@@ -16,8 +16,6 @@ pub mod control;
 
 use std::mem;
 
-use std::any::Any;
-
 use bytes::{Bytes, BytesMut};
 
 use utils;
@@ -26,7 +24,6 @@ use utils::AsAny;
 
 use net::arrow::proto::ARROW_PROTOCOL_VERSION;
 use net::arrow::proto::codec::{FromBytes, Decode, Encode};
-use net::arrow::proto::msg::control::ControlMessage;
 use net::arrow::proto::error::DecodeError;
 
 /// Common trait for message body types.

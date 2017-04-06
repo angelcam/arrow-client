@@ -26,38 +26,7 @@ use futures::task::Task;
 use futures::stream::Stream;
 use futures::sink::Sink;
 
-use tokio_io::codec::{Decoder, Encoder};
-
 use net::arrow::proto::msg::ArrowMessage;
-
-/// Simple raw codec used for service connections.
-pub struct RawCodec;
-
-impl Decoder for RawCodec {
-    type Item = Bytes;
-    type Error = io::Error;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let bytes = src.take()
-            .freeze();
-
-        if bytes.len() > 0 {
-            Ok(Some(bytes))
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-impl Encoder for RawCodec {
-    type Item = Bytes;
-    type Error = io::Error;
-
-    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.extend(item);
-        Ok(())
-    }
-}
 
 const INPUT_BUFFER_LIMIT: usize  = 32768;
 const OUTPUT_BUFFER_LIMIT: usize = 4 * 1024 * 1024 * 1024;

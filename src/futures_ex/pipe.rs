@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use futures::{Async, AsyncSink, Poll, StartSend};
+use futures::{Async, AsyncSink, Poll};
 use futures::stream::{Fuse, Stream};
 use futures::sink::Sink;
 

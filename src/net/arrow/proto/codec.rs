@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use bytes::BytesMut;
+use std::io;
+
+use bytes::{Bytes, BytesMut};
+
 use tokio_io::codec::{Decoder, Encoder};
 
 use net::arrow::proto::error::{ArrowError, DecodeError};
@@ -61,6 +64,35 @@ impl Encoder for ArrowCodec {
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
         item.encode(dst);
+        Ok(())
+    }
+}
+
+/// Simple raw codec used for service connections.
+pub struct RawCodec;
+
+impl Decoder for RawCodec {
+    type Item = Bytes;
+    type Error = io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let bytes = src.take()
+            .freeze();
+
+        if bytes.len() > 0 {
+            Ok(Some(bytes))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+impl Encoder for RawCodec {
+    type Item = Bytes;
+    type Error = io::Error;
+
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        dst.extend(item);
         Ok(())
     }
 }
