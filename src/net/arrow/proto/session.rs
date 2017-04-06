@@ -16,6 +16,7 @@ use std::io;
 
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 use bytes::{Bytes, BytesMut};
 
@@ -26,6 +27,7 @@ use futures::task::Task;
 use futures::stream::Stream;
 use futures::sink::Sink;
 
+use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
 
 const INPUT_BUFFER_LIMIT: usize  = 32768;
@@ -259,6 +261,16 @@ pub struct SessionTransport {
     context: Rc<RefCell<SessionContext>>,
 }
 
+impl Stream for SessionTransport {
+    type Item  = Bytes;
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Option<Bytes>, io::Error> {
+        self.context.borrow_mut()
+            .take_output_data()
+    }
+}
+
 impl Sink for SessionTransport {
     type SinkItem  = Bytes;
     type SinkError = io::Error;
@@ -284,12 +296,46 @@ impl Sink for SessionTransport {
     }
 }
 
-impl Stream for SessionTransport {
-    type Item  = Bytes;
-    type Error = io::Error;
+/// Arrow session manager.
+pub struct SessionManager {
+    sessions: HashMap<u32, Session>,
+}
 
-    fn poll(&mut self) -> Poll<Option<Bytes>, io::Error> {
-        self.context.borrow_mut()
-            .take_output_data()
+impl SessionManager {
+    /// Create a new session manager.
+    pub fn new() -> SessionManager {
+        SessionManager {
+            sessions: HashMap::new(),
+        }
+    }
+}
+
+impl Stream for SessionManager {
+    type Item  = ArrowMessage;
+    type Error = ArrowError;
+
+    fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
+        // TODO
+        Ok(Async::NotReady)
+    }
+}
+
+impl Sink for SessionManager {
+    type SinkItem  = ArrowMessage;
+    type SinkError = ArrowError;
+
+    fn start_send(&mut self, msg: ArrowMessage) -> StartSend<ArrowMessage, ArrowError> {
+        // TODO
+        Ok(AsyncSink::NotReady(msg))
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), ArrowError> {
+        // TODO
+        Ok(Async::NotReady)
+    }
+
+    fn close(&mut self) -> Poll<(), ArrowError> {
+        // TODO
+        self.poll_complete()
     }
 }
