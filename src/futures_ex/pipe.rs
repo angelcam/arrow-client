@@ -96,21 +96,3 @@ impl<T, U> Stream for Pipe<T, U>
         self.sink.poll()
     }
 }
-
-impl<T, U> Sink for Pipe<T, U>
-where T: Stream + Sink,
-      U: Stream + Sink<SinkItem=T::Item>,
-      U::SinkError: From<T::Error>,
-      U::Error: From<U::SinkError>,
-{
-    type SinkItem  = T::SinkItem;
-    type SinkError = T::SinkError;
-
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
-        self.stream.start_send(item)
-    }
-
-    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        self.stream.poll_complete()
-    }
-}
