@@ -16,6 +16,8 @@ pub mod control;
 
 use std::mem;
 
+use bytes::Bytes;
+
 use utils;
 
 use utils::AsAny;
@@ -104,7 +106,7 @@ impl FromBytes for ArrowMessageHeader {
 pub trait ArrowMessageBody : MessageBody + AsAny + Send {
 }
 
-impl ArrowMessageBody for Vec<u8> {
+impl ArrowMessageBody for Bytes {
 }
 
 /// Arrow Message.
@@ -177,7 +179,9 @@ impl FromBytes for ArrowMessage {
                     panic!("unable to decode an Arrow Control Protocol message");
                 }
             } else {
-                body = Box::new(payload.to_vec());
+                // TODO: we should not copy the data, we should
+                // reuse the data passed to the decode method!!!
+                body = Box::new(Bytes::from(payload));
             }
 
             let msg = ArrowMessage {

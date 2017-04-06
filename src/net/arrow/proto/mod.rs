@@ -17,6 +17,8 @@ pub mod buffer;
 pub mod codec;
 pub mod error;
 
+mod session;
+
 use std::io;
 
 use std::net::ToSocketAddrs;
