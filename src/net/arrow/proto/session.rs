@@ -17,16 +17,25 @@ use std::io;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::net::ToSocketAddrs;
 
 use bytes::{Bytes, BytesMut};
 
 use futures::task;
 
-use futures::{StartSend, Async, AsyncSink, Poll};
+use futures::{Async, AsyncSink, Future, Poll, StartSend};
 use futures::task::Task;
 use futures::stream::Stream;
 use futures::sink::Sink;
 
+use tokio_core::net::TcpStream;
+use tokio_core::reactor::Handle as TokioCoreHandle;
+
+use tokio_io::AsyncRead;
+
+use futures_ex::StreamEx;
+
+use net::arrow::proto::codec::RawCodec;
 use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
 
@@ -43,6 +52,7 @@ struct SessionContext {
     input_empty:  Option<Task>,
     output_ready: Option<Task>,
     closed:       bool,
+    error:        Option<io::Error>,
 }
 
 impl SessionContext {
@@ -57,38 +67,33 @@ impl SessionContext {
             input_empty:  None,
             output_ready: None,
             closed:       false,
+            error:        None,
         }
     }
 
-    /// Extend the output buffer with data from a given Arrow Message. The
-    /// method returns:
-    /// * `()` on success
-    /// * an error if the context has been closed or the output buffer hard
-    ///   limit has been exceeded
-    fn push_output_message(&mut self, msg: ArrowMessage) -> io::Result<()> {
+    /// Extend the output buffer with data from a given Arrow Message.
+    fn push_output_message(&mut self, msg: ArrowMessage) {
+        // ignore all incoming messages after the connection gets closed
         if self.closed {
-            return Err(io::Error::new(io::ErrorKind::ConnectionReset, "connection has been closed"))
+            return
         }
 
         let data = msg.payload();
 
-        // we cannot backpressure here, so we'll return an error if size
-        // of the output buffer gets greater than a given hard limit
         if (self.output.len() + data.len()) > OUTPUT_BUFFER_LIMIT {
-            return Err(io::Error::new(io::ErrorKind::Other, "output buffer limit exceeded"))
-        }
+            // we cannot backpressure here, so we'll set an error state
+            self.set_error(io::Error::new(io::ErrorKind::Other, "output buffer limit exceeded"));
+        } else {
+            self.output.extend(data);
 
-        self.output.extend(data);
-
-        // we MUST notify any possible task consuming the output buffer that
-        // there is some data available again
-        if self.output.len() > 0 {
-            if let Some(task) = self.output_ready.take() {
-                task.unpark();
+            // we MUST notify any possible task consuming the output buffer that
+            // there is some data available again
+            if self.output.len() > 0 {
+                if let Some(task) = self.output_ready.take() {
+                    task.unpark();
+                }
             }
         }
-
-        Ok(())
     }
 
     /// Take all the data from the input buffer and return them as an Arrow
@@ -115,7 +120,10 @@ impl SessionContext {
 
             Ok(Async::Ready(Some(message)))
         } else if self.closed {
-            Ok(Async::Ready(None))
+            match self.error.take() {
+                Some(err) => Err(err),
+                None      => Ok(Async::Ready(None)),
+            }
         } else {
             // park the current task and wait until there is some data
             // available in the input buffer
@@ -204,16 +212,26 @@ impl SessionContext {
     fn close(&mut self) {
         self.closed = true;
     }
+
+    /// Mark the context as closed and set a given error. Note that this
+    /// method does not flush any buffer.
+    fn set_error(&mut self, err: io::Error) {
+        // ignore all errors after the connection gets closed
+        if !self.closed {
+            self.closed = true;
+            self.error  = Some(err);
+        }
+    }
 }
 
 /// Arrow session (i.e. connection to an external service).
-pub struct Session {
+struct Session {
     context: Rc<RefCell<SessionContext>>,
 }
 
 impl Session {
     /// Create a new session for a given service ID and session ID.
-    pub fn new(service_id: u16, session_id: u32) -> Session {
+    fn new(service_id: u16, session_id: u32) -> Session {
         let context = SessionContext::new(service_id, session_id);
 
         Session {
@@ -221,11 +239,8 @@ impl Session {
         }
     }
 
-    /// Push a given Arrow Message into the output buffer. The method returns:
-    /// * `()` on success
-    /// * an error if the session has been closed or the output buffer hard
-    ///   limit has been exceeded
-    pub fn push(&mut self, msg: ArrowMessage) -> io::Result<()> {
+    /// Push a given Arrow Message into the output buffer.
+    fn push(&mut self, msg: ArrowMessage) {
         self.context.borrow_mut()
             .push_output_message(msg)
     }
@@ -235,7 +250,7 @@ impl Session {
     /// * `Async::Ready(None)` if there was no data available and the context
     ///   has been closed
     /// * `Async::NotReady` if there was no data available
-    pub fn take(&mut self) -> Poll<Option<ArrowMessage>, io::Error> {
+    fn take(&mut self) -> Poll<Option<ArrowMessage>, io::Error> {
         self.context.borrow_mut()
             .take_input_message()
     }
@@ -243,21 +258,28 @@ impl Session {
     /// Mark the session as closed. The session context won't accept any new
     /// data, however the buffered data can be still processed. It's up to
     /// the corresponding tasks to consume all remaining data.
-    pub fn close(&mut self) {
+    fn close(&mut self) {
         self.context.borrow_mut()
             .close()
     }
 
     /// Get session transport.
-    pub fn transport(&self) -> SessionTransport {
+    fn transport(&self) -> SessionTransport {
         SessionTransport {
+            context: self.context.clone()
+        }
+    }
+
+    /// Get session error handler.
+    fn error_handler(&self) -> SessionErrorHandler {
+        SessionErrorHandler {
             context: self.context.clone()
         }
     }
 }
 
 /// Session transport.
-pub struct SessionTransport {
+struct SessionTransport {
     context: Rc<RefCell<SessionContext>>,
 }
 
@@ -296,17 +318,100 @@ impl Sink for SessionTransport {
     }
 }
 
+/// Session error handler.
+struct SessionErrorHandler {
+    context: Rc<RefCell<SessionContext>>,
+}
+
+impl SessionErrorHandler {
+    /// Save a given transport error into the session context.
+    fn set_error(&mut self, err: io::Error) {
+        self.context.borrow_mut()
+            .set_error(err)
+    }
+}
+
 /// Arrow session manager.
 pub struct SessionManager {
-    sessions: HashMap<u32, Session>,
+    tc_handle: TokioCoreHandle,
+    sessions:  HashMap<u32, Session>,
 }
 
 impl SessionManager {
     /// Create a new session manager.
-    pub fn new() -> SessionManager {
+    pub fn new(tc_handle: TokioCoreHandle) -> SessionManager {
         SessionManager {
-            sessions: HashMap::new(),
+            tc_handle: tc_handle,
+            sessions:  HashMap::new(),
         }
+    }
+
+    /// Send a given Arrow Message to the corresponding service using a given
+    /// session (as specified by the message). The method returns an error
+    /// if the session could not be created for some reason.
+    pub fn send(&mut self, msg: ArrowMessage) -> Result<(), ArrowError> {
+        let header = *msg.header();
+
+        self.get_session_mut(header.service, header.session)?
+            .push(msg);
+
+        Ok(())
+    }
+
+    /// Get mutable reference to a given session.
+    fn get_session_mut(
+        &mut self,
+        service_id: u16,
+        session_id: u32) -> Result<&mut Session, ArrowError> {
+        if !self.sessions.contains_key(&session_id) {
+            let session = self.connect(service_id, session_id)?;
+
+            self.sessions.insert(
+                session_id,
+                session);
+        }
+
+        let session = self.sessions.get_mut(&session_id);
+
+        Ok(session.unwrap())
+    }
+
+    /// Connect to a given service and create an associated session object
+    /// with a given ID.
+    fn connect(
+        &mut self,
+        service_id: u16,
+        session_id: u32) -> Result<Session, ArrowError> {
+        // TODO: get address of a given service
+        let addr = "127.0.0.1:80";
+        let addr = addr.to_socket_addrs()?
+            .next()
+            .ok_or(io::Error::new(io::ErrorKind::Other, "unable to resolve a given address"))?;
+
+        let session = Session::new(service_id, session_id);
+        let transport = session.transport();
+        let mut err_handler = session.error_handler();
+
+        let client = TcpStream::connect(&addr, &self.tc_handle)
+            .and_then(|stream| {
+                let framed = stream.framed(RawCodec);
+                let (sink, stream) = framed.split();
+
+                let messages = stream.pipe(transport);
+
+                sink.send_all(messages)
+            })
+            .then(move |res| {
+                if let Err(err) = res {
+                    err_handler.set_error(err);
+                }
+
+                Ok(())
+            });
+
+        self.tc_handle.spawn(client);
+
+        Ok(session)
     }
 }
 
@@ -317,25 +422,5 @@ impl Stream for SessionManager {
     fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
         // TODO
         Ok(Async::NotReady)
-    }
-}
-
-impl Sink for SessionManager {
-    type SinkItem  = ArrowMessage;
-    type SinkError = ArrowError;
-
-    fn start_send(&mut self, msg: ArrowMessage) -> StartSend<ArrowMessage, ArrowError> {
-        // TODO
-        Ok(AsyncSink::NotReady(msg))
-    }
-
-    fn poll_complete(&mut self) -> Poll<(), ArrowError> {
-        // TODO
-        Ok(Async::NotReady)
-    }
-
-    fn close(&mut self) -> Poll<(), ArrowError> {
-        // TODO
-        self.poll_complete()
     }
 }
