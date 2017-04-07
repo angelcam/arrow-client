@@ -16,7 +16,7 @@ use std::io;
 
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::ToSocketAddrs;
 
 use bytes::{Bytes, BytesMut};
@@ -38,6 +38,7 @@ use futures_ex::StreamEx;
 use net::arrow::proto::codec::RawCodec;
 use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
+use net::arrow::proto::msg::control::ControlMessage;
 
 const INPUT_BUFFER_LIMIT: usize  = 32768;
 const OUTPUT_BUFFER_LIMIT: usize = 4 * 1024 * 1024 * 1024;
@@ -226,7 +227,8 @@ impl SessionContext {
 
 /// Arrow session (i.e. connection to an external service).
 struct Session {
-    context: Rc<RefCell<SessionContext>>,
+    service_id: u16,
+    context:    Rc<RefCell<SessionContext>>,
 }
 
 impl Session {
@@ -235,7 +237,8 @@ impl Session {
         let context = SessionContext::new(service_id, session_id);
 
         Session {
-            context: Rc::new(RefCell::new(context))
+            service_id: service_id,
+            context:    Rc::new(RefCell::new(context))
         }
     }
 
@@ -333,16 +336,18 @@ impl SessionErrorHandler {
 
 /// Arrow session manager.
 pub struct SessionManager {
-    tc_handle: TokioCoreHandle,
-    sessions:  HashMap<u32, Session>,
+    tc_handle:  TokioCoreHandle,
+    sessions:   HashMap<u32, Session>,
+    poll_order: VecDeque<u32>,
 }
 
 impl SessionManager {
     /// Create a new session manager.
     pub fn new(tc_handle: TokioCoreHandle) -> SessionManager {
         SessionManager {
-            tc_handle: tc_handle,
-            sessions:  HashMap::new(),
+            tc_handle:  tc_handle,
+            sessions:   HashMap::new(),
+            poll_order: VecDeque::new(),
         }
     }
 
@@ -369,6 +374,8 @@ impl SessionManager {
             self.sessions.insert(
                 session_id,
                 session);
+
+            self.poll_order.push_back(session_id);
         }
 
         let session = self.sessions.get_mut(&session_id);
@@ -382,6 +389,7 @@ impl SessionManager {
         &mut self,
         service_id: u16,
         session_id: u32) -> Result<Session, ArrowError> {
+        // TODO: log session connect
         // TODO: get address of a given service
         let addr = "127.0.0.1:80";
         let addr = addr.to_socket_addrs()?
@@ -413,6 +421,24 @@ impl SessionManager {
 
         Ok(session)
     }
+
+    /// Create a new HUP message.
+    fn create_hup_message(
+        &mut self,
+        service_id: u16,
+        session_id: u32,
+        error_code: u32) -> ArrowMessage {
+        // TODO: we need a reliable way how to get the next control message ID
+        let control_msg_id = 0;
+
+        ArrowMessage::new(
+            service_id,
+            session_id,
+            ControlMessage::hup(
+                control_msg_id,
+                session_id,
+                error_code))
+    }
 }
 
 impl Stream for SessionManager {
@@ -420,7 +446,51 @@ impl Stream for SessionManager {
     type Error = ArrowError;
 
     fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
-        // TODO
+        let mut count = self.poll_order.len();
+
+        while count > 0 {
+            if let Some(session_id) = self.poll_order.pop_front() {
+                if let Some(mut session) = self.sessions.remove(&session_id) {
+                    let service_id = session.service_id;
+
+                    match session.take() {
+                        Ok(Async::NotReady) => {
+                            self.sessions.insert(session_id, session);
+                            self.poll_order.push_back(session_id);
+                        },
+                        Ok(Async::Ready(None)) => {
+                            // TODO: log session close
+
+                            let msg = self.create_hup_message(
+                                service_id,
+                                session_id,
+                                0);
+
+                            return Ok(Async::Ready(Some(msg)))
+                        },
+                        Ok(Async::Ready(Some(msg))) => {
+                            self.sessions.insert(session_id, session);
+                            self.poll_order.push_back(session_id);
+
+                            return Ok(Async::Ready(Some(msg)))
+                        },
+                        Err(err) => {
+                            // TODO: log session error
+
+                            let msg = self.create_hup_message(
+                                service_id,
+                                session_id,
+                                0x03);
+
+                            return Ok(Async::Ready(Some(msg)))
+                        },
+                    }
+                }
+            }
+
+            count -= 1;
+        }
+
         Ok(Async::NotReady)
     }
 }

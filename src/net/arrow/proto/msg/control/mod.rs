@@ -200,6 +200,16 @@ impl ControlMessage {
         ControlMessage::new(msg_id, ControlMessageType::ACK, AckMessage::new(err))
     }
 
+    /// Create a new HUP Control Protocol message.
+    pub fn hup(msg_id: u16, session_id: u32, error_code: u32) -> ControlMessage {
+        ControlMessage::new(
+            msg_id,
+            ControlMessageType::HUP,
+            HupMessage::new(
+                session_id,
+                error_code))
+    }
+
     /// Create a new Control Protocol message.
     fn new<B>(msg_id: u16, msg_type: ControlMessageType, body: B) -> ControlMessage
         where B: ControlMessageBody + 'static {
