@@ -355,7 +355,7 @@ impl SessionManager {
     /// session (as specified by the message). The method returns an error
     /// if the session could not be created for some reason.
     pub fn send(&mut self, msg: ArrowMessage) -> Result<(), ArrowError> {
-        let header = *msg.header();
+        let header = msg.header();
 
         self.get_session_mut(header.service, header.session)?
             .push(msg);

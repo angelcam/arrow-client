@@ -220,8 +220,8 @@ impl ControlMessage {
     }
 
     /// Get reference to the message header.
-    pub fn header(&self) -> &ControlMessageHeader {
-        &self.header
+    pub fn header(&self) -> ControlMessageHeader {
+        self.header
     }
 
     /// Get reference to the message body or None if the type of the message body does not match

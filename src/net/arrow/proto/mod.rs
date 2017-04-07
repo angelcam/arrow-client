@@ -82,7 +82,7 @@ impl ArrowClient {
         let msg = ControlMessage::from_bytes(msg.payload())?
             .expect("unable to decode an Arrow Control Protocol message");
 
-        let header = *msg.header();
+        let header = msg.header();
 
         match header.message_type() {
             ControlMessageType::ACK             => self.process_ack_message(msg),
@@ -172,7 +172,7 @@ impl Sink for ArrowClient {
             return Ok(AsyncSink::Ready)
         }
 
-        let header = *msg.header();
+        let header = msg.header();
 
         if header.service == 0 {
             self.process_control_protocol_message(msg)?;

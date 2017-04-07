@@ -131,8 +131,8 @@ impl ArrowMessage {
     }
 
     /// Get reference to the message header.
-    pub fn header(&self) -> &ArrowMessageHeader {
-        &self.header
+    pub fn header(&self) -> ArrowMessageHeader {
+        self.header
     }
 
     /// Get encoded message body.
