@@ -69,12 +69,15 @@ impl<T, U> Pipe<T, U>
     }
 
     fn feed_sink(&mut self) -> Poll<(), U::SinkError> {
-        loop {
-            match try!(self.poll_stream_item()) {
-                Async::Ready(Some(item)) => try_ready!(self.try_start_send(item)),
-                Async::Ready(None)       => return self.sink.close(),
-                Async::NotReady          => return self.sink.poll_complete()
-            }
+        match try!(self.poll_stream_item()) {
+            Async::Ready(Some(item)) => self.try_start_send(item),
+            Async::Ready(None)       => self.sink.close(),
+            // NOTE: we MUST return NotReady here even if the poll_complete()
+            // returns ready (otherwise the stream could end up in an infinite
+            // loop)
+            Async::NotReady =>
+                self.sink.poll_complete()
+                    .map(|_| Async::NotReady),
         }
     }
 }
@@ -89,10 +92,15 @@ impl<T, U> Stream for Pipe<T, U>
     type Error = U::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        // feed the internal sink
-        try!(self.feed_sink());
+        loop {
+            // try to poll the output stream at first
+            match try!(self.sink.poll()) {
+                Async::Ready(ready) => return Ok(Async::Ready(ready)),
+                Async::NotReady     => (),
+            }
 
-        // retrieve the next item from the sink stream
-        self.sink.poll()
+            // if it's not ready, try to feed the sink
+            try_ready!(self.feed_sink());
+        }
     }
 }
