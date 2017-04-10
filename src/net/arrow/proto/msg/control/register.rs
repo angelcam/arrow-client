@@ -21,7 +21,7 @@ use utils;
 use net::arrow::proto::codec::Encode;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
-use net::arrow::proto::msg::control::svc_table::ServiceTable;
+use net::arrow::proto::msg::control::svc_table::SimpleServiceTable;
 
 /// REGISTER message header.
 #[repr(packed)]
@@ -40,7 +40,7 @@ impl Encode for RegisterMessageHeader {
 /// REGISTER message.
 pub struct RegisterMessage {
     header:    RegisterMessageHeader,
-    svc_table: ServiceTable,
+    svc_table: SimpleServiceTable,
 }
 
 impl Encode for RegisterMessage {

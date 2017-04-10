@@ -14,6 +14,7 @@
 
 use std::mem;
 
+use std::iter::FromIterator;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use bytes::BytesMut;
@@ -287,26 +288,39 @@ impl MessageBody for Service {
     }
 }
 
-/// Arrow Control Protocol service table.
-pub struct ServiceTable {
+/// Common trait for service table implementations.
+pub trait ServiceTable {
+    /// Get service with a given ID.
+    fn get(&self, id: u16) -> Option<&Service>;
+}
+
+/// Simple service table implementation.
+pub struct SimpleServiceTable {
     services: Vec<Service>,
 }
 
-impl ServiceTable {
-    /// Create a new service table.
-    pub fn new() -> ServiceTable {
-        ServiceTable {
-            services: Vec::new()
+impl<I> From<I> for SimpleServiceTable
+    where I: IntoIterator<Item=Service> {
+    fn from(services: I) -> SimpleServiceTable {
+        SimpleServiceTable {
+            services: Vec::from_iter(services),
         }
-    }
-
-    /// Add a given service.
-    pub fn add(&mut self, service: Service) {
-        self.services.push(service)
     }
 }
 
-impl Encode for ServiceTable {
+impl ServiceTable for SimpleServiceTable {
+    fn get(&self, id: u16) -> Option<&Service> {
+        for svc in &self.services {
+            if id == svc.id() {
+                return Some(svc)
+            }
+        }
+
+        None
+    }
+}
+
+impl Encode for SimpleServiceTable {
     fn encode(&self, buf: &mut BytesMut) {
         for svc in &self.services {
             svc.encode(buf);
@@ -317,7 +331,7 @@ impl Encode for ServiceTable {
     }
 }
 
-impl MessageBody for ServiceTable {
+impl MessageBody for SimpleServiceTable {
     fn len(&self) -> usize {
         let mut len = 0;
 

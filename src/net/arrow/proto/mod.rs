@@ -43,6 +43,8 @@ use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
 use net::arrow::proto::msg::control::{ControlMessage, ControlMessageType, RedirectMessage};
 
+pub use net::arrow::proto::msg::control::svc_table::{Service, ServiceTable};
+
 /// Currently supported version of the Arrow protocol.
 pub const ARROW_PROTOCOL_VERSION: u8 = 1;
 

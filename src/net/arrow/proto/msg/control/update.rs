@@ -17,11 +17,11 @@ use bytes::BytesMut;
 use net::arrow::proto::codec::Encode;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
-use net::arrow::proto::msg::control::svc_table::ServiceTable;
+use net::arrow::proto::msg::control::svc_table::SimpleServiceTable;
 
 /// UPDATE message.
 pub struct UpdateMessage {
-    svc_table: ServiceTable,
+    svc_table: SimpleServiceTable,
 }
 
 impl Encode for UpdateMessage {

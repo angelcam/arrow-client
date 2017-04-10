@@ -35,7 +35,7 @@ use tokio_io::AsyncRead;
 
 use futures_ex::StreamEx;
 
-use net::arrow::proto::ControlMessageFactory;
+use net::arrow::proto::{ControlMessageFactory, ServiceTable};
 use net::arrow::proto::codec::RawCodec;
 use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
@@ -335,6 +335,7 @@ impl SessionErrorHandler {
 /// Arrow session manager.
 pub struct SessionManager {
     tc_handle:    TokioCoreHandle,
+    svc_table:    Box<ServiceTable>,
     cmsg_factory: ControlMessageFactory,
     cmsg_queue:   VecDeque<ArrowMessage>,
     sessions:     HashMap<u32, Session>,
@@ -343,11 +344,14 @@ pub struct SessionManager {
 
 impl SessionManager {
     /// Create a new session manager.
-    pub fn new(
+    pub fn new<T>(
         tc_handle: TokioCoreHandle,
-        cmsg_factory: ControlMessageFactory) -> SessionManager {
+        svc_table: T,
+        cmsg_factory: ControlMessageFactory) -> SessionManager
+        where T: 'static + ServiceTable {
         SessionManager {
             tc_handle:    tc_handle,
+            svc_table:    Box::new(svc_table),
             cmsg_factory: cmsg_factory,
             cmsg_queue:   VecDeque::new(),
             sessions:     HashMap::new(),
@@ -405,11 +409,12 @@ impl SessionManager {
         service_id: u16,
         session_id: u32) -> Result<Session, ArrowError> {
         // TODO: log session connect
-        // TODO: get address of a given service
-        let addr = "127.0.0.1:80";
-        let addr = addr.to_socket_addrs()?
-            .next()
-            .ok_or(io::Error::new(io::ErrorKind::Other, "unable to resolve a given address"))?;
+
+        let svc = self.svc_table.get(service_id)
+            .ok_or(ArrowError::from("unknown service ID"))?;
+
+        let addr = svc.address()
+            .ok_or(ArrowError::from("there is no address for a given service"))?;
 
         let session = Session::new(service_id, session_id);
         let transport = session.transport();
