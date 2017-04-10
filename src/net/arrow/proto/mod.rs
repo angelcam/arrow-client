@@ -42,23 +42,44 @@ use net::arrow::proto::codec::{ArrowCodec, FromBytes};
 use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
 use net::arrow::proto::msg::control::{
+    ACK_NO_ERROR,
+    ACK_UNSUPPORTED_PROTOCOL_VERSION,
+    ACK_UNAUTHORIZED,
+    ACK_INTERNAL_SERVER_ERROR,
+
+    AckMessage,
     ControlMessage,
     ControlMessageType,
     HupMessage,
-    RedirectMessage};
+    RedirectMessage
+};
 use net::arrow::proto::session::SessionManager;
+use net::utils::Timeout;
 
 pub use net::arrow::proto::msg::control::svc_table::{Service, ServiceTable};
 
 /// Currently supported version of the Arrow protocol.
 pub const ARROW_PROTOCOL_VERSION: u8 = 1;
 
+const ACK_TIMEOUT: u64 = 20000;
+
+/// Arrow Protocol states.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum ProtocolState {
+    Handshake,
+    Established
+}
+
 /// Arrow Client implementation.
 struct ArrowClient {
-    cmsg_factory: ControlMessageFactory,
-    sessions:     SessionManager,
-    messages:     VecDeque<ArrowMessage>,
-    redirect:     Option<String>,
+    tc_handle:     TokioCoreHandle,
+    cmsg_factory:  ControlMessageFactory,
+    sessions:      SessionManager,
+    messages:      VecDeque<ArrowMessage>,
+    expected_acks: VecDeque<u16>,
+    ack_timeout:   Timeout,
+    state:         ProtocolState,
+    redirect:      Option<String>,
 }
 
 impl ArrowClient {
@@ -67,15 +88,23 @@ impl ArrowClient {
         where T: 'static + ServiceTable {
         let cmsg_factory = ControlMessageFactory::new();
         let session_manager = SessionManager::new(
-            tc_handle,
+            tc_handle.clone(),
             svc_table,
             cmsg_factory.clone());
 
+        let messages = VecDeque::new();
+
+        // TODO: add REGISTER message into the message queue
+
         ArrowClient {
-            cmsg_factory: cmsg_factory,
-            sessions:     session_manager,
-            messages:     VecDeque::new(),
-            redirect:     None,
+            tc_handle:     tc_handle,
+            cmsg_factory:  cmsg_factory,
+            sessions:      session_manager,
+            messages:      messages,
+            expected_acks: VecDeque::new(),
+            ack_timeout:   Timeout::new(),
+            state:         ProtocolState::Handshake,
+            redirect:      None,
         }
     }
 
@@ -118,9 +147,61 @@ impl ArrowClient {
     }
 
     /// Process a given ACK message.
-    fn process_ack_message(&mut self, _: ControlMessage) -> Result<(), ArrowError> {
-        // TODO
-        Ok(())
+    fn process_ack_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
+        let header = msg.header();
+
+        let expected_ack = self.expected_acks.pop_front();
+
+        if self.expected_acks.is_empty() {
+            self.ack_timeout.clear();
+        } else {
+            self.ack_timeout.set(ACK_TIMEOUT);
+        }
+
+        if let Some(expected_ack) = expected_ack {
+            if header.msg_id == expected_ack {
+                if self.state == ProtocolState::Handshake {
+                    self.process_handshake_ack(msg)
+                } else {
+                    Ok(())
+                }
+            } else {
+                Err(ArrowError::from("unexpected ACK message ID"))
+            }
+        } else {
+            Err(ArrowError::from("no ACK message expected"))
+        }
+    }
+
+    /// Process handshake ACK.
+    fn process_handshake_ack(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
+        let ack = msg.body::<AckMessage>()
+            .expect("ACK message expected");
+
+        if ack.err == ACK_NO_ERROR {
+            // switch the protocol state into normal operation
+            self.state = ProtocolState::Established;
+
+            // TODO: spawn job for periodical sending of UPDATE messages
+            // TODO: spawn job for periodical sending of PING messages
+            // TODO: get the diagnostic mode state
+            let diagnostic_mode = false;
+
+            // report a fake redirect in case of the diagnostic mode
+            if diagnostic_mode {
+                self.redirect = Some(String::new());
+            }
+
+            Ok(())
+        } else if ack.err == ACK_UNAUTHORIZED {
+            Err(ArrowError::from("Arrow REGISTER failed (unauthorized)"))
+        } else if ack.err == ACK_UNSUPPORTED_PROTOCOL_VERSION {
+            Err(ArrowError::from("Arrow REGISTER failed (unsupported version of the Arrow Protocol)"))
+        } else if ack.err == ACK_INTERNAL_SERVER_ERROR {
+            Err(ArrowError::from("Arrow REGISTER failed (internal server error)"))
+        } else {
+            Err(ArrowError::from("Arrow REGISTER failed (unknown error)"))
+        }
     }
 
     /// Process a given PING message.
@@ -181,6 +262,10 @@ impl ArrowClient {
 
     /// Process a given service request message.
     fn process_service_request_message(&mut self, msg: ArrowMessage) -> Result<(), ArrowError> {
+        if self.state != ProtocolState::Established {
+            return Err(ArrowError::from("cannot handle service requests in the Handshake state"))
+        }
+
         self.sessions.send(msg);
 
         Ok(())

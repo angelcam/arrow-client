@@ -23,6 +23,13 @@ use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
 use net::arrow::proto::error::DecodeError;
 
+pub const ACK_NO_ERROR:                     u32 = 0x00000000;
+pub const ACK_UNSUPPORTED_PROTOCOL_VERSION: u32 = 0x00000001;
+pub const ACK_UNAUTHORIZED:                 u32 = 0x00000002;
+pub const ACK_CONNECTION_ERROR:             u32 = 0x00000003;
+pub const ACK_UNSUPPORTED_METHOD:           u32 = 0x00000004;
+pub const ACK_INTERNAL_SERVER_ERROR:        u32 = 0xffffffff;
+
 /// ACK message.
 #[repr(packed)]
 pub struct AckMessage {

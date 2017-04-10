@@ -39,12 +39,14 @@ pub use self::hup::HupMessage;
 pub use self::redirect::RedirectMessage;
 
 // ACK codes
-pub const ACK_NO_ERROR:                     u32 = 0x00000000;
-pub const ACK_UNSUPPORTED_PROTOCOL_VERSION: u32 = 0x00000001;
-pub const ACK_UNAUTHORIZED:                 u32 = 0x00000002;
-pub const ACK_CONNECTION_ERROR:             u32 = 0x00000003;
-pub const ACK_UNSUPPORTED_METHOD:           u32 = 0x00000004;
-pub const ACK_INTERNAL_SERVER_ERROR:        u32 = 0xffffffff;
+pub use self::ack::{
+    ACK_NO_ERROR,
+    ACK_UNSUPPORTED_PROTOCOL_VERSION,
+    ACK_UNAUTHORIZED,
+    ACK_CONNECTION_ERROR,
+    ACK_UNSUPPORTED_METHOD,
+    ACK_INTERNAL_SERVER_ERROR,
+};
 
 // message type constants
 const CMSG_ACK:             u16 = 0x0000;
