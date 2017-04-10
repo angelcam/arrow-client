@@ -41,7 +41,11 @@ use futures_ex::StreamEx;
 use net::arrow::proto::codec::{ArrowCodec, FromBytes};
 use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
-use net::arrow::proto::msg::control::{ControlMessage, ControlMessageType, RedirectMessage};
+use net::arrow::proto::msg::control::{
+    ControlMessage,
+    ControlMessageType,
+    HupMessage,
+    RedirectMessage};
 use net::arrow::proto::session::SessionManager;
 
 pub use net::arrow::proto::msg::control::svc_table::{Service, ServiceTable};
@@ -130,8 +134,14 @@ impl ArrowClient {
     }
 
     /// Process a given HUP message.
-    fn process_hup_message(&mut self, _: ControlMessage) -> Result<(), ArrowError> {
-        // TODO
+    fn process_hup_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
+        let hup = msg.body::<HupMessage>()
+            .expect("HUP message expected");
+
+        self.sessions.close(
+            hup.session_id,
+            hup.error_code);
+
         Ok(())
     }
 

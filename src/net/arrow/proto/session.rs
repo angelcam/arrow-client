@@ -384,6 +384,15 @@ impl SessionManager {
         }
     }
 
+    /// Close a given session.
+    pub fn close(&mut self, session_id: u32, error_code: u32) {
+        if let Some(mut session) = self.sessions.remove(&session_id) {
+            // TODO: log session close
+
+            session.close();
+        }
+    }
+
     /// Take a given session object.
     fn take_session(
         &mut self,
