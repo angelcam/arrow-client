@@ -25,6 +25,7 @@ use utils::AsAny;
 use net::arrow::proto::ARROW_PROTOCOL_VERSION;
 use net::arrow::proto::codec::{FromBytes, Decode, Encode};
 use net::arrow::proto::error::DecodeError;
+use net::arrow::proto::msg::control::ControlMessage;
 
 /// Common trait for message body types.
 pub trait MessageBody : Encode {
@@ -138,6 +139,12 @@ impl ArrowMessage {
     /// Get encoded message body.
     pub fn payload(&self) -> &[u8] {
         self.payload.as_ref()
+    }
+}
+
+impl From<ControlMessage> for ArrowMessage {
+    fn from(cmsg: ControlMessage) -> ArrowMessage {
+        ArrowMessage::new(0, 0, cmsg)
     }
 }
 

@@ -35,10 +35,10 @@ use tokio_io::AsyncRead;
 
 use futures_ex::StreamEx;
 
+use net::arrow::proto::ControlMessageFactory;
 use net::arrow::proto::codec::RawCodec;
 use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
-use net::arrow::proto::msg::control::ControlMessage;
 
 const INPUT_BUFFER_LIMIT: usize  = 32768;
 const OUTPUT_BUFFER_LIMIT: usize = 4 * 1024 * 1024 * 1024;
@@ -227,8 +227,7 @@ impl SessionContext {
 
 /// Arrow session (i.e. connection to an external service).
 struct Session {
-    service_id: u16,
-    context:    Rc<RefCell<SessionContext>>,
+    context: Rc<RefCell<SessionContext>>,
 }
 
 impl Session {
@@ -237,8 +236,7 @@ impl Session {
         let context = SessionContext::new(service_id, session_id);
 
         Session {
-            service_id: service_id,
-            context:    Rc::new(RefCell::new(context))
+            context: Rc::new(RefCell::new(context))
         }
     }
 
@@ -336,38 +334,55 @@ impl SessionErrorHandler {
 
 /// Arrow session manager.
 pub struct SessionManager {
-    tc_handle:  TokioCoreHandle,
-    sessions:   HashMap<u32, Session>,
-    poll_order: VecDeque<u32>,
+    tc_handle:    TokioCoreHandle,
+    cmsg_factory: ControlMessageFactory,
+    cmsg_queue:   VecDeque<ArrowMessage>,
+    sessions:     HashMap<u32, Session>,
+    poll_order:   VecDeque<u32>,
 }
 
 impl SessionManager {
     /// Create a new session manager.
-    pub fn new(tc_handle: TokioCoreHandle) -> SessionManager {
+    pub fn new(
+        tc_handle: TokioCoreHandle,
+        cmsg_factory: ControlMessageFactory) -> SessionManager {
         SessionManager {
-            tc_handle:  tc_handle,
-            sessions:   HashMap::new(),
-            poll_order: VecDeque::new(),
+            tc_handle:    tc_handle,
+            cmsg_factory: cmsg_factory,
+            cmsg_queue:   VecDeque::new(),
+            sessions:     HashMap::new(),
+            poll_order:   VecDeque::new(),
         }
     }
 
     /// Send a given Arrow Message to the corresponding service using a given
-    /// session (as specified by the message). The method returns an error
-    /// if the session could not be created for some reason.
-    pub fn send(&mut self, msg: ArrowMessage) -> Result<(), ArrowError> {
+    /// session (as specified by the message).
+    pub fn send(&mut self, msg: ArrowMessage) {
         let header = msg.header();
 
-        self.get_session_mut(header.service, header.session)?
-            .push(msg);
+        let session = self.take_session(
+            header.service,
+            header.session);
 
-        Ok(())
+        if let Ok(mut session) = session {
+            session.push(msg);
+
+            self.sessions.insert(
+                header.session,
+                session);
+        } else {
+            self.cmsg_queue.push_back(
+                self.cmsg_factory.hup(
+                    header.session,
+                    0x03));
+        }
     }
 
-    /// Get mutable reference to a given session.
-    fn get_session_mut(
+    /// Take a given session object.
+    fn take_session(
         &mut self,
         service_id: u16,
-        session_id: u32) -> Result<&mut Session, ArrowError> {
+        session_id: u32) -> Result<Session, ArrowError> {
         if !self.sessions.contains_key(&session_id) {
             let session = self.connect(service_id, session_id)?;
 
@@ -378,7 +393,7 @@ impl SessionManager {
             self.poll_order.push_back(session_id);
         }
 
-        let session = self.sessions.get_mut(&session_id);
+        let session = self.sessions.remove(&session_id);
 
         Ok(session.unwrap())
     }
@@ -421,24 +436,6 @@ impl SessionManager {
 
         Ok(session)
     }
-
-    /// Create a new HUP message.
-    fn create_hup_message(
-        &mut self,
-        service_id: u16,
-        session_id: u32,
-        error_code: u32) -> ArrowMessage {
-        // TODO: we need a reliable way how to get the next control message ID
-        let control_msg_id = 0;
-
-        ArrowMessage::new(
-            service_id,
-            session_id,
-            ControlMessage::hup(
-                control_msg_id,
-                session_id,
-                error_code))
-    }
 }
 
 impl Stream for SessionManager {
@@ -446,13 +443,15 @@ impl Stream for SessionManager {
     type Error = ArrowError;
 
     fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
+        if let Some(msg) = self.cmsg_queue.pop_front() {
+            return Ok(Async::Ready(Some(msg)))
+        }
+
         let mut count = self.poll_order.len();
 
         while count > 0 {
             if let Some(session_id) = self.poll_order.pop_front() {
                 if let Some(mut session) = self.sessions.remove(&session_id) {
-                    let service_id = session.service_id;
-
                     match session.take() {
                         Ok(Async::NotReady) => {
                             self.sessions.insert(session_id, session);
@@ -461,10 +460,9 @@ impl Stream for SessionManager {
                         Ok(Async::Ready(None)) => {
                             // TODO: log session close
 
-                            let msg = self.create_hup_message(
-                                service_id,
+                            let msg = self.cmsg_factory.hup(
                                 session_id,
-                                0);
+                                0x00);
 
                             return Ok(Async::Ready(Some(msg)))
                         },
@@ -477,8 +475,7 @@ impl Stream for SessionManager {
                         Err(err) => {
                             // TODO: log session error
 
-                            let msg = self.create_hup_message(
-                                service_id,
+                            let msg = self.cmsg_factory.hup(
                                 session_id,
                                 0x03);
 
