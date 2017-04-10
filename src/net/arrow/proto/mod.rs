@@ -42,6 +42,7 @@ use net::arrow::proto::codec::{ArrowCodec, FromBytes};
 use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
 use net::arrow::proto::msg::control::{ControlMessage, ControlMessageType, RedirectMessage};
+use net::arrow::proto::session::SessionManager;
 
 pub use net::arrow::proto::msg::control::svc_table::{Service, ServiceTable};
 
@@ -50,18 +51,27 @@ pub const ARROW_PROTOCOL_VERSION: u8 = 1;
 
 /// Arrow Client implementation.
 struct ArrowClient {
-    tc_handle: TokioCoreHandle,
-    messages:  VecDeque<ArrowMessage>,
-    redirect:  Option<String>,
+    cmsg_factory: ControlMessageFactory,
+    sessions:     SessionManager,
+    messages:     VecDeque<ArrowMessage>,
+    redirect:     Option<String>,
 }
 
 impl ArrowClient {
     /// Create a new Arrow Client.
-    fn new(tc_handle: TokioCoreHandle) -> ArrowClient {
+    fn new<T>(tc_handle: TokioCoreHandle, svc_table: T) -> ArrowClient
+        where T: 'static + ServiceTable {
+        let cmsg_factory = ControlMessageFactory::new();
+        let session_manager = SessionManager::new(
+            tc_handle,
+            svc_table,
+            cmsg_factory.clone());
+
         ArrowClient {
-            tc_handle: tc_handle,
-            messages:  VecDeque::new(),
-            redirect:  None,
+            cmsg_factory: cmsg_factory,
+            sessions:     session_manager,
+            messages:     VecDeque::new(),
+            redirect:     None,
         }
     }
 
@@ -77,7 +87,7 @@ impl ArrowClient {
     }
 
     /// Insert a given Control Protocol message into the output message queue.
-    fn send_control_protocol_message(&mut self, msg: ControlMessage) {
+    fn send_control_message(&mut self, msg: ControlMessage) {
         self.messages.push_back(ArrowMessage::new(0, 0, msg))
     }
 
@@ -113,7 +123,7 @@ impl ArrowClient {
     fn process_ping_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
         let header = msg.header();
 
-        self.send_control_protocol_message(
+        self.send_control_message(
             ControlMessage::ack(header.msg_id, 0));
 
         Ok(())
@@ -160,8 +170,9 @@ impl ArrowClient {
     }
 
     /// Process a given service request message.
-    fn process_service_request_message(&mut self, _: ArrowMessage) -> Result<(), ArrowError> {
-        // TODO
+    fn process_service_request_message(&mut self, msg: ArrowMessage) -> Result<(), ArrowError> {
+        self.sessions.send(msg);
+
         Ok(())
     }
 }
@@ -202,41 +213,9 @@ impl Stream for ArrowClient {
         } else if let Some(msg) = self.messages.pop_front() {
             Ok(Async::Ready(Some(msg)))
         } else {
-            Ok(Async::NotReady)
+            self.sessions.poll()
         }
     }
-}
-
-/// Connect Arrow Client to a given address and return either a redirect address or an error.
-pub fn connect(addr: &str) -> Result<String, ArrowError> {
-    let mut core = TokioCore::new()?;
-
-    let addr = addr.to_socket_addrs()?
-        .next()
-        .ok_or(io::Error::new(io::ErrorKind::Other, "unable to resolve a given address"))?;
-
-    let aclient = ArrowClient::new(core.handle());
-
-    let client = TcpStream::connect(&addr, &core.handle())
-        .map_err(|err| ArrowError::from(err))
-        .and_then(|stream| {
-            let framed = stream.framed(ArrowCodec);
-            let (sink, stream) = framed.split();
-
-            let messages = stream.pipe(aclient);
-
-            sink.send_all(messages)
-                .and_then(|(_, pipe)| {
-                    let (_, _, context) = pipe.unpipe();
-                    let redirect = context.get_redirect()
-                        .expect("connection closed, redirect expected")
-                        .to_string();
-
-                    Ok(redirect)
-                })
-        });
-
-    core.run(client)
 }
 
 /// Control Protocol message factory with shared message ID counter.
@@ -278,4 +257,37 @@ impl ControlMessageFactory {
                 session_id,
                 error_code))
     }
+}
+
+/// Connect Arrow Client to a given address and return either a redirect address or an error.
+pub fn connect<T>(addr: &str, svc_table: T) -> Result<String, ArrowError>
+    where T: 'static + ServiceTable {
+    let mut core = TokioCore::new()?;
+
+    let addr = addr.to_socket_addrs()?
+        .next()
+        .ok_or(io::Error::new(io::ErrorKind::Other, "unable to resolve a given address"))?;
+
+    let aclient = ArrowClient::new(core.handle(), svc_table);
+
+    let client = TcpStream::connect(&addr, &core.handle())
+        .map_err(|err| ArrowError::from(err))
+        .and_then(|stream| {
+            let framed = stream.framed(ArrowCodec);
+            let (sink, stream) = framed.split();
+
+            let messages = stream.pipe(aclient);
+
+            sink.send_all(messages)
+                .and_then(|(_, pipe)| {
+                    let (_, _, context) = pipe.unpipe();
+                    let redirect = context.get_redirect()
+                        .expect("connection closed, redirect expected")
+                        .to_string();
+
+                    Ok(redirect)
+                })
+        });
+
+    core.run(client)
 }

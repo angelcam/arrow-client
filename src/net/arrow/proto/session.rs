@@ -340,6 +340,7 @@ pub struct SessionManager {
     cmsg_queue:   VecDeque<ArrowMessage>,
     sessions:     HashMap<u32, Session>,
     poll_order:   VecDeque<u32>,
+    new_session:  Option<Task>,
 }
 
 impl SessionManager {
@@ -356,6 +357,7 @@ impl SessionManager {
             cmsg_queue:   VecDeque::new(),
             sessions:     HashMap::new(),
             poll_order:   VecDeque::new(),
+            new_session:  None,
         }
     }
 
@@ -395,6 +397,11 @@ impl SessionManager {
                 session);
 
             self.poll_order.push_back(session_id);
+
+            // unpark the message consuming task
+            if let Some(task) = self.new_session.take() {
+                task.unpark();
+            }
         }
 
         let session = self.sessions.remove(&session_id);
@@ -492,6 +499,10 @@ impl Stream for SessionManager {
 
             count -= 1;
         }
+
+        // the session manager needs to be re-polled in case there is a new
+        // session
+        self.new_session = Some(task::park());
 
         Ok(Async::NotReady)
     }
