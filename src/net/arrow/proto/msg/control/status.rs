@@ -30,6 +30,21 @@ pub struct StatusMessage {
     active_sessions: u32,
 }
 
+impl StatusMessage {
+    /// Create a new STATUS message for a given request ID, status flags and
+    /// number of active sessions.
+    pub fn new(
+        request_id: u16,
+        status_flags: u32,
+        active_sessions: u32) -> StatusMessage {
+        StatusMessage {
+            request_id:      request_id,
+            status_flags:    status_flags,
+            active_sessions: active_sessions,
+        }
+    }
+}
+
 impl Encode for StatusMessage {
     fn encode(&self, buf: &mut BytesMut) {
         let be_msg = StatusMessage {

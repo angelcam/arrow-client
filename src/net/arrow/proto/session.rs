@@ -360,6 +360,11 @@ impl SessionManager {
         }
     }
 
+    /// Get number of active sessions.
+    pub fn len(&self) -> usize {
+        self.sessions.len()
+    }
+
     /// Send a given Arrow Message to the corresponding service using a given
     /// session (as specified by the message).
     pub fn send(&mut self, msg: ArrowMessage) {

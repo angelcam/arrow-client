@@ -34,6 +34,8 @@ use net::arrow::proto::codec::{FromBytes, Encode};
 use net::arrow::proto::msg::{ArrowMessageBody, MessageBody};
 use net::arrow::proto::error::DecodeError;
 
+use self::status::StatusMessage;
+
 pub use self::ack::AckMessage;
 pub use self::hup::HupMessage;
 pub use self::redirect::RedirectMessage;
@@ -210,6 +212,21 @@ impl ControlMessage {
             HupMessage::new(
                 session_id,
                 error_code))
+    }
+
+    /// Create a new STATUS Control Protocol message.
+    pub fn status(
+        msg_id: u16,
+        request_id: u16,
+        status_flags: u32,
+        active_sessions: u32) -> ControlMessage {
+        ControlMessage::new(
+            msg_id,
+            ControlMessageType::STATUS,
+            StatusMessage::new(
+                request_id,
+                status_flags,
+                active_sessions))
     }
 
     /// Create a new Control Protocol message.

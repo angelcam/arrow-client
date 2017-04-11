@@ -261,8 +261,24 @@ impl<L, S> ArrowClient<L, S>
     }
 
     /// Process a given GET_STATUS message.
-    fn process_get_status_message(&mut self, _: ControlMessage) -> Result<(), ArrowError> {
-        // TODO
+    fn process_get_status_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
+        let header = msg.header();
+
+        let mut status_flags = 0;
+
+        // TODO: get application context
+        /*if self.app_context.is_scanning() {
+            status_flags |= STATUS_FLAG_SCAN;
+        }*/
+
+        log_debug!(self.logger, "sending a STATUS message...");
+
+        self.messages.push_back(
+            self.cmsg_factory.status(
+                header.msg_id,
+                status_flags,
+                self.sessions.len() as u32));
+
         Ok(())
     }
 
@@ -376,6 +392,21 @@ impl ControlMessageFactory {
                 self.next_id(),
                 session_id,
                 error_code))
+    }
+
+    /// Create a new STATUS message with a given request ID, flags and number
+    /// of active sessions.
+    pub fn status(
+        &mut self,
+        request_id: u16,
+        status_flags: u32,
+        active_sessions: u32) -> ArrowMessage {
+        ArrowMessage::from(
+            ControlMessage::status(
+                self.next_id(),
+                request_id,
+                status_flags,
+                active_sessions))
     }
 }
 
