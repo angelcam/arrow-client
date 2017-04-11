@@ -64,7 +64,7 @@ const CMSG_SCAN_REPORT:     u16 = 0x000b;
 
 /// Arrow Control Protocol message types.
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ControlMessageType {
     ACK,
     PING,

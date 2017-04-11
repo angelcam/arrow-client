@@ -56,10 +56,73 @@ impl<'a> From<&'a str> for DecodeError {
     }
 }
 
+/// Arrow error kinds.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum ErrorKind {
+    /// A problem with connecting to Arrow Server.
+    ConnectionError,
+    /// Arrow Server does not support this version of Arrow Protocol.
+    UnsupportedProtocolVersion,
+    /// Arrow Server does not know this client.
+    Unauthorized,
+    /// An internal Arrow Server error.
+    ArrowServerError,
+    /// Unspecified error.
+    Other,
+}
+
 /// Arrow Client error.
 #[derive(Debug, Clone)]
 pub struct ArrowError {
+    kind: ErrorKind,
     msg:  String,
+}
+
+impl ArrowError {
+    /// Create a new ArrowError with a given ErrorKind.
+    fn new<T>(kind: ErrorKind, val: T) -> ArrowError
+        where ArrowError: From<T> {
+        let err = ArrowError::from(val);
+        ArrowError {
+            kind: kind,
+            msg:  err.msg
+        }
+    }
+
+    /// Create a new connection error.
+    pub fn connection_error<T>(val: T) -> ArrowError
+        where ArrowError: From<T> {
+        ArrowError::new(ErrorKind::ConnectionError, val)
+    }
+
+    /// Create a new unsupported protocol version error.
+    pub fn unsupported_protocol_version<T>(val: T) -> ArrowError
+        where ArrowError: From<T> {
+        ArrowError::new(ErrorKind::UnsupportedProtocolVersion, val)
+    }
+
+    /// Create a new unauthorized error.
+    pub fn unauthorized<T>(val: T) -> ArrowError
+        where ArrowError: From<T> {
+        ArrowError::new(ErrorKind::Unauthorized, val)
+    }
+
+    /// Create a new Arrow Server error.
+    pub fn arrow_server_error<T>(val: T) -> ArrowError
+        where ArrowError: From<T> {
+        ArrowError::new(ErrorKind::ArrowServerError, val)
+    }
+
+    /// Create another error.
+    pub fn other<T>(val: T) -> ArrowError
+        where ArrowError: From<T> {
+        ArrowError::new(ErrorKind::Other, val)
+    }
+
+    /// Get error kind.
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
+    }
 }
 
 impl Error for ArrowError {
@@ -77,6 +140,7 @@ impl Display for ArrowError {
 impl From<String> for ArrowError {
     fn from(msg: String) -> ArrowError {
         ArrowError {
+            kind: ErrorKind::Other,
             msg:  msg
         }
     }

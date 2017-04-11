@@ -18,8 +18,6 @@ pub mod error;
 
 mod session;
 
-use std::io;
-
 use std::rc::Rc;
 use std::cell::Cell;
 use std::net::ToSocketAddrs;
@@ -167,8 +165,8 @@ impl<L, S> ArrowClient<L, S>
             ControlMessageType::RESET_SVC_TABLE => self.process_command(Command::ResetServiceTable),
             ControlMessageType::SCAN_NETWORK    => self.process_command(Command::ScanNetwork),
             ControlMessageType::UNKNOWN
-                => Err(ArrowError::from("unknow control message received")),
-            _   => Err(ArrowError::from("unexpected control message received")),
+                => Err(ArrowError::other(format!("unknow control message received"))),
+            mt  => Err(ArrowError::other(format!("unexpected control message received: {:?}", mt))),
         }
     }
 
@@ -192,10 +190,10 @@ impl<L, S> ArrowClient<L, S>
                     Ok(())
                 }
             } else {
-                Err(ArrowError::from("unexpected ACK message ID"))
+                Err(ArrowError::other("unexpected ACK message ID"))
             }
         } else {
-            Err(ArrowError::from("no ACK message expected"))
+            Err(ArrowError::other("no ACK message expected"))
         }
     }
 
@@ -220,13 +218,13 @@ impl<L, S> ArrowClient<L, S>
 
             Ok(())
         } else if ack.err == ACK_UNAUTHORIZED {
-            Err(ArrowError::from("Arrow REGISTER failed (unauthorized)"))
+            Err(ArrowError::unauthorized("Arrow REGISTER failed (unauthorized)"))
         } else if ack.err == ACK_UNSUPPORTED_PROTOCOL_VERSION {
-            Err(ArrowError::from("Arrow REGISTER failed (unsupported version of the Arrow Protocol)"))
+            Err(ArrowError::unsupported_protocol_version("Arrow REGISTER failed (unsupported version of the Arrow Protocol)"))
         } else if ack.err == ACK_INTERNAL_SERVER_ERROR {
-            Err(ArrowError::from("Arrow REGISTER failed (internal server error)"))
+            Err(ArrowError::arrow_server_error("Arrow REGISTER failed (internal server error)"))
         } else {
-            Err(ArrowError::from("Arrow REGISTER failed (unknown error)"))
+            Err(ArrowError::other("Arrow REGISTER failed (unknown error)"))
         }
     }
 
@@ -286,7 +284,7 @@ impl<L, S> ArrowClient<L, S>
     /// Process a given service request message.
     fn process_service_request_message(&mut self, msg: ArrowMessage) -> Result<(), ArrowError> {
         if self.state != ProtocolState::Established {
-            return Err(ArrowError::from("cannot handle service requests in the Handshake state"))
+            return Err(ArrowError::other("cannot handle service requests in the Handshake state"))
         }
 
         self.sessions.send(msg);
@@ -392,9 +390,10 @@ pub fn connect<L, S, T>(
           T: 'static + ServiceTable {
     let mut core = TokioCore::new()?;
 
-    let addr = addr.to_socket_addrs()?
+    let addr = addr.to_socket_addrs()
+        .map_err(|err| ArrowError::connection_error(err))?
         .next()
-        .ok_or(io::Error::new(io::ErrorKind::Other, "unable to resolve a given address"))?;
+        .ok_or(ArrowError::connection_error("unable to resolve a given address"))?;
 
     let aclient = ArrowClient::new(
         logger,
@@ -403,7 +402,7 @@ pub fn connect<L, S, T>(
         core.handle());
 
     let client = TcpStream::connect(&addr, &core.handle())
-        .map_err(|err| ArrowError::from(err))
+        .map_err(|err| ArrowError::connection_error(err))
         .and_then(|stream| {
             let framed = stream.framed(ArrowCodec);
             let (sink, stream) = framed.split();
