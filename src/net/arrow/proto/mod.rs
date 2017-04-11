@@ -49,12 +49,13 @@ use net::arrow::proto::msg::control::{
     ControlMessage,
     ControlMessageType,
     HupMessage,
-    RedirectMessage
+    RedirectMessage,
+
+    ServiceTable,
+    ScanReport,
 };
 use net::arrow::proto::session::SessionManager;
 use net::utils::Timeout;
-
-pub use net::arrow::proto::msg::control::svc_table::{Service, ServiceTable};
 
 use utils::logger::Logger;
 
@@ -283,8 +284,19 @@ impl<L, S> ArrowClient<L, S>
     }
 
     /// Process a given GET_SCAN_REPORT message.
-    fn process_get_scan_report_message(&mut self, _: ControlMessage) -> Result<(), ArrowError> {
-        // TODO
+    fn process_get_scan_report_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
+        let header = msg.header();
+
+        // TODO: get scan report from application context
+        let report = ScanReport::new();
+
+        log_debug!(self.logger, "sending a SCAN_REPORT message...");
+
+        self.messages.push_back(
+            self.cmsg_factory.scan_report(
+                header.msg_id,
+                report));
+
         Ok(())
     }
 
@@ -407,6 +419,18 @@ impl ControlMessageFactory {
                 request_id,
                 status_flags,
                 active_sessions))
+    }
+
+    /// Create a new SCAN_REPORT message for a given scan report.
+    pub fn scan_report(
+        &mut self,
+        request_id: u16,
+        report: ScanReport) -> ArrowMessage {
+        ArrowMessage::from(
+            ControlMessage::scan_report(
+                self.next_id(),
+                request_id,
+                report))
     }
 }
 

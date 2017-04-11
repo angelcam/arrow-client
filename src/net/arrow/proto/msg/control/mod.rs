@@ -35,10 +35,13 @@ use net::arrow::proto::msg::{ArrowMessageBody, MessageBody};
 use net::arrow::proto::error::DecodeError;
 
 use self::status::StatusMessage;
+use self::scan_report::ScanReportMessage;
 
 pub use self::ack::AckMessage;
 pub use self::hup::HupMessage;
 pub use self::redirect::RedirectMessage;
+pub use self::scan_report::ScanReport;
+pub use self::svc_table::{Service, ServiceTable};
 
 // ACK codes
 pub use self::ack::{
@@ -227,6 +230,19 @@ impl ControlMessage {
                 request_id,
                 status_flags,
                 active_sessions))
+    }
+
+    /// Create a new SCAN_REPORT Control Protocol message.
+    pub fn scan_report(
+        msg_id: u16,
+        request_id: u16,
+        report: ScanReport) -> ControlMessage {
+        ControlMessage::new(
+            msg_id,
+            ControlMessageType::SCAN_REPORT,
+            ScanReportMessage::new(
+                request_id,
+                report))
     }
 
     /// Create a new Control Protocol message.
