@@ -91,7 +91,7 @@ struct ArrowClient<L, S> {
     cmd_sender:    S,
     tc_handle:     TokioCoreHandle,
     cmsg_factory:  ControlMessageFactory,
-    sessions:      SessionManager,
+    sessions:      SessionManager<L>,
     messages:      VecDeque<ArrowMessage>,
     expected_acks: VecDeque<u16>,
     ack_timeout:   Timeout,
@@ -100,22 +100,25 @@ struct ArrowClient<L, S> {
 }
 
 impl<L, S> ArrowClient<L, S>
-    where L: Logger,
+    where L: Logger + Clone,
           S: Sender {
     /// Create a new Arrow Client.
     fn new<T>(
-        logger: L,
+        mut logger: L,
         cmd_sender: S,
         svc_table: T,
         tc_handle: TokioCoreHandle) -> ArrowClient<L, S>
         where T: 'static + ServiceTable {
         let cmsg_factory = ControlMessageFactory::new();
         let session_manager = SessionManager::new(
-            tc_handle.clone(),
+            logger.clone(),
             svc_table,
-            cmsg_factory.clone());
+            cmsg_factory.clone(),
+            tc_handle.clone());
 
         let messages = VecDeque::new();
+
+        log_debug!(logger, "sending REGISTER request...");
 
         // TODO: add REGISTER message into the message queue
 
@@ -132,7 +135,11 @@ impl<L, S> ArrowClient<L, S>
             redirect:      None,
         }
     }
+}
 
+impl<L, S> ArrowClient<L, S>
+    where L: Logger,
+          S: Sender {
     /// Get redirect address (if any).
     fn get_redirect(&self) -> Option<&str> {
         self.redirect.as_ref()
@@ -155,6 +162,8 @@ impl<L, S> ArrowClient<L, S>
             .expect("unable to decode an Arrow Control Protocol message");
 
         let header = msg.header();
+
+        log_debug!(self.logger, "received control message: {:?}", header.message_type());
 
         match header.message_type() {
             ControlMessageType::ACK             => self.process_ack_message(msg),
@@ -231,7 +240,13 @@ impl<L, S> ArrowClient<L, S>
 
     /// Process a given PING message.
     fn process_ping_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
+        if self.state != ProtocolState::Established {
+            return Err(ArrowError::other("cannot handle PING message in the Handshake state"))
+        }
+
         let header = msg.header();
+
+        log_debug!(self.logger, "sending an ACK message...");
 
         self.send_control_message(
             ControlMessage::ack(header.msg_id, 0));
@@ -241,6 +256,10 @@ impl<L, S> ArrowClient<L, S>
 
     /// Process a given HUP message.
     fn process_hup_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
+        if self.state != ProtocolState::Established {
+            return Err(ArrowError::other("cannot handle HUP message in the Handshake state"))
+        }
+
         let hup = msg.body::<HupMessage>()
             .expect("HUP message expected");
 
@@ -253,6 +272,10 @@ impl<L, S> ArrowClient<L, S>
 
     /// Process a given REDIRECT message.
     fn process_redirect_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
+        if self.state != ProtocolState::Established {
+            return Err(ArrowError::other("cannot handle REDIRECT message in the Handshake state"))
+        }
+
         let msg = msg.body::<RedirectMessage>()
             .expect("REDIRECT message expected");
 
@@ -263,6 +286,10 @@ impl<L, S> ArrowClient<L, S>
 
     /// Process a given GET_STATUS message.
     fn process_get_status_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
+        if self.state != ProtocolState::Established {
+            return Err(ArrowError::other("cannot handle GET_STATUS message in the Handshake state"))
+        }
+
         let header = msg.header();
 
         let mut status_flags = 0;
@@ -285,6 +312,10 @@ impl<L, S> ArrowClient<L, S>
 
     /// Process a given GET_SCAN_REPORT message.
     fn process_get_scan_report_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
+        if self.state != ProtocolState::Established {
+            return Err(ArrowError::other("cannot handle GET_SCAN_REPORT message in the Handshake state"))
+        }
+
         let header = msg.header();
 
         // TODO: get scan report from application context
@@ -302,6 +333,10 @@ impl<L, S> ArrowClient<L, S>
 
     /// Send a given command using the underlaying command channel.
     fn process_command(&mut self, cmd: Command) -> Result<(), ArrowError> {
+        if self.state != ProtocolState::Established {
+            return Err(ArrowError::other(format!("cannot handle the {:?} command in the Handshake state", cmd)))
+        }
+
         if let Err(cmd) = self.cmd_sender.send(cmd) {
             log_warn!(self.logger, "unable to process command {:?}", cmd);
         }
@@ -440,7 +475,7 @@ pub fn connect<L, S, T>(
     cmd_sender: S,
     svc_table: T,
     addr: &str) -> Result<String, ArrowError>
-    where L: Logger,
+    where L: Logger + Clone,
           S: Sender,
           T: 'static + ServiceTable {
     let mut core = TokioCore::new()?;

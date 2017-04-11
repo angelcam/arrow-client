@@ -16,6 +16,7 @@ use std::io;
 
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::error::Error;
 use std::collections::{HashMap, VecDeque};
 
 use bytes::{Bytes, BytesMut};
@@ -38,6 +39,8 @@ use net::arrow::proto::{ControlMessageFactory, ServiceTable};
 use net::arrow::proto::codec::RawCodec;
 use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
+
+use utils::logger::Logger;
 
 const INPUT_BUFFER_LIMIT: usize  = 32768;
 const OUTPUT_BUFFER_LIMIT: usize = 4 * 1024 * 1024 * 1024;
@@ -332,7 +335,8 @@ impl SessionErrorHandler {
 }
 
 /// Arrow session manager.
-pub struct SessionManager {
+pub struct SessionManager<L> {
+    logger:       L,
     tc_handle:    TokioCoreHandle,
     svc_table:    Box<ServiceTable>,
     cmsg_factory: ControlMessageFactory,
@@ -342,14 +346,17 @@ pub struct SessionManager {
     new_session:  Option<Task>,
 }
 
-impl SessionManager {
+impl<L> SessionManager<L>
+    where L: Logger {
     /// Create a new session manager.
     pub fn new<T>(
-        tc_handle: TokioCoreHandle,
+        logger: L,
         svc_table: T,
-        cmsg_factory: ControlMessageFactory) -> SessionManager
+        cmsg_factory: ControlMessageFactory,
+        tc_handle: TokioCoreHandle) -> SessionManager<L>
         where T: 'static + ServiceTable {
         SessionManager {
+            logger:       logger,
             tc_handle:    tc_handle,
             svc_table:    Box::new(svc_table),
             cmsg_factory: cmsg_factory,
@@ -380,19 +387,20 @@ impl SessionManager {
             self.sessions.insert(
                 header.session,
                 session);
-        } else {
-            self.cmsg_queue.push_back(
-                self.cmsg_factory.hup(
-                    header.session,
-                    0x03));
+        } else if let Err(err) = session {
+            log_warn!(self.logger, "unable to connect to a remote service: {}", err.description());
+
+            let msg = self.create_hup_message(
+                header.session,
+                0x03);
+
+            self.cmsg_queue.push_back(msg);
         }
     }
 
     /// Close a given session.
-    pub fn close(&mut self, session_id: u32, error_code: u32) {
+    pub fn close(&mut self, session_id: u32, _: u32) {
         if let Some(mut session) = self.sessions.remove(&session_id) {
-            // TODO: log session close
-
             session.close();
         }
     }
@@ -428,13 +436,13 @@ impl SessionManager {
         &mut self,
         service_id: u16,
         session_id: u32) -> Result<Session, ArrowError> {
-        // TODO: log session connect
-
         let svc = self.svc_table.get(service_id)
-            .ok_or(ArrowError::from("unknown service ID"))?;
+            .ok_or(ArrowError::other(format!("unknown service ID: {:04x}", service_id)))?;
 
         let addr = svc.address()
-            .ok_or(ArrowError::from("there is no address for a given service"))?;
+            .ok_or(ArrowError::other(format!("there is no address for a given service; service ID: {:04x}", service_id)))?;
+
+        log_info!(self.logger, "connecting to remote service: {}, service ID: {:04x}, session ID: {:08x}", addr, service_id, session_id);
 
         let session = Session::new(service_id, session_id);
         let transport = session.transport();
@@ -461,9 +469,22 @@ impl SessionManager {
 
         Ok(session)
     }
+
+    /// Create HUP message for a given session.
+    fn create_hup_message(
+        &mut self,
+        session_id: u32,
+        error_code: u32) -> ArrowMessage {
+        log_debug!(self.logger, "sending a HUP message (session ID: {:08x}, error_code: {:08x})...", session_id, error_code);
+
+        self.cmsg_factory.hup(
+            session_id,
+            error_code)
+    }
 }
 
-impl Stream for SessionManager {
+impl<L> Stream for SessionManager<L>
+    where L: Logger {
     type Item  = ArrowMessage;
     type Error = ArrowError;
 
@@ -483,9 +504,9 @@ impl Stream for SessionManager {
                             self.poll_order.push_back(session_id);
                         },
                         Ok(Async::Ready(None)) => {
-                            // TODO: log session close
+                            log_info!(self.logger, "service connection closed; session ID: {:08x}", session_id);
 
-                            let msg = self.cmsg_factory.hup(
+                            let msg = self.create_hup_message(
                                 session_id,
                                 0x00);
 
@@ -498,9 +519,9 @@ impl Stream for SessionManager {
                             return Ok(Async::Ready(Some(msg)))
                         },
                         Err(err) => {
-                            // TODO: log session error
+                            log_warn!(self.logger, "service connection error; session ID: {:08x}: {}", session_id, err.description());
 
-                            let msg = self.cmsg_factory.hup(
+                            let msg = self.create_hup_message(
                                 session_id,
                                 0x03);
 
