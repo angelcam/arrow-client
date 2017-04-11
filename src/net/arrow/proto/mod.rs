@@ -58,10 +58,26 @@ use net::utils::Timeout;
 
 pub use net::arrow::proto::msg::control::svc_table::{Service, ServiceTable};
 
+use utils::logger::Logger;
+
 /// Currently supported version of the Arrow protocol.
 pub const ARROW_PROTOCOL_VERSION: u8 = 1;
 
 const ACK_TIMEOUT: u64 = 20000;
+
+/// Commands that might be sent by the Arrow Client into a given command queue.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Command {
+    ResetServiceTable,
+    ScanNetwork,
+}
+
+/// Common trait for various implementations of command senders.
+pub trait Sender {
+    /// Send a given command or return the command back if the send operation
+    /// failed.
+    fn send(&self, cmd: Command) -> Result<(), Command>;
+}
 
 /// Arrow Protocol states.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -71,7 +87,9 @@ enum ProtocolState {
 }
 
 /// Arrow Client implementation.
-struct ArrowClient {
+struct ArrowClient<L, S> {
+    logger:        L,
+    cmd_sender:    S,
     tc_handle:     TokioCoreHandle,
     cmsg_factory:  ControlMessageFactory,
     sessions:      SessionManager,
@@ -82,9 +100,15 @@ struct ArrowClient {
     redirect:      Option<String>,
 }
 
-impl ArrowClient {
+impl<L, S> ArrowClient<L, S>
+    where L: Logger,
+          S: Sender {
     /// Create a new Arrow Client.
-    fn new<T>(tc_handle: TokioCoreHandle, svc_table: T) -> ArrowClient
+    fn new<T>(
+        logger: L,
+        cmd_sender: S,
+        svc_table: T,
+        tc_handle: TokioCoreHandle) -> ArrowClient<L, S>
         where T: 'static + ServiceTable {
         let cmsg_factory = ControlMessageFactory::new();
         let session_manager = SessionManager::new(
@@ -97,6 +121,8 @@ impl ArrowClient {
         // TODO: add REGISTER message into the message queue
 
         ArrowClient {
+            logger:        logger,
+            cmd_sender:    cmd_sender,
             tc_handle:     tc_handle,
             cmsg_factory:  cmsg_factory,
             sessions:      session_manager,
@@ -138,8 +164,8 @@ impl ArrowClient {
             ControlMessageType::REDIRECT        => self.process_redirect_message(msg),
             ControlMessageType::GET_STATUS      => self.process_get_status_message(msg),
             ControlMessageType::GET_SCAN_REPORT => self.process_get_scan_report_message(msg),
-            ControlMessageType::RESET_SVC_TABLE => self.process_reset_svc_table_message(msg),
-            ControlMessageType::SCAN_NETWORK    => self.process_scan_network_message(msg),
+            ControlMessageType::RESET_SVC_TABLE => self.process_command(Command::ResetServiceTable),
+            ControlMessageType::SCAN_NETWORK    => self.process_command(Command::ScanNetwork),
             ControlMessageType::UNKNOWN
                 => Err(ArrowError::from("unknow control message received")),
             _   => Err(ArrowError::from("unexpected control message received")),
@@ -248,15 +274,12 @@ impl ArrowClient {
         Ok(())
     }
 
-    /// Process a given RESET_SVC_TABLE message.
-    fn process_reset_svc_table_message(&mut self, _: ControlMessage) -> Result<(), ArrowError> {
-        // TODO
-        Ok(())
-    }
+    /// Send a given command using the underlaying command channel.
+    fn process_command(&mut self, cmd: Command) -> Result<(), ArrowError> {
+        if let Err(cmd) = self.cmd_sender.send(cmd) {
+            log_warn!(self.logger, "unable to process command {:?}", cmd);
+        }
 
-    /// Process a given SCAN_NETWORK message.
-    fn process_scan_network_message(&mut self, _: ControlMessage) -> Result<(), ArrowError> {
-        // TODO
         Ok(())
     }
 
@@ -272,7 +295,9 @@ impl ArrowClient {
     }
 }
 
-impl Sink for ArrowClient {
+impl<L, S> Sink for ArrowClient<L, S>
+    where L: Logger,
+          S: Sender {
     type SinkItem  = ArrowMessage;
     type SinkError = ArrowError;
 
@@ -298,7 +323,9 @@ impl Sink for ArrowClient {
     }
 }
 
-impl Stream for ArrowClient {
+impl<L, S> Stream for ArrowClient<L, S>
+    where L: Logger,
+          S: Sender {
     type Item  = ArrowMessage;
     type Error = ArrowError;
 
@@ -355,15 +382,25 @@ impl ControlMessageFactory {
 }
 
 /// Connect Arrow Client to a given address and return either a redirect address or an error.
-pub fn connect<T>(addr: &str, svc_table: T) -> Result<String, ArrowError>
-    where T: 'static + ServiceTable {
+pub fn connect<L, S, T>(
+    logger: L,
+    cmd_sender: S,
+    svc_table: T,
+    addr: &str) -> Result<String, ArrowError>
+    where L: Logger,
+          S: Sender,
+          T: 'static + ServiceTable {
     let mut core = TokioCore::new()?;
 
     let addr = addr.to_socket_addrs()?
         .next()
         .ok_or(io::Error::new(io::ErrorKind::Other, "unable to resolve a given address"))?;
 
-    let aclient = ArrowClient::new(core.handle(), svc_table);
+    let aclient = ArrowClient::new(
+        logger,
+        cmd_sender,
+        svc_table,
+        core.handle());
 
     let client = TcpStream::connect(&addr, &core.handle())
         .map_err(|err| ArrowError::from(err))
