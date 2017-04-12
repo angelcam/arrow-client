@@ -109,31 +109,31 @@ impl<T> CloneableLogger for T where T: 'static + Logger + Clone {
 }
 
 /// Abstraction from a concrete logger type.
-pub struct LoggerWrapper {
+pub struct BoxedLogger {
     logger: Box<CloneableLogger>,
 }
 
-impl LoggerWrapper {
-    /// Create a new logger wrapper.
-    pub fn new<L: 'static + CloneableLogger>(logger: L) -> LoggerWrapper {
-        LoggerWrapper {
+impl BoxedLogger {
+    /// Create a new boxed logger.
+    pub fn new<L: 'static + CloneableLogger>(logger: L) -> BoxedLogger {
+        BoxedLogger {
             logger: Box::new(logger)
         }
     }
 }
 
-impl Clone for LoggerWrapper {
-    fn clone(&self) -> LoggerWrapper {
+impl Clone for BoxedLogger {
+    fn clone(&self) -> BoxedLogger {
         let logger = self.logger.as_ref()
             .clone();
 
-        LoggerWrapper {
+        BoxedLogger {
             logger: logger
         }
     }
 }
 
-impl Logger for LoggerWrapper {
+impl Logger for BoxedLogger {
     fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str) {
         self.logger.log(file, line, s, msg)
     }
@@ -147,7 +147,7 @@ impl Logger for LoggerWrapper {
     }
 }
 
-unsafe impl Send for LoggerWrapper { }
+unsafe impl Send for BoxedLogger { }
 
 /// This logger does nothing but holds the severity level.
 #[derive(Debug, Copy, Clone)]

@@ -55,10 +55,9 @@ use std::io::{BufWriter, Write};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use utils::logger;
-use utils::logger::LoggerWrapper;
 
 use utils::{Shared, RuntimeError};
-use utils::logger::{Logger, Severity};
+use utils::logger::{Logger, Severity, BoxedLogger};
 use utils::config::{ArrowConfig, AppContext};
 
 #[cfg(feature = "discovery")]
@@ -901,7 +900,7 @@ fn init_file_logger(file: &str, limit: usize, rotations: usize) -> logger::file:
 
 /// Helper struct for application configuration.
 struct AppConfiguration {
-    logger:            LoggerWrapper,
+    logger:            BoxedLogger,
     ssl_context:       SslContext,
     app_context:       AppContext,
     default_svc_table: ServiceTable,
@@ -919,10 +918,10 @@ impl AppConfiguration {
         let parser = AppConfigurationParser::parse(&mut env::args());
 
         let logger = match parser.logger_type {
-            LoggerType::Syslog       => LoggerWrapper::new(logger::syslog::new()),
-            LoggerType::Stderr       => LoggerWrapper::new(logger::stderr::new()),
-            LoggerType::StderrPretty => LoggerWrapper::new(logger::stderr::new_pretty()),
-            LoggerType::FileLogger   => LoggerWrapper::new(init_file_logger(
+            LoggerType::Syslog       => BoxedLogger::new(logger::syslog::new()),
+            LoggerType::Stderr       => BoxedLogger::new(logger::stderr::new()),
+            LoggerType::StderrPretty => BoxedLogger::new(logger::stderr::new_pretty()),
+            LoggerType::FileLogger   => BoxedLogger::new(init_file_logger(
                 &parser.log_file,
                 parser.log_file_size,
                 parser.log_file_rotations

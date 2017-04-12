@@ -41,7 +41,7 @@ use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
 use net::arrow::proto::utils::ControlMessageFactory;
 
-use utils::logger::Logger;
+use utils::logger::{Logger, BoxedLogger};
 
 const INPUT_BUFFER_LIMIT: usize  = 32768;
 const OUTPUT_BUFFER_LIMIT: usize = 4 * 1024 * 1024 * 1024;
@@ -336,8 +336,8 @@ impl SessionErrorHandler {
 }
 
 /// Arrow session manager.
-pub struct SessionManager<L> {
-    logger:       L,
+pub struct SessionManager {
+    logger:       BoxedLogger,
     tc_handle:    TokioCoreHandle,
     svc_table:    Box<ServiceTable>,
     cmsg_factory: ControlMessageFactory,
@@ -347,14 +347,13 @@ pub struct SessionManager<L> {
     new_session:  Option<Task>,
 }
 
-impl<L> SessionManager<L>
-    where L: Logger {
+impl SessionManager {
     /// Create a new session manager.
     pub fn new<T>(
-        logger: L,
+        logger: BoxedLogger,
         svc_table: T,
         cmsg_factory: ControlMessageFactory,
-        tc_handle: TokioCoreHandle) -> SessionManager<L>
+        tc_handle: TokioCoreHandle) -> SessionManager
         where T: 'static + ServiceTable {
         SessionManager {
             logger:       logger,
@@ -485,8 +484,7 @@ impl<L> SessionManager<L>
     }
 }
 
-impl<L> Stream for SessionManager<L>
-    where L: Logger {
+impl Stream for SessionManager {
     type Item  = ArrowMessage;
     type Error = ArrowError;
 

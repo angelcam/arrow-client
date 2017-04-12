@@ -66,7 +66,7 @@ use net::arrow::proto::msg::control::{
 use net::arrow::proto::session::SessionManager;
 use net::arrow::proto::utils::ControlMessageFactory;
 
-use utils::logger::Logger;
+use utils::logger::{Logger, BoxedLogger};
 
 /// Currently supported version of the Arrow protocol.
 pub const ARROW_PROTOCOL_VERSION: u8 = 1;
@@ -118,12 +118,12 @@ impl ExpectedAck {
 }
 
 /// Arrow Client implementation.
-struct ArrowClientContext<L, S> {
-    logger:           L,
+struct ArrowClientContext<S> {
+    logger:           BoxedLogger,
     cmd_sender:       S,
     tc_handle:        TokioCoreHandle,
     cmsg_factory:     ControlMessageFactory,
-    sessions:         SessionManager<L>,
+    sessions:         SessionManager,
     messages:         VecDeque<ArrowMessage>,
     expected_acks:    VecDeque<ExpectedAck>,
     state:            ProtocolState,
@@ -133,15 +133,14 @@ struct ArrowClientContext<L, S> {
     last_update_chck: f64,
 }
 
-impl<L, S> ArrowClientContext<L, S>
-    where L: Logger + Clone,
-          S: Sender {
+impl<S> ArrowClientContext<S>
+    where S: Sender {
     /// Create a new Arrow Client.
     fn new<T>(
-        mut logger: L,
+        mut logger: BoxedLogger,
         cmd_sender: S,
         svc_table: T,
-        tc_handle: TokioCoreHandle) -> ArrowClientContext<L, S>
+        tc_handle: TokioCoreHandle) -> ArrowClientContext<S>
         where T: 'static + ServiceTable {
         let cmsg_factory = ControlMessageFactory::new();
         let session_manager = SessionManager::new(
@@ -175,9 +174,8 @@ impl<L, S> ArrowClientContext<L, S>
     }
 }
 
-impl<L, S> ArrowClientContext<L, S>
-    where L: Logger,
-          S: Sender {
+impl<S> ArrowClientContext<S>
+    where S: Sender {
     /// Get redirect address (if any).
     fn get_redirect(&self) -> Option<String> {
         self.redirect.as_ref()
@@ -451,9 +449,8 @@ impl<L, S> ArrowClientContext<L, S>
     }
 }
 
-impl<L, S> Sink for ArrowClientContext<L, S>
-    where L: Logger,
-          S: Sender {
+impl<S> Sink for ArrowClientContext<S>
+    where S: Sender {
     type SinkItem  = ArrowMessage;
     type SinkError = ArrowError;
 
@@ -479,9 +476,8 @@ impl<L, S> Sink for ArrowClientContext<L, S>
     }
 }
 
-impl<L, S> Stream for ArrowClientContext<L, S>
-    where L: Logger,
-          S: Sender {
+impl<S> Stream for ArrowClientContext<S>
+    where S: Sender {
     type Item  = ArrowMessage;
     type Error = ArrowError;
 
@@ -506,19 +502,18 @@ impl<L, S> Stream for ArrowClientContext<L, S>
     }
 }
 
-struct ArrowClient<L, S> {
-    context: Rc<RefCell<ArrowClientContext<L, S>>>,
+struct ArrowClient<S> {
+    context: Rc<RefCell<ArrowClientContext<S>>>,
 }
 
-impl<L, S> ArrowClient<L, S>
-    where L: 'static + Logger + Clone,
-          S: 'static + Sender {
+impl<S> ArrowClient<S>
+    where S: 'static + Sender {
     /// Create a new instance of Arrow Client.
     fn new<T>(
-        mut logger: L,
+        mut logger: BoxedLogger,
         cmd_sender: S,
         svc_table: T,
-        tc_handle: TokioCoreHandle) -> ArrowClient<L, S>
+        tc_handle: TokioCoreHandle) -> ArrowClient<S>
         where T: 'static + ServiceTable {
         let context = ArrowClientContext::new(
             logger.clone(),
@@ -553,9 +548,8 @@ impl<L, S> ArrowClient<L, S>
     }
 }
 
-impl<L, S> ArrowClient<L, S>
-    where L: Logger,
-          S: Sender {
+impl<S> ArrowClient<S>
+    where S: Sender {
     /// Get redirect address (if any).
     fn get_redirect(&self) -> Option<String> {
         self.context.borrow()
@@ -563,9 +557,8 @@ impl<L, S> ArrowClient<L, S>
     }
 }
 
-impl<L, S> Sink for ArrowClient<L, S>
-    where L: Logger,
-          S: Sender {
+impl<S> Sink for ArrowClient<S>
+    where S: Sender {
     type SinkItem  = ArrowMessage;
     type SinkError = ArrowError;
 
@@ -580,9 +573,8 @@ impl<L, S> Sink for ArrowClient<L, S>
     }
 }
 
-impl<L, S> Stream for ArrowClient<L, S>
-    where L: Logger,
-          S: Sender {
+impl<S> Stream for ArrowClient<S>
+    where S: Sender {
     type Item  = ArrowMessage;
     type Error = ArrowError;
 
@@ -593,13 +585,12 @@ impl<L, S> Stream for ArrowClient<L, S>
 }
 
 /// Connect Arrow Client to a given address and return either a redirect address or an error.
-pub fn connect<L, S, T>(
-    logger: L,
+pub fn connect<S, T>(
+    logger: BoxedLogger,
     cmd_sender: S,
     svc_table: T,
     addr: &str) -> Result<String, ArrowError>
-    where L: 'static + Logger + Clone,
-          S: 'static + Sender,
+    where S: 'static + Sender,
           T: 'static + ServiceTable {
     let mut core = TokioCore::new()?;
 
