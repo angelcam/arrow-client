@@ -35,10 +35,11 @@ use tokio_io::AsyncRead;
 
 use futures_ex::StreamEx;
 
-use net::arrow::proto::{ControlMessageFactory, ServiceTable};
+use net::arrow::proto::ServiceTable;
 use net::arrow::proto::codec::RawCodec;
 use net::arrow::proto::error::ArrowError;
 use net::arrow::proto::msg::ArrowMessage;
+use net::arrow::proto::utils::ControlMessageFactory;
 
 use utils::logger::Logger;
 

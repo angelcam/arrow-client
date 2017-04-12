@@ -17,9 +17,10 @@ pub mod codec;
 pub mod error;
 
 mod session;
+mod utils;
 
 use std::rc::Rc;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::net::ToSocketAddrs;
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -63,6 +64,7 @@ use net::arrow::proto::msg::control::{
     ScanReport,
 };
 use net::arrow::proto::session::SessionManager;
+use net::arrow::proto::utils::ControlMessageFactory;
 
 use utils::logger::Logger;
 
@@ -336,8 +338,11 @@ impl<L, S> ArrowClientContext<L, S>
 
         log_debug!(self.logger, "sending an ACK message...");
 
-        self.send_control_message(
-            ControlMessage::ack(header.msg_id, 0));
+        let ack = self.cmsg_factory.ack(
+            header.msg_id,
+            0x00);
+
+        self.send_control_message(ack);
 
         Ok(())
     }
@@ -584,76 +589,6 @@ impl<L, S> Stream for ArrowClient<L, S>
     fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
         self.context.borrow_mut()
             .poll()
-    }
-}
-
-/// Control Protocol message factory with shared message ID counter.
-#[derive(Clone)]
-pub struct ControlMessageFactory {
-    counter: Rc<Cell<u16>>,
-}
-
-impl ControlMessageFactory {
-    /// Create a new Control Protocol message factory.
-    pub fn new() -> ControlMessageFactory {
-        ControlMessageFactory {
-            counter: Rc::new(Cell::new(0)),
-        }
-    }
-
-    /// Get next message ID and increment the counter.
-    fn next_id(&mut self) -> u16 {
-        let res = self.counter.get();
-
-        self.counter.set(res.wrapping_add(1));
-
-        res
-    }
-
-    /// Create a new ACK message with a given error code.
-    pub fn ack(&mut self, error_code: u32) -> ControlMessage {
-        ControlMessage::ack(
-            self.next_id(),
-            error_code)
-    }
-
-    /// Create a new HUP message with a given session ID and error code.
-    pub fn hup(&mut self, session_id: u32, error_code: u32) -> ControlMessage {
-        ControlMessage::hup(
-            self.next_id(),
-            session_id,
-            error_code)
-    }
-
-    /// Create a new STATUS message with a given request ID, flags and number
-    /// of active sessions.
-    pub fn status(
-        &mut self,
-        request_id: u16,
-        status_flags: u32,
-        active_sessions: u32) -> ControlMessage {
-        ControlMessage::status(
-            self.next_id(),
-            request_id,
-            status_flags,
-            active_sessions)
-    }
-
-    /// Create a new SCAN_REPORT message for a given scan report.
-    pub fn scan_report(
-        &mut self,
-        request_id: u16,
-        report: ScanReport) -> ControlMessage {
-        ControlMessage::scan_report(
-            self.next_id(),
-            request_id,
-            report)
-    }
-
-    /// Create a new PING message.
-    pub fn ping(&mut self) -> ControlMessage {
-        ControlMessage::ping(
-            self.next_id())
     }
 }
 

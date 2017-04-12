@@ -25,7 +25,8 @@ use utils::AsAny;
 use net::arrow::proto::ARROW_PROTOCOL_VERSION;
 use net::arrow::proto::codec::{FromBytes, Decode, Encode};
 use net::arrow::proto::error::DecodeError;
-use net::arrow::proto::msg::control::ControlMessage;
+
+pub use net::arrow::proto::msg::control::ControlMessage;
 
 /// Common trait for message body types.
 pub trait MessageBody : Encode {
