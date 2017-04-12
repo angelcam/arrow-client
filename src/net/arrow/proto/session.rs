@@ -477,9 +477,10 @@ impl<L> SessionManager<L>
         error_code: u32) -> ArrowMessage {
         log_debug!(self.logger, "sending a HUP message (session ID: {:08x}, error_code: {:08x})...", session_id, error_code);
 
-        self.cmsg_factory.hup(
-            session_id,
-            error_code)
+        ArrowMessage::from(
+            self.cmsg_factory.hup(
+                session_id,
+                error_code))
     }
 }
 

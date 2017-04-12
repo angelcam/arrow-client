@@ -245,6 +245,14 @@ impl ControlMessage {
                 report))
     }
 
+    /// Create a new PING Control Protocol message.
+    pub fn ping(msg_id: u16) -> ControlMessage {
+        ControlMessage::new(
+            msg_id,
+            ControlMessageType::PING,
+            EmptyMessage)
+    }
+
     /// Create a new Control Protocol message.
     fn new<B>(msg_id: u16, msg_type: ControlMessageType, body: B) -> ControlMessage
         where B: ControlMessageBody + 'static {

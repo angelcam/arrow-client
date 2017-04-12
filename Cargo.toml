@@ -16,10 +16,11 @@ regex           = "0.1"
 time            = "0.1"
 rustc-serialize = "0.3"
 
-bytes      = "0.4"
-futures    = "0.1"
-tokio-core = "0.1"
-tokio-io   = "0.1"
+bytes       = "0.4"
+futures     = "0.1"
+tokio-core  = "0.1"
+tokio-io    = "0.1"
+tokio-timer = "0.1"
 
 [dependencies.uuid]
 version  = "0.3"

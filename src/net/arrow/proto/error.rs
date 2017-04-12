@@ -19,6 +19,8 @@ use std::result;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+use tokio_timer::TimerError;
+
 /// Message decoding error.
 #[derive(Debug, Clone)]
 pub struct DecodeError {
@@ -161,5 +163,11 @@ impl From<io::Error> for ArrowError {
 impl From<DecodeError> for ArrowError {
     fn from(err: DecodeError) -> ArrowError {
         ArrowError::from(format!("Arrow Message decoding error: {}", err))
+    }
+}
+
+impl From<TimerError> for ArrowError {
+    fn from(err: TimerError) -> ArrowError {
+        ArrowError::from(format!("timer error: {}", err))
     }
 }

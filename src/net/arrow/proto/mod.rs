@@ -19,9 +19,12 @@ pub mod error;
 mod session;
 
 use std::rc::Rc;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::net::ToSocketAddrs;
 use std::collections::VecDeque;
+use std::time::Duration;
+
+use time;
 
 use futures::{StartSend, Async, AsyncSink, Poll};
 use futures::future::Future;
@@ -33,6 +36,8 @@ use tokio_core::reactor::Core as TokioCore;
 use tokio_core::reactor::Handle as TokioCoreHandle;
 
 use tokio_io::AsyncRead;
+
+use tokio_timer::Timer;
 
 use futures_ex::StreamEx;
 
@@ -55,14 +60,14 @@ use net::arrow::proto::msg::control::{
     ScanReport,
 };
 use net::arrow::proto::session::SessionManager;
-use net::utils::Timeout;
 
 use utils::logger::Logger;
 
 /// Currently supported version of the Arrow protocol.
 pub const ARROW_PROTOCOL_VERSION: u8 = 1;
 
-const ACK_TIMEOUT: u64 = 20000;
+const ACK_TIMEOUT: f64 = 20.0;
+const PING_PERIOD: f64 = 60.0;
 
 /// Commands that might be sent by the Arrow Client into a given command queue.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -85,21 +90,42 @@ enum ProtocolState {
     Established
 }
 
+/// Helper struct for expected ACK messages.
+struct ExpectedAck {
+    timestamp:  f64,
+    message_id: u16,
+}
+
+impl ExpectedAck {
+    /// Create a new ACK message expectation.
+    fn new(message_id: u16) -> ExpectedAck {
+        ExpectedAck {
+            timestamp:  time::precise_time_s(),
+            message_id: message_id,
+        }
+    }
+
+    /// Check if it's too late for the ACK.
+    fn timeout(&self) -> bool {
+        (self.timestamp + ACK_TIMEOUT) < time::precise_time_s()
+    }
+}
+
 /// Arrow Client implementation.
-struct ArrowClient<L, S> {
+struct ArrowClientContext<L, S> {
     logger:        L,
     cmd_sender:    S,
     tc_handle:     TokioCoreHandle,
     cmsg_factory:  ControlMessageFactory,
     sessions:      SessionManager<L>,
     messages:      VecDeque<ArrowMessage>,
-    expected_acks: VecDeque<u16>,
-    ack_timeout:   Timeout,
+    expected_acks: VecDeque<ExpectedAck>,
     state:         ProtocolState,
     redirect:      Option<String>,
+    last_ping:     f64,
 }
 
-impl<L, S> ArrowClient<L, S>
+impl<L, S> ArrowClientContext<L, S>
     where L: Logger + Clone,
           S: Sender {
     /// Create a new Arrow Client.
@@ -107,7 +133,7 @@ impl<L, S> ArrowClient<L, S>
         mut logger: L,
         cmd_sender: S,
         svc_table: T,
-        tc_handle: TokioCoreHandle) -> ArrowClient<L, S>
+        tc_handle: TokioCoreHandle) -> ArrowClientContext<L, S>
         where T: 'static + ServiceTable {
         let cmsg_factory = ControlMessageFactory::new();
         let session_manager = SessionManager::new(
@@ -122,7 +148,9 @@ impl<L, S> ArrowClient<L, S>
 
         // TODO: add REGISTER message into the message queue
 
-        ArrowClient {
+        let t = time::precise_time_s();
+
+        ArrowClientContext {
             logger:        logger,
             cmd_sender:    cmd_sender,
             tc_handle:     tc_handle,
@@ -130,20 +158,33 @@ impl<L, S> ArrowClient<L, S>
             sessions:      session_manager,
             messages:      messages,
             expected_acks: VecDeque::new(),
-            ack_timeout:   Timeout::new(),
             state:         ProtocolState::Handshake,
             redirect:      None,
+            last_ping:     t,
         }
     }
 }
 
-impl<L, S> ArrowClient<L, S>
+impl<L, S> ArrowClientContext<L, S>
     where L: Logger,
           S: Sender {
     /// Get redirect address (if any).
-    fn get_redirect(&self) -> Option<&str> {
+    fn get_redirect(&self) -> Option<String> {
         self.redirect.as_ref()
-            .map(|r| r as &str)
+            .map(|r| r.clone())
+    }
+
+    /// Trigger all periodical tasks.
+    fn time_event(&mut self) -> Result<(), ArrowError> {
+        let t = time::precise_time_s();
+
+        if self.state == ProtocolState::Established {
+            if (self.last_ping + PING_PERIOD) < t {
+                self.send_ping_message();
+            }
+        }
+
+        Ok(())
     }
 
     /// Check if the client has been closed.
@@ -153,7 +194,29 @@ impl<L, S> ArrowClient<L, S>
 
     /// Insert a given Control Protocol message into the output message queue.
     fn send_control_message(&mut self, msg: ControlMessage) {
-        self.messages.push_back(ArrowMessage::new(0, 0, msg))
+        self.messages.push_back(ArrowMessage::from(msg))
+    }
+
+    /// Insert a given Control Protocol message into the output message queue
+    /// and register an expected ACK.
+    fn send_unconfirmed_control_message(&mut self, msg: ControlMessage) {
+        let header = msg.header();
+
+        self.expected_acks.push_back(
+            ExpectedAck::new(header.msg_id));
+
+        self.send_control_message(msg);
+    }
+
+    /// Send PING message.
+    fn send_ping_message(&mut self) {
+        log_debug!(self.logger, "sending a PING message...");
+
+        let msg = self.cmsg_factory.ping();
+
+        self.send_unconfirmed_control_message(msg);
+
+        self.last_ping = time::precise_time_s();
     }
 
     /// Process a given Control Protocol message.
@@ -184,16 +247,8 @@ impl<L, S> ArrowClient<L, S>
     fn process_ack_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
         let header = msg.header();
 
-        let expected_ack = self.expected_acks.pop_front();
-
-        if self.expected_acks.is_empty() {
-            self.ack_timeout.clear();
-        } else {
-            self.ack_timeout.set(ACK_TIMEOUT);
-        }
-
-        if let Some(expected_ack) = expected_ack {
-            if header.msg_id == expected_ack {
+        if let Some(expected_ack) = self.expected_acks.pop_front() {
+            if header.msg_id == expected_ack.message_id {
                 if self.state == ProtocolState::Handshake {
                     self.process_handshake_ack(msg)
                 } else {
@@ -217,7 +272,6 @@ impl<L, S> ArrowClient<L, S>
             self.state = ProtocolState::Established;
 
             // TODO: spawn job for periodical sending of UPDATE messages
-            // TODO: spawn job for periodical sending of PING messages
             // TODO: get the diagnostic mode state
             let diagnostic_mode = false;
 
@@ -301,11 +355,12 @@ impl<L, S> ArrowClient<L, S>
 
         log_debug!(self.logger, "sending a STATUS message...");
 
-        self.messages.push_back(
-            self.cmsg_factory.status(
-                header.msg_id,
-                status_flags,
-                self.sessions.len() as u32));
+        let msg = self.cmsg_factory.status(
+            header.msg_id,
+            status_flags,
+            self.sessions.len() as u32);
+
+        self.send_control_message(msg);
 
         Ok(())
     }
@@ -323,10 +378,11 @@ impl<L, S> ArrowClient<L, S>
 
         log_debug!(self.logger, "sending a SCAN_REPORT message...");
 
-        self.messages.push_back(
-            self.cmsg_factory.scan_report(
-                header.msg_id,
-                report));
+        let msg = self.cmsg_factory.scan_report(
+            header.msg_id,
+            report);
+
+        self.send_control_message(msg);
 
         Ok(())
     }
@@ -356,7 +412,7 @@ impl<L, S> ArrowClient<L, S>
     }
 }
 
-impl<L, S> Sink for ArrowClient<L, S>
+impl<L, S> Sink for ArrowClientContext<L, S>
     where L: Logger,
           S: Sender {
     type SinkItem  = ArrowMessage;
@@ -384,7 +440,7 @@ impl<L, S> Sink for ArrowClient<L, S>
     }
 }
 
-impl<L, S> Stream for ArrowClient<L, S>
+impl<L, S> Stream for ArrowClientContext<L, S>
     where L: Logger,
           S: Sender {
     type Item  = ArrowMessage;
@@ -398,6 +454,92 @@ impl<L, S> Stream for ArrowClient<L, S>
         } else {
             self.sessions.poll()
         }
+    }
+}
+
+struct ArrowClient<L, S> {
+    context: Rc<RefCell<ArrowClientContext<L, S>>>,
+}
+
+impl<L, S> ArrowClient<L, S>
+    where L: 'static + Logger + Clone,
+          S: 'static + Sender {
+    /// Create a new instance of Arrow Client.
+    fn new<T>(
+        mut logger: L,
+        cmd_sender: S,
+        svc_table: T,
+        tc_handle: TokioCoreHandle) -> ArrowClient<L, S>
+        where T: 'static + ServiceTable {
+        let context = ArrowClientContext::new(
+            logger.clone(),
+            cmd_sender,
+            svc_table,
+            tc_handle.clone());
+
+        let context = Rc::new(RefCell::new(context));
+
+        let mut event_handler = context.clone();
+
+        let events = Timer::default()
+            .interval(Duration::from_millis(1000))
+            .map_err(|err| ArrowError::from(err))
+            .for_each(move |_| {
+                event_handler.borrow_mut()
+                    .time_event()
+            })
+            .then(move |res| {
+                if let Err(err) = res {
+                    log_warn!(logger, "time event error: {}", err);
+                }
+
+                Ok(())
+            });
+
+        tc_handle.spawn(events);
+
+        ArrowClient {
+            context: context,
+        }
+    }
+}
+
+impl<L, S> ArrowClient<L, S>
+    where L: Logger,
+          S: Sender {
+    /// Get redirect address (if any).
+    fn get_redirect(&self) -> Option<String> {
+        self.context.borrow()
+            .get_redirect()
+    }
+}
+
+impl<L, S> Sink for ArrowClient<L, S>
+    where L: Logger,
+          S: Sender {
+    type SinkItem  = ArrowMessage;
+    type SinkError = ArrowError;
+
+    fn start_send(&mut self, msg: ArrowMessage) -> StartSend<ArrowMessage, ArrowError> {
+        self.context.borrow_mut()
+            .start_send(msg)
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), ArrowError> {
+        self.context.borrow_mut()
+            .poll_complete()
+    }
+}
+
+impl<L, S> Stream for ArrowClient<L, S>
+    where L: Logger,
+          S: Sender {
+    type Item  = ArrowMessage;
+    type Error = ArrowError;
+
+    fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
+        self.context.borrow_mut()
+            .poll()
     }
 }
 
@@ -425,20 +567,18 @@ impl ControlMessageFactory {
     }
 
     /// Create a new ACK message with a given error code.
-    pub fn ack(&mut self, error_code: u32) -> ArrowMessage {
-        ArrowMessage::from(
-            ControlMessage::ack(
-                    self.next_id(),
-                    error_code))
+    pub fn ack(&mut self, error_code: u32) -> ControlMessage {
+        ControlMessage::ack(
+            self.next_id(),
+            error_code)
     }
 
     /// Create a new HUP message with a given session ID and error code.
-    pub fn hup(&mut self, session_id: u32, error_code: u32) -> ArrowMessage {
-        ArrowMessage::from(
-            ControlMessage::hup(
-                self.next_id(),
-                session_id,
-                error_code))
+    pub fn hup(&mut self, session_id: u32, error_code: u32) -> ControlMessage {
+        ControlMessage::hup(
+            self.next_id(),
+            session_id,
+            error_code)
     }
 
     /// Create a new STATUS message with a given request ID, flags and number
@@ -447,25 +587,29 @@ impl ControlMessageFactory {
         &mut self,
         request_id: u16,
         status_flags: u32,
-        active_sessions: u32) -> ArrowMessage {
-        ArrowMessage::from(
-            ControlMessage::status(
-                self.next_id(),
-                request_id,
-                status_flags,
-                active_sessions))
+        active_sessions: u32) -> ControlMessage {
+        ControlMessage::status(
+            self.next_id(),
+            request_id,
+            status_flags,
+            active_sessions)
     }
 
     /// Create a new SCAN_REPORT message for a given scan report.
     pub fn scan_report(
         &mut self,
         request_id: u16,
-        report: ScanReport) -> ArrowMessage {
-        ArrowMessage::from(
-            ControlMessage::scan_report(
-                self.next_id(),
-                request_id,
-                report))
+        report: ScanReport) -> ControlMessage {
+        ControlMessage::scan_report(
+            self.next_id(),
+            request_id,
+            report)
+    }
+
+    /// Create a new PING message.
+    pub fn ping(&mut self) -> ControlMessage {
+        ControlMessage::ping(
+            self.next_id())
     }
 }
 
@@ -475,8 +619,8 @@ pub fn connect<L, S, T>(
     cmd_sender: S,
     svc_table: T,
     addr: &str) -> Result<String, ArrowError>
-    where L: Logger + Clone,
-          S: Sender,
+    where L: 'static + Logger + Clone,
+          S: 'static + Sender,
           T: 'static + ServiceTable {
     let mut core = TokioCore::new()?;
 
@@ -503,8 +647,7 @@ pub fn connect<L, S, T>(
                 .and_then(|(_, pipe)| {
                     let (_, _, context) = pipe.unpipe();
                     let redirect = context.get_redirect()
-                        .expect("connection closed, redirect expected")
-                        .to_string();
+                        .expect("connection closed, redirect expected");
 
                     Ok(redirect)
                 })
