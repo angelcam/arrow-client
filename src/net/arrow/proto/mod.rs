@@ -66,8 +66,9 @@ use utils::logger::Logger;
 /// Currently supported version of the Arrow protocol.
 pub const ARROW_PROTOCOL_VERSION: u8 = 1;
 
-const ACK_TIMEOUT: f64 = 20.0;
-const PING_PERIOD: f64 = 60.0;
+const ACK_TIMEOUT:         f64 = 20.0;
+const PING_PERIOD:         f64 = 60.0;
+const UPDATE_CHECK_PERIOD: f64 =  5.0;
 
 /// Commands that might be sent by the Arrow Client into a given command queue.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -113,16 +114,17 @@ impl ExpectedAck {
 
 /// Arrow Client implementation.
 struct ArrowClientContext<L, S> {
-    logger:        L,
-    cmd_sender:    S,
-    tc_handle:     TokioCoreHandle,
-    cmsg_factory:  ControlMessageFactory,
-    sessions:      SessionManager<L>,
-    messages:      VecDeque<ArrowMessage>,
-    expected_acks: VecDeque<ExpectedAck>,
-    state:         ProtocolState,
-    redirect:      Option<String>,
-    last_ping:     f64,
+    logger:           L,
+    cmd_sender:       S,
+    tc_handle:        TokioCoreHandle,
+    cmsg_factory:     ControlMessageFactory,
+    sessions:         SessionManager<L>,
+    messages:         VecDeque<ArrowMessage>,
+    expected_acks:    VecDeque<ExpectedAck>,
+    state:            ProtocolState,
+    redirect:         Option<String>,
+    last_ping:        f64,
+    last_update_chck: f64,
 }
 
 impl<L, S> ArrowClientContext<L, S>
@@ -151,16 +153,17 @@ impl<L, S> ArrowClientContext<L, S>
         let t = time::precise_time_s();
 
         ArrowClientContext {
-            logger:        logger,
-            cmd_sender:    cmd_sender,
-            tc_handle:     tc_handle,
-            cmsg_factory:  cmsg_factory,
-            sessions:      session_manager,
-            messages:      messages,
-            expected_acks: VecDeque::new(),
-            state:         ProtocolState::Handshake,
-            redirect:      None,
-            last_ping:     t,
+            logger:           logger,
+            cmd_sender:       cmd_sender,
+            tc_handle:        tc_handle,
+            cmsg_factory:     cmsg_factory,
+            sessions:         session_manager,
+            messages:         messages,
+            expected_acks:    VecDeque::new(),
+            state:            ProtocolState::Handshake,
+            redirect:         None,
+            last_ping:        t,
+            last_update_chck: t,
         }
     }
 }
@@ -174,6 +177,11 @@ impl<L, S> ArrowClientContext<L, S>
             .map(|r| r.clone())
     }
 
+    /// Check if the client has been closed.
+    fn is_closed(&self) -> bool {
+        self.redirect.is_some()
+    }
+
     /// Trigger all periodical tasks.
     fn time_event(&mut self) -> Result<(), ArrowError> {
         let t = time::precise_time_s();
@@ -182,14 +190,22 @@ impl<L, S> ArrowClientContext<L, S>
             if (self.last_ping + PING_PERIOD) < t {
                 self.send_ping_message();
             }
+
+            if (self.last_update_chck + UPDATE_CHECK_PERIOD) < t {
+                self.check_for_updates();
+            }
+
+            // TODO: check for ACK timeout
         }
 
         Ok(())
     }
 
-    /// Check if the client has been closed.
-    fn is_closed(&self) -> bool {
-        self.redirect.is_some()
+    /// Check if the service table has been updated.
+    fn check_for_updates(&mut self) {
+        // TODO
+
+        self.last_update_chck = time::precise_time_s();
     }
 
     /// Insert a given Control Protocol message into the output message queue.
@@ -271,7 +287,6 @@ impl<L, S> ArrowClientContext<L, S>
             // switch the protocol state into normal operation
             self.state = ProtocolState::Established;
 
-            // TODO: spawn job for periodical sending of UPDATE messages
             // TODO: get the diagnostic mode state
             let diagnostic_mode = false;
 
@@ -479,7 +494,7 @@ impl<L, S> ArrowClient<L, S>
 
         let context = Rc::new(RefCell::new(context));
 
-        let mut event_handler = context.clone();
+        let event_handler = context.clone();
 
         let events = Timer::default()
             .interval(Duration::from_millis(1000))
