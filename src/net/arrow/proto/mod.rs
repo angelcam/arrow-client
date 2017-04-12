@@ -26,10 +26,13 @@ use std::time::Duration;
 
 use time;
 
+use futures::task;
+
 use futures::{StartSend, Async, AsyncSink, Poll};
 use futures::future::Future;
 use futures::stream::Stream;
 use futures::sink::Sink;
+use futures::task::Task;
 
 use tokio_core::net::TcpStream;
 use tokio_core::reactor::Core as TokioCore;
@@ -122,6 +125,7 @@ struct ArrowClientContext<L, S> {
     messages:         VecDeque<ArrowMessage>,
     expected_acks:    VecDeque<ExpectedAck>,
     state:            ProtocolState,
+    task:             Option<Task>,
     redirect:         Option<String>,
     last_ping:        f64,
     last_update_chck: f64,
@@ -161,6 +165,7 @@ impl<L, S> ArrowClientContext<L, S>
             messages:         messages,
             expected_acks:    VecDeque::new(),
             state:            ProtocolState::Handshake,
+            task:             None,
             redirect:         None,
             last_ping:        t,
             last_update_chck: t,
@@ -182,6 +187,14 @@ impl<L, S> ArrowClientContext<L, S>
         self.redirect.is_some()
     }
 
+    /// Check if there is an ACK timeout.
+    fn ack_timeout(&self) -> bool {
+        match self.expected_acks.front() {
+            Some(ref expected_ack) => expected_ack.timeout(),
+            None => false,
+        }
+    }
+
     /// Trigger all periodical tasks.
     fn time_event(&mut self) -> Result<(), ArrowError> {
         let t = time::precise_time_s();
@@ -195,7 +208,13 @@ impl<L, S> ArrowClientContext<L, S>
                 self.check_for_updates();
             }
 
-            // TODO: check for ACK timeout
+            // if there is an ACK timeout and the task consuming Arrow
+            // Messages has been parked, unpark it
+            if self.ack_timeout() {
+                if let Some(task) = self.task.take() {
+                    task.unpark();
+                }
+            }
         }
 
         Ok(())
@@ -462,13 +481,23 @@ impl<L, S> Stream for ArrowClientContext<L, S>
     type Error = ArrowError;
 
     fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
-        if self.is_closed() {
-            Ok(Async::Ready(None))
+        if self.ack_timeout() {
+            return Err(ArrowError::connection_error("Arrow Service connection timeout"))
+        } else if self.is_closed() {
+            return Ok(Async::Ready(None))
         } else if let Some(msg) = self.messages.pop_front() {
-            Ok(Async::Ready(Some(msg)))
-        } else {
-            self.sessions.poll()
+            return Ok(Async::Ready(Some(msg)))
+        } else if let Async::Ready(msg) = try!(self.sessions.poll()) {
+            if msg.is_none() {
+                panic!("session manager returned end of stream")
+            } else {
+                return Ok(Async::Ready(msg))
+            }
         }
+
+        self.task = Some(task::park());
+
+        Ok(Async::NotReady)
     }
 }
 
