@@ -63,7 +63,7 @@ const WARN: Severity  = Severity::WARN;
 const ERROR: Severity = Severity::ERROR;
 
 /// Common trait for application loggers.
-pub trait Logger {
+pub trait Logger : Send {
     /// Log a given message with a given severity.
     fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str);
 
@@ -146,8 +146,6 @@ impl Logger for BoxedLogger {
         self.logger.get_level()
     }
 }
-
-unsafe impl Send for BoxedLogger { }
 
 /// This logger does nothing but holds the severity level.
 #[derive(Debug, Copy, Clone)]

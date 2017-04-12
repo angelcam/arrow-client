@@ -1,11 +1,11 @@
 // Copyright 2015 click2stream, Inc.
-// 
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// 
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -52,7 +52,7 @@ pub fn new() -> Syslog {
     SYSLOG_INIT.call_once(|| unsafe {
         openlog(ptr::null(), LOG_CONS | LOG_PID, LOG_USER);
     });
-    
+
     Syslog {
         level: Severity::INFO
     }
@@ -65,7 +65,7 @@ impl Logger for Syslog {
         let cstr_msg = CString::new(msg).unwrap();
         let fmt_ptr = cstr_fmt.as_ptr() as *const c_char;
         let msg_ptr = cstr_msg.as_ptr() as *const c_char;
-        
+
         if s >= self.level {
             unsafe {
                 match s {
@@ -77,14 +77,12 @@ impl Logger for Syslog {
             };
         }
     }
-    
+
     fn set_level(&mut self, s: Severity) {
         self.level = s;
     }
-    
+
     fn get_level(&self) -> Severity {
         self.level
     }
 }
-
-unsafe impl Send for Syslog { }

@@ -161,8 +161,6 @@ impl Logger for FileLogger {
     }
 }
 
-unsafe impl Send for FileLogger { }
-
 #[cfg(test)]
 mod test {
     use super::*;

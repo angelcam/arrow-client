@@ -1,11 +1,11 @@
 // Copyright 2016 click2stream, Inc.
-// 
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// 
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -60,41 +60,39 @@ impl Logger for StderrLogger {
     fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str) {
         let t = time::strftime("%F %T", &time::now())
             .unwrap();
-        
+
         let severity = match s {
             Severity::DEBUG => "DEBUG",
             Severity::INFO  => "INFO",
             Severity::WARN  => "WARNING",
             Severity::ERROR => "ERROR"
         };
-        
+
         let color = match s {
             Severity::DEBUG => "1;30",
             Severity::INFO  => "0;37",
             Severity::WARN  => "0;33",
             Severity::ERROR => "0;31"
         };
-        
+
         if s >= self.level {
             if self.pretty {
-                writeln!(&mut self.stderr, "\x1b[{}m{} {:<7} [{}:{}] {}\x1b[m", 
+                writeln!(&mut self.stderr, "\x1b[{}m{} {:<7} [{}:{}] {}\x1b[m",
                     color, t, severity, file, line, msg)
                     .unwrap();
             } else {
-                writeln!(&mut self.stderr, "{} {:<7} [{}:{}] {}", 
+                writeln!(&mut self.stderr, "{} {:<7} [{}:{}] {}",
                     t, severity, file, line, msg)
                     .unwrap();
             }
         }
     }
-    
+
     fn set_level(&mut self, s: Severity) {
         self.level = s;
     }
-    
+
     fn get_level(&self) -> Severity {
         self.level
     }
 }
-
-unsafe impl Send for StderrLogger { }
