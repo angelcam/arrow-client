@@ -34,8 +34,11 @@ use net::arrow::proto::codec::{FromBytes, Encode};
 use net::arrow::proto::msg::{ArrowMessageBody, MessageBody};
 use net::arrow::proto::error::DecodeError;
 
+use net::raw::ether::MacAddr;
+
 use self::status::StatusMessage;
 use self::scan_report::ScanReportMessage;
+use self::register::RegisterMessage;
 
 pub use self::ack::AckMessage;
 pub use self::hup::HupMessage;
@@ -267,6 +270,24 @@ impl ControlMessage {
             msg_id,
             ControlMessageType::PING,
             EmptyMessage)
+    }
+
+    /// Create a new REGISTER Control Protocol message.
+    pub fn register<T>(
+        msg_id: u16,
+        mac: MacAddr,
+        uuid: [u8; 16],
+        password: [u8; 16],
+        svc_table: &T) -> ControlMessage
+        where T: ServiceTable {
+        ControlMessage::new(
+            msg_id,
+            ControlMessageType::REGISTER,
+            RegisterMessage::new(
+                mac,
+                uuid,
+                password,
+                svc_table))
     }
 
     /// Create a new Control Protocol message.

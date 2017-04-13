@@ -15,8 +15,10 @@
 use std::rc::Rc;
 use std::cell::Cell;
 
-use net::arrow::proto::ScanReport;
+use net::arrow::proto::{ServiceTable, ScanReport};
 use net::arrow::proto::msg::ControlMessage;
+
+use net::raw::ether::MacAddr;
 
 /// Control Protocol message factory with shared message ID counter.
 #[derive(Clone)]
@@ -85,5 +87,21 @@ impl ControlMessageFactory {
     pub fn ping(&mut self) -> ControlMessage {
         ControlMessage::ping(
             self.next_id())
+    }
+
+    /// Create a new REGISTER message.
+    pub fn register<T>(
+        &mut self,
+        mac: MacAddr,
+        uuid: [u8; 16],
+        password: [u8; 16],
+        svc_table: &T) -> ControlMessage
+        where T: ServiceTable {
+        ControlMessage::register(
+            self.next_id(),
+            mac,
+            uuid,
+            password,
+            svc_table)
     }
 }

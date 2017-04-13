@@ -312,6 +312,9 @@ pub trait ServiceTable {
 
     /// Convert this service table into a trait object.
     fn boxed(self) -> BoxServiceTable;
+
+    /// Create a SimpleServiceTable instance out of this service table.
+    fn to_simple_table(&self) -> SimpleServiceTable;
 }
 
 /// Type alias for boxed service table.
@@ -326,9 +329,15 @@ impl ServiceTable for Box<ServiceTable> {
     fn boxed(self) -> BoxServiceTable {
         self
     }
+
+    fn to_simple_table(&self) -> SimpleServiceTable {
+        self.as_ref()
+            .to_simple_table()
+    }
 }
 
 /// Simple service table implementation.
+#[derive(Clone)]
 pub struct SimpleServiceTable {
     services: Vec<Service>,
 }
@@ -359,6 +368,10 @@ impl ServiceTable for SimpleServiceTable {
 
     fn boxed(self) -> BoxServiceTable {
         Box::new(self)
+    }
+
+    fn to_simple_table(&self) -> SimpleServiceTable {
+        self.clone()
     }
 }
 

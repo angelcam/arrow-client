@@ -82,6 +82,8 @@ pub use net::arrow::proto::msg::control::{
     SVC_TYPE_TCP,
 };
 
+use net::raw::ether::MacAddr;
+
 use utils::logger::{Logger, BoxedLogger};
 use utils::svc_table::SharedServiceTable;
 
@@ -138,6 +140,7 @@ impl ExpectedAck {
 struct ArrowClientContext<S> {
     logger:           BoxedLogger,
     cmd_sender:       S,
+    svc_table:        SharedServiceTable,
     tc_handle:        TokioCoreHandle,
     cmsg_factory:     ControlMessageFactory,
     sessions:         SessionManager,
@@ -154,39 +157,41 @@ impl<S> ArrowClientContext<S>
     where S: Sender {
     /// Create a new Arrow Client.
     fn new(
-        mut logger: BoxedLogger,
+        logger: BoxedLogger,
         cmd_sender: S,
         svc_table: SharedServiceTable,
         tc_handle: TokioCoreHandle) -> ArrowClientContext<S> {
         let cmsg_factory = ControlMessageFactory::new();
         let session_manager = SessionManager::new(
             logger.clone(),
-            svc_table,
+            svc_table.clone(),
             cmsg_factory.clone(),
             tc_handle.clone());
 
-        let messages = VecDeque::new();
-
-        log_debug!(logger, "sending REGISTER request...");
-
-        // TODO: add REGISTER message into the message queue
-
         let t = time::precise_time_s();
 
-        ArrowClientContext {
+        let mut client = ArrowClientContext {
             logger:           logger,
             cmd_sender:       cmd_sender,
+            svc_table:        svc_table,
             tc_handle:        tc_handle,
             cmsg_factory:     cmsg_factory,
             sessions:         session_manager,
-            messages:         messages,
+            messages:         VecDeque::new(),
             expected_acks:    VecDeque::new(),
             state:            ProtocolState::Handshake,
             task:             None,
             redirect:         None,
             last_ping:        t,
             last_update_chck: t,
-        }
+        };
+
+        client.send_register_message(
+            MacAddr::zero(),    // TODO: get client mac address from app config
+            [0u8; 16],          // TODO: get client UUID from app config
+            [0u8; 16]);         // TODO: get client password from app config
+
+        client
     }
 
     /// Get redirect address (if any).
@@ -254,6 +259,23 @@ impl<S> ArrowClientContext<S>
             ExpectedAck::new(header.msg_id));
 
         self.send_control_message(msg);
+    }
+
+    /// Send REGISTER message.
+    fn send_register_message(
+        &mut self,
+        mac: MacAddr,
+        uuid: [u8; 16],
+        password: [u8; 16]) {
+        log_debug!(self.logger, "sending REGISTER request...");
+
+        let msg = self.cmsg_factory.register(
+            mac,
+            uuid,
+            password,
+            &self.svc_table);
+
+        self.send_unconfirmed_control_message(msg);
     }
 
     /// Send PING message.

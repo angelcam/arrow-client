@@ -304,13 +304,6 @@ impl SharedServiceTable {
             .unwrap()
             .update_active_services()
     }
-
-    /// Get SimpleServiceTable consisting of all visible services.
-    pub fn to_simple_table(&self) -> SimpleServiceTable {
-        self.data.lock()
-            .unwrap()
-            .to_simple_table()
-    }
 }
 
 impl ServiceTable for SharedServiceTable {
@@ -322,6 +315,12 @@ impl ServiceTable for SharedServiceTable {
 
     fn boxed(self) -> BoxServiceTable {
         Box::new(self)
+    }
+
+    fn to_simple_table(&self) -> SimpleServiceTable {
+        self.data.lock()
+            .unwrap()
+            .to_simple_table()
     }
 }
 
