@@ -241,6 +241,11 @@ impl<S> ArrowClientContext<S>
     /// Check if the service table has been updated.
     fn check_for_updates(&mut self) {
         // TODO
+        let updated = true;
+
+        if updated {
+            self.send_update_message();
+        }
 
         self.last_update_chck = time::precise_time_s();
     }
@@ -276,6 +281,16 @@ impl<S> ArrowClientContext<S>
             &self.svc_table);
 
         self.send_unconfirmed_control_message(msg);
+    }
+
+    /// Send UPDATE message.
+    fn send_update_message(&mut self) {
+        log_debug!(self.logger, "sending a UPDATE message...");
+
+        let msg = self.cmsg_factory.update(
+            &self.svc_table);
+
+        self.send_control_message(msg);
     }
 
     /// Send PING message.

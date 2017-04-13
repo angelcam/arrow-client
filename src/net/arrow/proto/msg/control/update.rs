@@ -16,12 +16,25 @@ use bytes::BytesMut;
 
 use net::arrow::proto::codec::Encode;
 use net::arrow::proto::msg::MessageBody;
-use net::arrow::proto::msg::control::ControlMessageBody;
-use net::arrow::proto::msg::control::svc_table::SimpleServiceTable;
+use net::arrow::proto::msg::control::{
+    ControlMessageBody,
+    ServiceTable,
+    SimpleServiceTable,
+};
 
 /// UPDATE message.
 pub struct UpdateMessage {
     svc_table: SimpleServiceTable,
+}
+
+impl UpdateMessage {
+    /// Create a new UPDATE message.
+    pub fn new<T>(svc_table: &T) -> UpdateMessage
+        where T: ServiceTable {
+        UpdateMessage {
+            svc_table: svc_table.to_simple_table()
+        }
+    }
 }
 
 impl Encode for UpdateMessage {

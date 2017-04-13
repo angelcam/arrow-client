@@ -104,4 +104,12 @@ impl ControlMessageFactory {
             password,
             svc_table)
     }
+
+    /// Create a new UPDATE message.
+    pub fn update<T>(&mut self, svc_table: &T) -> ControlMessage
+        where T: ServiceTable {
+        ControlMessage::update(
+            self.next_id(),
+            svc_table)
+    }
 }

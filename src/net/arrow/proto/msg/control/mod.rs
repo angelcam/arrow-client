@@ -39,6 +39,7 @@ use net::raw::ether::MacAddr;
 use self::status::StatusMessage;
 use self::scan_report::ScanReportMessage;
 use self::register::RegisterMessage;
+use self::update::UpdateMessage;
 
 pub use self::ack::AckMessage;
 pub use self::hup::HupMessage;
@@ -223,7 +224,10 @@ pub struct ControlMessage {
 impl ControlMessage {
     /// Create a new ACK Control Protocol message.
     pub fn ack(msg_id: u16, err: u32) -> ControlMessage {
-        ControlMessage::new(msg_id, ControlMessageType::ACK, AckMessage::new(err))
+        ControlMessage::new(
+            msg_id,
+            ControlMessageType::ACK,
+            AckMessage::new(err))
     }
 
     /// Create a new HUP Control Protocol message.
@@ -288,6 +292,15 @@ impl ControlMessage {
                 uuid,
                 password,
                 svc_table))
+    }
+
+    /// Create a new UPDATE Control Protocol message.
+    pub fn update<T>(msg_id: u16, svc_table: &T) -> ControlMessage
+        where T: ServiceTable {
+        ControlMessage::new(
+            msg_id,
+            ControlMessageType::UPDATE,
+            UpdateMessage::new(svc_table))
     }
 
     /// Create a new Control Protocol message.
