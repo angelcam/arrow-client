@@ -309,6 +309,23 @@ impl MessageBody for Service {
 pub trait ServiceTable {
     /// Get service with a given ID.
     fn get(&self, id: u16) -> Option<Service>;
+
+    /// Convert this service table into a trait object.
+    fn boxed(self) -> BoxServiceTable;
+}
+
+/// Type alias for boxed service table.
+pub type BoxServiceTable = Box<ServiceTable>;
+
+impl ServiceTable for Box<ServiceTable> {
+    fn get(&self, id: u16) -> Option<Service> {
+        self.as_ref()
+            .get(id)
+    }
+
+    fn boxed(self) -> BoxServiceTable {
+        self
+    }
 }
 
 /// Simple service table implementation.
@@ -338,6 +355,10 @@ impl ServiceTable for SimpleServiceTable {
         }
 
         None
+    }
+
+    fn boxed(self) -> BoxServiceTable {
+        Box::new(self)
     }
 }
 

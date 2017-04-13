@@ -22,6 +22,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::Error;
 
 use net::arrow::proto::{
+    BoxServiceTable,
     Service,
     ServiceTable,
     ServiceType,
@@ -144,6 +145,21 @@ impl ServiceTableData {
         }
     }
 
+    /// Get visible service for a given ID.
+    fn get(&self, id: u16) -> Option<Service> {
+        if id == 0 {
+            Some(Service::control())
+        } else if let Some(ref elem) = self.services.get((id - 1) as usize) {
+            if elem.is_visible() {
+                Some(elem.to_service())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     /// Update a given table element and return its ID.
     fn update_element(
         &mut self,
@@ -218,22 +234,6 @@ impl ServiceTableData {
             .map(|elem| elem.to_service());
 
         SimpleServiceTable::from(iter)
-    }
-}
-
-impl ServiceTable for ServiceTableData {
-    fn get(&self, id: u16) -> Option<Service> {
-        if id == 0 {
-            Some(Service::control())
-        } else if let Some(ref elem) = self.services.get((id - 1) as usize) {
-            if elem.is_visible() {
-                Some(elem.to_service())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
     }
 }
 
@@ -318,6 +318,10 @@ impl ServiceTable for SharedServiceTable {
         self.data.lock()
             .unwrap()
             .get(id)
+    }
+
+    fn boxed(self) -> BoxServiceTable {
+        Box::new(self)
     }
 }
 

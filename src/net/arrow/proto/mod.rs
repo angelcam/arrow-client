@@ -64,6 +64,7 @@ use net::arrow::proto::session::SessionManager;
 use net::arrow::proto::utils::ControlMessageFactory;
 
 pub use net::arrow::proto::msg::control::{
+    BoxServiceTable,
     ScanReport,
     Service,
     ServiceTable,
