@@ -16,6 +16,7 @@
 
 use std::io;
 use std::fmt;
+use std::net;
 use std::result;
 
 use std::fs::File;
@@ -92,6 +93,12 @@ impl From<uuid::ParseError> for ConfigError {
 
 impl From<ether::AddrParseError> for ConfigError {
     fn from(err: ether::AddrParseError) -> ConfigError {
+        ConfigError::from(format!("{}", err))
+    }
+}
+
+impl From<net::AddrParseError> for ConfigError {
+    fn from(err: net::AddrParseError) -> ConfigError {
         ConfigError::from(format!("{}", err))
     }
 }

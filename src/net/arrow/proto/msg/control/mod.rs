@@ -41,7 +41,22 @@ pub use self::ack::AckMessage;
 pub use self::hup::HupMessage;
 pub use self::redirect::RedirectMessage;
 pub use self::scan_report::ScanReport;
-pub use self::svc_table::{Service, ServiceTable};
+pub use self::svc_table::{
+    Service,
+    ServiceTable,
+    ServiceType,
+    SimpleServiceTable,
+
+    SVC_TYPE_CONTROL_PROTOCOL,
+    SVC_TYPE_RTSP,
+    SVC_TYPE_LOCKED_RTSP,
+    SVC_TYPE_UNKNOWN_RTSP,
+    SVC_TYPE_UNSUPPORTED_RTSP,
+    SVC_TYPE_HTTP,
+    SVC_TYPE_MJPEG,
+    SVC_TYPE_LOCKED_MJPEG,
+    SVC_TYPE_TCP,
+};
 
 // ACK codes
 pub use self::ack::{

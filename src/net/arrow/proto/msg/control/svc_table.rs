@@ -26,15 +26,15 @@ use net::arrow::proto::msg::MessageBody;
 use net::raw::ether::MacAddr;
 use net::utils::IpAddrEx;
 
-const SVC_TYPE_CONTROL_PROTOCOL: u16 = 0x0000;
-const SVC_TYPE_RTSP:             u16 = 0x0001;
-const SVC_TYPE_LOCKED_RTSP:      u16 = 0x0002;
-const SVC_TYPE_UNKNOWN_RTSP:     u16 = 0x0003;
-const SVC_TYPE_UNSUPPORTED_RTSP: u16 = 0x0004;
-const SVC_TYPE_HTTP:             u16 = 0x0005;
-const SVC_TYPE_MJPEG:            u16 = 0x0006;
-const SVC_TYPE_LOCKED_MJPEG:     u16 = 0x0007;
-const SVC_TYPE_TCP:              u16 = 0xffff;
+pub const SVC_TYPE_CONTROL_PROTOCOL: u16 = 0x0000;
+pub const SVC_TYPE_RTSP:             u16 = 0x0001;
+pub const SVC_TYPE_LOCKED_RTSP:      u16 = 0x0002;
+pub const SVC_TYPE_UNKNOWN_RTSP:     u16 = 0x0003;
+pub const SVC_TYPE_UNSUPPORTED_RTSP: u16 = 0x0004;
+pub const SVC_TYPE_HTTP:             u16 = 0x0005;
+pub const SVC_TYPE_MJPEG:            u16 = 0x0006;
+pub const SVC_TYPE_LOCKED_MJPEG:     u16 = 0x0007;
+pub const SVC_TYPE_TCP:              u16 = 0xffff;
 
 /// Service type.
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
@@ -60,7 +60,8 @@ pub enum ServiceType {
 }
 
 impl ServiceType {
-    fn code(&self) -> u16 {
+    /// Get code of the service type.
+    pub fn code(&self) -> u16 {
         match self {
             &ServiceType::ControlProtocol => SVC_TYPE_CONTROL_PROTOCOL,
             &ServiceType::RTSP            => SVC_TYPE_RTSP,
@@ -138,6 +139,17 @@ pub struct Service {
 }
 
 impl Service {
+    /// Convert a given service into a new one.
+    pub fn new(id: u16, svc: Service) -> Service {
+        Service {
+            svc_type: svc.svc_type,
+            id:       id,
+            mac:      svc.mac,
+            address:  svc.address,
+            path:     svc.path,
+        }
+    }
+
     /// Create a new Control Protocol service.
     pub fn control() -> Service {
         Service {
@@ -237,6 +249,11 @@ impl Service {
         }
     }
 
+    /// Check if this is the Control Protocol service.
+    pub fn is_control(&self) -> bool {
+        self.svc_type == ServiceType::ControlProtocol
+    }
+
     /// Get service type.
     pub fn service_type(&self) -> ServiceType {
         self.svc_type
@@ -291,7 +308,7 @@ impl MessageBody for Service {
 /// Common trait for service table implementations.
 pub trait ServiceTable {
     /// Get service with a given ID.
-    fn get(&self, id: u16) -> Option<&Service>;
+    fn get(&self, id: u16) -> Option<Service>;
 }
 
 /// Simple service table implementation.
@@ -309,10 +326,14 @@ impl<I> From<I> for SimpleServiceTable
 }
 
 impl ServiceTable for SimpleServiceTable {
-    fn get(&self, id: u16) -> Option<&Service> {
+    fn get(&self, id: u16) -> Option<Service> {
+        if id == 0 {
+            return Some(Service::control())
+        }
+
         for svc in &self.services {
             if id == svc.id() {
-                return Some(svc)
+                return Some(svc.clone())
             }
         }
 

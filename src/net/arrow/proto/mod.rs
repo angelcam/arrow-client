@@ -59,14 +59,30 @@ use net::arrow::proto::msg::control::{
     ControlMessageType,
     HupMessage,
     RedirectMessage,
-
-    ServiceTable,
-    ScanReport,
 };
 use net::arrow::proto::session::SessionManager;
 use net::arrow::proto::utils::ControlMessageFactory;
 
+pub use net::arrow::proto::msg::control::{
+    ScanReport,
+    Service,
+    ServiceTable,
+    ServiceType,
+    SimpleServiceTable,
+
+    SVC_TYPE_CONTROL_PROTOCOL,
+    SVC_TYPE_RTSP,
+    SVC_TYPE_LOCKED_RTSP,
+    SVC_TYPE_UNKNOWN_RTSP,
+    SVC_TYPE_UNSUPPORTED_RTSP,
+    SVC_TYPE_HTTP,
+    SVC_TYPE_MJPEG,
+    SVC_TYPE_LOCKED_MJPEG,
+    SVC_TYPE_TCP,
+};
+
 use utils::logger::{Logger, BoxedLogger};
+use utils::svc_table::SharedServiceTable;
 
 /// Currently supported version of the Arrow protocol.
 pub const ARROW_PROTOCOL_VERSION: u8 = 1;
@@ -136,12 +152,11 @@ struct ArrowClientContext<S> {
 impl<S> ArrowClientContext<S>
     where S: Sender {
     /// Create a new Arrow Client.
-    fn new<T>(
+    fn new(
         mut logger: BoxedLogger,
         cmd_sender: S,
-        svc_table: T,
-        tc_handle: TokioCoreHandle) -> ArrowClientContext<S>
-        where T: 'static + ServiceTable {
+        svc_table: SharedServiceTable,
+        tc_handle: TokioCoreHandle) -> ArrowClientContext<S> {
         let cmsg_factory = ControlMessageFactory::new();
         let session_manager = SessionManager::new(
             logger.clone(),
@@ -172,10 +187,7 @@ impl<S> ArrowClientContext<S>
             last_update_chck: t,
         }
     }
-}
 
-impl<S> ArrowClientContext<S>
-    where S: Sender {
     /// Get redirect address (if any).
     fn get_redirect(&self) -> Option<String> {
         self.redirect.as_ref()
@@ -509,12 +521,11 @@ struct ArrowClient<S> {
 impl<S> ArrowClient<S>
     where S: 'static + Sender {
     /// Create a new instance of Arrow Client.
-    fn new<T>(
+    fn new(
         mut logger: BoxedLogger,
         cmd_sender: S,
-        svc_table: T,
-        tc_handle: TokioCoreHandle) -> ArrowClient<S>
-        where T: 'static + ServiceTable {
+        svc_table: SharedServiceTable,
+        tc_handle: TokioCoreHandle) -> ArrowClient<S> {
         let context = ArrowClientContext::new(
             logger.clone(),
             cmd_sender,
@@ -546,10 +557,7 @@ impl<S> ArrowClient<S>
             context: context,
         }
     }
-}
 
-impl<S> ArrowClient<S>
-    where S: Sender {
     /// Get redirect address (if any).
     fn get_redirect(&self) -> Option<String> {
         self.context.borrow()
@@ -585,13 +593,12 @@ impl<S> Stream for ArrowClient<S>
 }
 
 /// Connect Arrow Client to a given address and return either a redirect address or an error.
-pub fn connect<S, T>(
+pub fn connect<S>(
     logger: BoxedLogger,
     cmd_sender: S,
-    svc_table: T,
+    svc_table: SharedServiceTable,
     addr: &str) -> Result<String, ArrowError>
-    where S: 'static + Sender,
-          T: 'static + ServiceTable {
+    where S: 'static + Sender {
     let mut core = TokioCore::new()?;
 
     let addr = addr.to_socket_addrs()

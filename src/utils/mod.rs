@@ -18,6 +18,7 @@
 pub mod logger;
 
 pub mod config;
+pub mod svc_table;
 
 use std::io;
 use std::ptr;

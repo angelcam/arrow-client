@@ -59,6 +59,11 @@ pub struct MacAddr {
 }
 
 impl MacAddr {
+    /// Create a new MAC address with all octets set to zero.
+    pub fn zero() -> MacAddr {
+        MacAddr { bytes: [0; 6] }
+    }
+
     /// Create a new MAC address.
     pub fn new(a: u8, b: u8, c: u8, d: u8, e: u8, f: u8) -> MacAddr {
         MacAddr { bytes: [a, b, c, d, e, f] }

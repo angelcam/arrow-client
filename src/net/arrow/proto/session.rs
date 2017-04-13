@@ -42,6 +42,7 @@ use net::arrow::proto::msg::ArrowMessage;
 use net::arrow::proto::utils::ControlMessageFactory;
 
 use utils::logger::{Logger, BoxedLogger};
+use utils::svc_table::SharedServiceTable;
 
 const INPUT_BUFFER_LIMIT: usize  = 32768;
 const OUTPUT_BUFFER_LIMIT: usize = 4 * 1024 * 1024 * 1024;
@@ -339,7 +340,7 @@ impl SessionErrorHandler {
 pub struct SessionManager {
     logger:       BoxedLogger,
     tc_handle:    TokioCoreHandle,
-    svc_table:    Box<ServiceTable>,
+    svc_table:    SharedServiceTable,
     cmsg_factory: ControlMessageFactory,
     cmsg_queue:   VecDeque<ArrowMessage>,
     sessions:     HashMap<u32, Session>,
@@ -349,16 +350,15 @@ pub struct SessionManager {
 
 impl SessionManager {
     /// Create a new session manager.
-    pub fn new<T>(
+    pub fn new(
         logger: BoxedLogger,
-        svc_table: T,
+        svc_table: SharedServiceTable,
         cmsg_factory: ControlMessageFactory,
-        tc_handle: TokioCoreHandle) -> SessionManager
-        where T: 'static + ServiceTable {
+        tc_handle: TokioCoreHandle) -> SessionManager {
         SessionManager {
             logger:       logger,
             tc_handle:    tc_handle,
-            svc_table:    Box::new(svc_table),
+            svc_table:    svc_table,
             cmsg_factory: cmsg_factory,
             cmsg_queue:   VecDeque::new(),
             sessions:     HashMap::new(),
