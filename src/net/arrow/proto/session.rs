@@ -45,7 +45,7 @@ use net::arrow::proto::utils::ControlMessageFactory;
 use utils::logger::{Logger, BoxedLogger};
 
 const INPUT_BUFFER_LIMIT:  usize = 32768;
-const OUTPUT_BUFFER_LIMIT: usize = 4 * 1024 * 1024 * 1024;
+const OUTPUT_BUFFER_LIMIT: usize = 4 * 1024 * 1024;
 
 const CONNECTION_TIMEOUT: u64 = 20;
 
