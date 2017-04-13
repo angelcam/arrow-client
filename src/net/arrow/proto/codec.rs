@@ -12,13 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io;
-
 use bytes::{Bytes, BytesMut};
 
 use tokio_io::codec::{Decoder, Encoder};
 
-use net::arrow::proto::error::{ArrowError, DecodeError};
+use net::arrow::proto::error::{ArrowError, ConnectionError, DecodeError};
 use net::arrow::proto::msg::ArrowMessage;
 
 /// Common trait for objects that can be encoded as a sequence of bytes.
@@ -73,7 +71,7 @@ pub struct RawCodec;
 
 impl Decoder for RawCodec {
     type Item = Bytes;
-    type Error = io::Error;
+    type Error = ConnectionError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let bytes = src.take()
@@ -89,7 +87,7 @@ impl Decoder for RawCodec {
 
 impl Encoder for RawCodec {
     type Item = Bytes;
-    type Error = io::Error;
+    type Error = ConnectionError;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
         dst.extend(item);

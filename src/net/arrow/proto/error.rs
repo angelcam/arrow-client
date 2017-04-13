@@ -19,7 +19,7 @@ use std::result;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-use tokio_timer::TimerError;
+use tokio_timer::{TimerError, TimeoutError};
 
 /// Message decoding error.
 #[derive(Debug, Clone)]
@@ -169,5 +169,55 @@ impl From<DecodeError> for ArrowError {
 impl From<TimerError> for ArrowError {
     fn from(err: TimerError) -> ArrowError {
         ArrowError::from(format!("timer error: {}", err))
+    }
+}
+
+impl From<ConnectionError> for ArrowError {
+    fn from(err: ConnectionError) -> ArrowError {
+        ArrowError::from(format!("connection error: {}", err))
+    }
+}
+
+/// Connection error.
+#[derive(Debug, Clone)]
+pub struct ConnectionError {
+    msg:  String,
+}
+
+impl Error for ConnectionError {
+    fn description(&self) -> &str {
+        &self.msg
+    }
+}
+
+impl Display for ConnectionError {
+    fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
+        f.write_str(&self.msg)
+    }
+}
+
+impl From<String> for ConnectionError {
+    fn from(msg: String) -> ConnectionError {
+        ConnectionError {
+            msg:  msg
+        }
+    }
+}
+
+impl<'a> From<&'a str> for ConnectionError {
+    fn from(msg: &'a str) -> ConnectionError {
+        ConnectionError::from(msg.to_string())
+    }
+}
+
+impl From<io::Error> for ConnectionError {
+    fn from(err: io::Error) -> ConnectionError {
+        ConnectionError::from(format!("IO error: {}", err))
+    }
+}
+
+impl<T> From<TimeoutError<T>> for ConnectionError {
+    fn from(err: TimeoutError<T>) -> ConnectionError {
+        ConnectionError::from(format!("connection timeout: {}", err))
     }
 }

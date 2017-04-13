@@ -46,7 +46,7 @@ use tokio_timer::Timer;
 use futures_ex::StreamEx;
 
 use net::arrow::proto::codec::{ArrowCodec, FromBytes};
-use net::arrow::proto::error::ArrowError;
+use net::arrow::proto::error::{ArrowError, ConnectionError};
 use net::arrow::proto::msg::ArrowMessage;
 use net::arrow::proto::msg::control::{
     ACK_NO_ERROR,
@@ -91,6 +91,7 @@ use utils::svc_table::SharedServiceTable;
 pub const ARROW_PROTOCOL_VERSION: u8 = 1;
 
 const ACK_TIMEOUT:         f64 = 20.0;
+const CONNECTION_TIMEOUT:  u64 = 20;
 const PING_PERIOD:         f64 = 60.0;
 const UPDATE_CHECK_PERIOD: f64 =  5.0;
 
@@ -650,7 +651,12 @@ pub fn connect<S>(
         svc_table,
         core.handle());
 
-    let client = TcpStream::connect(&addr, &core.handle())
+    let connection = TcpStream::connect(&addr, &core.handle());
+
+    let client = Timer::default()
+        .timeout(
+            connection.map_err(|err| ConnectionError::from(err)),
+            Duration::from_secs(CONNECTION_TIMEOUT))
         .map_err(|err| ArrowError::connection_error(err))
         .and_then(|stream| {
             let framed = stream.framed(ArrowCodec);

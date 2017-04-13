@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io;
-
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::error::Error;
+use std::time::Duration;
 use std::collections::{HashMap, VecDeque};
 
 use bytes::{Bytes, BytesMut};
@@ -33,18 +32,22 @@ use tokio_core::reactor::Handle as TokioCoreHandle;
 
 use tokio_io::AsyncRead;
 
+use tokio_timer::Timer;
+
 use futures_ex::StreamEx;
 
 use net::arrow::proto::{BoxServiceTable, ServiceTable};
 use net::arrow::proto::codec::RawCodec;
-use net::arrow::proto::error::ArrowError;
+use net::arrow::proto::error::{ArrowError, ConnectionError};
 use net::arrow::proto::msg::ArrowMessage;
 use net::arrow::proto::utils::ControlMessageFactory;
 
 use utils::logger::{Logger, BoxedLogger};
 
-const INPUT_BUFFER_LIMIT: usize  = 32768;
+const INPUT_BUFFER_LIMIT:  usize = 32768;
 const OUTPUT_BUFFER_LIMIT: usize = 4 * 1024 * 1024 * 1024;
+
+const CONNECTION_TIMEOUT: u64 = 20;
 
 /// Session context.
 struct SessionContext {
@@ -56,7 +59,7 @@ struct SessionContext {
     input_empty:  Option<Task>,
     output_ready: Option<Task>,
     closed:       bool,
-    error:        Option<io::Error>,
+    error:        Option<ConnectionError>,
 }
 
 impl SessionContext {
@@ -86,7 +89,7 @@ impl SessionContext {
 
         if (self.output.len() + data.len()) > OUTPUT_BUFFER_LIMIT {
             // we cannot backpressure here, so we'll set an error state
-            self.set_error(io::Error::new(io::ErrorKind::Other, "output buffer limit exceeded"));
+            self.set_error(ConnectionError::from("output buffer limit exceeded"));
         } else {
             self.output.extend(data);
 
@@ -106,7 +109,7 @@ impl SessionContext {
     /// * `Async::Ready(None)` if there was no data available and the context
     ///   has been closed
     /// * `Async::NotReady` if there was no data available
-    fn take_input_message(&mut self) -> Poll<Option<ArrowMessage>, io::Error> {
+    fn take_input_message(&mut self) -> Poll<Option<ArrowMessage>, ConnectionError> {
         let data = self.input.take()
             .freeze();
 
@@ -143,9 +146,9 @@ impl SessionContext {
     /// * `AsyncSink::Ready` if all the given data has been inserted into the
     ///   input buffer
     /// * an error if the context has been closed
-    fn push_input_data(&mut self, mut msg: Bytes) -> StartSend<Bytes, io::Error> {
+    fn push_input_data(&mut self, mut msg: Bytes) -> StartSend<Bytes, ConnectionError> {
         if self.closed {
-            return Err(io::Error::new(io::ErrorKind::ConnectionReset, "connection has been closed"))
+            return Err(ConnectionError::from("connection has been closed"))
         }
 
         let mut take = msg.len();
@@ -178,7 +181,7 @@ impl SessionContext {
     /// Flush the input buffer. The method returns:
     /// * `Async::Ready(())` if the input buffer is empty
     /// * `Async::NotReady` if the buffer is not empty
-    fn flush_input_buffer(&mut self) -> Poll<(), io::Error> {
+    fn flush_input_buffer(&mut self) -> Poll<(), ConnectionError> {
         if self.input.len() > 0 {
             // park the current task and wait until the input buffer is empty
             self.input_empty = Some(task::park());
@@ -194,7 +197,7 @@ impl SessionContext {
     /// * `Async::Ready(None)` if the context has been closed and there is
     ///   not data in the output buffer
     /// * `Async::NotReady` if there is no data available
-    fn take_output_data(&mut self) -> Poll<Option<Bytes>, io::Error> {
+    fn take_output_data(&mut self) -> Poll<Option<Bytes>, ConnectionError> {
         let data = self.output.take()
             .freeze();
 
@@ -219,7 +222,7 @@ impl SessionContext {
 
     /// Mark the context as closed and set a given error. Note that this
     /// method does not flush any buffer.
-    fn set_error(&mut self, err: io::Error) {
+    fn set_error(&mut self, err: ConnectionError) {
         // ignore all errors after the connection gets closed
         if !self.closed {
             self.closed = true;
@@ -254,7 +257,7 @@ impl Session {
     /// * `Async::Ready(None)` if there was no data available and the context
     ///   has been closed
     /// * `Async::NotReady` if there was no data available
-    fn take(&mut self) -> Poll<Option<ArrowMessage>, io::Error> {
+    fn take(&mut self) -> Poll<Option<ArrowMessage>, ConnectionError> {
         self.context.borrow_mut()
             .take_input_message()
     }
@@ -289,9 +292,9 @@ struct SessionTransport {
 
 impl Stream for SessionTransport {
     type Item  = Bytes;
-    type Error = io::Error;
+    type Error = ConnectionError;
 
-    fn poll(&mut self) -> Poll<Option<Bytes>, io::Error> {
+    fn poll(&mut self) -> Poll<Option<Bytes>, ConnectionError> {
         self.context.borrow_mut()
             .take_output_data()
     }
@@ -299,19 +302,19 @@ impl Stream for SessionTransport {
 
 impl Sink for SessionTransport {
     type SinkItem  = Bytes;
-    type SinkError = io::Error;
+    type SinkError = ConnectionError;
 
-    fn start_send(&mut self, data: Bytes) -> StartSend<Bytes, io::Error> {
+    fn start_send(&mut self, data: Bytes) -> StartSend<Bytes, ConnectionError> {
         self.context.borrow_mut()
             .push_input_data(data)
     }
 
-    fn poll_complete(&mut self) -> Poll<(), io::Error> {
+    fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
         self.context.borrow_mut()
             .flush_input_buffer()
     }
 
-    fn close(&mut self) -> Poll<(), io::Error> {
+    fn close(&mut self) -> Poll<(), ConnectionError> {
         let mut context = self.context.borrow_mut();
 
         // mark the context as closed
@@ -329,7 +332,7 @@ struct SessionErrorHandler {
 
 impl SessionErrorHandler {
     /// Save a given transport error into the session context.
-    fn set_error(&mut self, err: io::Error) {
+    fn set_error(&mut self, err: ConnectionError) {
         self.context.borrow_mut()
             .set_error(err)
     }
@@ -448,7 +451,12 @@ impl SessionManager {
         let transport = session.transport();
         let mut err_handler = session.error_handler();
 
-        let client = TcpStream::connect(&addr, &self.tc_handle)
+        let connection = TcpStream::connect(&addr, &self.tc_handle);
+
+        let client = Timer::default()
+            .timeout(
+                connection.map_err(|err| ConnectionError::from(err)),
+                Duration::from_secs(CONNECTION_TIMEOUT))
             .and_then(|stream| {
                 let framed = stream.framed(RawCodec);
                 let (sink, stream) = framed.split();
