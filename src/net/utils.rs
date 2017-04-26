@@ -138,13 +138,11 @@ impl Write for MioTcpStream {
 /// Get socket address from a given argument.
 pub fn get_socket_address<T>(s: T) -> Result<SocketAddr, RuntimeError>
     where T: ToSocketAddrs {
-    let mut addrs = try!(s.to_socket_addrs()
-        .or(Err(RuntimeError::from("unable get socket address"))));
-
-    match addrs.next() {
-        Some(addr) => Ok(addr),
-        _          => Err(RuntimeError::from("unable get socket address"))
-    }
+    s.to_socket_addrs()
+        .ok()
+        .ok_or(RuntimeError::from("unable get socket address"))?
+        .next()
+        .ok_or(RuntimeError::from("unable get socket address"))
 }
 
 /// Timeout provider for various network protocols.

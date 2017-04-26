@@ -52,7 +52,7 @@ fn get_utc_timestamp() -> i64 {
 }
 
 /// Helper struct for service table keys.
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 struct ServiceTableKey {
     svc_type: ServiceType,
     mac_addr: Option<MacAddr>,
@@ -76,6 +76,7 @@ impl<'a> From<&'a Service> for ServiceTableKey {
 }
 
 /// Service table element.
+#[derive(Clone)]
 struct ServiceTableElement {
     /// Service.
     service:        Service,
@@ -128,9 +129,23 @@ impl ServiceTableElement {
             self.active
         }
     }
+
+    /// Check if this element is equal to a given service (except service ID and IP address).
+    fn equals(&self, svc: &Service) -> bool {
+        self.service.service_type() == svc.service_type()
+            && self.service.mac() == svc.mac()
+            && self.service.port() == svc.port()
+            && self.service.path() == svc.path()
+    }
+
+    /// Check if this element is equal to a given service (except service ID).
+    fn equals_exact(&self, svc: &Service) -> bool {
+        self.equals(svc) && self.service.address() == svc.address()
+    }
 }
 
 /// Service table internal data.
+#[derive(Clone)]
 struct ServiceTableData {
     map:      HashMap<ServiceTableKey, usize>,
     services: Vec<ServiceTableElement>,
@@ -227,6 +242,40 @@ impl ServiceTableData {
         changed
     }
 
+    /// Check if there is already a given service in the table.
+    fn contains(&self, svc: &Service) -> bool {
+        if svc.is_control() {
+            return true
+        }
+
+        let key = ServiceTableKey::from(svc);
+
+        self.map.contains_key(&key)
+    }
+
+    /// Check if there is already a given service in the table and all service fields
+    /// (except ID) are equal to the given one.
+    fn contains_exact(&self, svc: &Service) -> bool {
+        if svc.is_control() {
+            return true
+        }
+
+        let key = ServiceTableKey::from(svc);
+
+        let index = self.map.get(&key)
+            .map(|index| *index);
+
+        if let Some(index) = index {
+            if let Some(elem) = self.services.get(index) {
+                elem.equals_exact(svc)
+            } else {
+                panic!("given service table element does not exist");
+            }
+        } else {
+            false
+        }
+    }
+
     /// Get SimpleServiceTable consisting of all visible services.
     fn to_simple_table(&self) -> SimpleServiceTable {
         let iter = self.services.iter()
@@ -245,9 +294,9 @@ impl Serialize for ServiceTableData {
     }
 }
 
-impl Deserialize for ServiceTableData {
+impl<'de> Deserialize<'de> for ServiceTableData {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: Deserializer {
+        where D: Deserializer<'de> {
         let table = SerdeServiceTable::deserialize(deserializer)?;
 
         let mut res = ServiceTableData {
@@ -270,7 +319,6 @@ impl Deserialize for ServiceTableData {
 }
 
 /// Service table implementation that can be shared across multiple threads.
-#[derive(Clone)]
 pub struct SharedServiceTable {
     data: Arc<Mutex<ServiceTableData>>,
 }
@@ -304,6 +352,39 @@ impl SharedServiceTable {
             .unwrap()
             .update_active_services()
     }
+
+    /// Check if there is already a given service.
+    pub fn contains(&self, svc: &Service) -> bool {
+        self.data.lock()
+            .unwrap()
+            .contains(svc)
+    }
+
+    /// Check if there is already a given service.
+    pub fn contains_exact(&self, svc: &Service) -> bool {
+        self.data.lock()
+            .unwrap()
+            .contains_exact(svc)
+    }
+
+    /// Get read-only reference to this table.
+    pub fn get_ref(&self) -> SharedServiceTableRef {
+        SharedServiceTableRef {
+            data: self.data.clone()
+        }
+    }
+}
+
+impl Clone for SharedServiceTable {
+    fn clone(&self) -> SharedServiceTable {
+        let cloned = self.data.lock()
+            .unwrap()
+            .clone();
+
+        SharedServiceTable {
+            data: Arc::new(Mutex::new(cloned)),
+        }
+    }
 }
 
 impl ServiceTable for SharedServiceTable {
@@ -333,9 +414,9 @@ impl Serialize for SharedServiceTable {
     }
 }
 
-impl Deserialize for SharedServiceTable {
+impl<'de> Deserialize<'de> for SharedServiceTable {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: Deserializer {
+        where D: Deserializer<'de> {
         let data = ServiceTableData::deserialize(deserializer)?;
 
         let res = SharedServiceTable {
@@ -343,6 +424,30 @@ impl Deserialize for SharedServiceTable {
         };
 
         Ok(res)
+    }
+}
+
+/// Service table implementation that can be shared across multiple threads.
+#[derive(Clone)]
+pub struct SharedServiceTableRef {
+    data: Arc<Mutex<ServiceTableData>>,
+}
+
+impl ServiceTable for SharedServiceTableRef {
+    fn get(&self, id: u16) -> Option<Service> {
+        self.data.lock()
+            .unwrap()
+            .get(id)
+    }
+
+    fn boxed(self) -> BoxServiceTable {
+        Box::new(self)
+    }
+
+    fn to_simple_table(&self) -> SimpleServiceTable {
+        self.data.lock()
+            .unwrap()
+            .to_simple_table()
     }
 }
 
@@ -425,9 +530,9 @@ impl<'a> From<&'a ServiceTableElement> for SerdeService {
         let svc_type = elem.service.service_type();
 
         let mac = elem.service.mac()
-            .unwrap_or(&default_mac);
+            .unwrap_or(default_mac);
         let address = elem.service.address()
-            .unwrap_or(&default_address);
+            .unwrap_or(default_address);
         let path = elem.service.path()
             .unwrap_or("");
 

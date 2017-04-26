@@ -84,8 +84,9 @@ pub use net::arrow::proto::msg::control::{
 
 use net::raw::ether::MacAddr;
 
+use svc_table::SharedServiceTableRef;
+
 use utils::logger::{Logger, BoxedLogger};
-use utils::svc_table::SharedServiceTable;
 
 /// Currently supported version of the Arrow protocol.
 pub const ARROW_PROTOCOL_VERSION: u8 = 1;
@@ -141,7 +142,7 @@ impl ExpectedAck {
 struct ArrowClientContext<S> {
     logger:           BoxedLogger,
     cmd_sender:       S,
-    svc_table:        SharedServiceTable,
+    svc_table:        SharedServiceTableRef,
     tc_handle:        TokioCoreHandle,
     cmsg_factory:     ControlMessageFactory,
     sessions:         SessionManager,
@@ -160,7 +161,7 @@ impl<S> ArrowClientContext<S>
     fn new(
         logger: BoxedLogger,
         cmd_sender: S,
-        svc_table: SharedServiceTable,
+        svc_table: SharedServiceTableRef,
         tc_handle: TokioCoreHandle) -> ArrowClientContext<S> {
         let cmsg_factory = ControlMessageFactory::new();
         let session_manager = SessionManager::new(
@@ -563,7 +564,7 @@ impl<S> ArrowClient<S>
     fn new(
         mut logger: BoxedLogger,
         cmd_sender: S,
-        svc_table: SharedServiceTable,
+        svc_table: SharedServiceTableRef,
         tc_handle: TokioCoreHandle) -> ArrowClient<S> {
         let context = ArrowClientContext::new(
             logger.clone(),
@@ -635,7 +636,7 @@ impl<S> Stream for ArrowClient<S>
 pub fn connect<S>(
     logger: BoxedLogger,
     cmd_sender: S,
-    svc_table: SharedServiceTable,
+    svc_table: SharedServiceTableRef,
     addr: &str) -> Result<String, ArrowError>
     where S: 'static + Sender {
     let mut core = TokioCore::new()?;

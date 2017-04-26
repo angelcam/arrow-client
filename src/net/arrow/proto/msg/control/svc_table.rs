@@ -15,7 +15,7 @@
 use std::mem;
 
 use std::iter::FromIterator;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use bytes::BytesMut;
 
@@ -97,9 +97,9 @@ impl<'a> From<&'a Service> for ServiceHeader {
                 Ipv4Addr::new(0, 0, 0, 0), 0));
 
         let maddress = service.mac()
-            .unwrap_or(&null_maddress);
+            .unwrap_or(null_maddress);
         let saddress = service.address()
-            .unwrap_or(&null_saddress);
+            .unwrap_or(null_saddress);
         let iaddress = saddress.ip();
 
         ServiceHeader {
@@ -265,13 +265,23 @@ impl Service {
     }
 
     /// Get service MAC address.
-    pub fn mac(&self) -> Option<&MacAddr> {
-        self.mac.as_ref()
+    pub fn mac(&self) -> Option<MacAddr> {
+        self.mac
     }
 
     /// Get service IP address and port.
-    pub fn address(&self) -> Option<&SocketAddr> {
-        self.address.as_ref()
+    pub fn address(&self) -> Option<SocketAddr> {
+        self.address
+    }
+
+    /// Get service IP address.
+    pub fn ip_address(&self) -> Option<IpAddr> {
+        self.address.map(|addr| addr.ip())
+    }
+
+    /// Get service port.
+    pub fn port(&self) -> Option<u16> {
+        self.address.map(|addr| addr.port())
     }
 
     /// Get service path.

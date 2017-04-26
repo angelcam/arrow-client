@@ -63,6 +63,7 @@ impl Encode for ScanReportHeader {
 type HostRecordKey = (MacAddr, IpAddr);
 
 /// Scan report.
+#[derive(Clone)]
 pub struct ScanReport {
     hosts:    HashMap<HostRecordKey, HostRecord>,
     services: HashSet<Service>,
