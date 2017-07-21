@@ -242,11 +242,10 @@ impl<S> ArrowClientContext<S>
                 self.check_for_updates();
             }
 
-            // if there is an ACK timeout and the task consuming Arrow
-            // Messages has been parked, unpark it
+            // notify the task consuming Arrow Messages about an ACK timeout
             if self.ack_timeout() {
                 if let Some(task) = self.task.take() {
-                    task.unpark();
+                    task.notify();
                 }
             }
         }
@@ -555,7 +554,7 @@ impl<S> Stream for ArrowClientContext<S>
             }
         }
 
-        self.task = Some(task::park());
+        self.task = Some(task::current());
 
         Ok(Async::NotReady)
     }

@@ -97,7 +97,7 @@ impl SessionContext {
             // there is some data available again
             if self.output.len() > 0 {
                 if let Some(task) = self.output_ready.take() {
-                    task.unpark();
+                    task.notify();
                 }
             }
         }
@@ -116,7 +116,7 @@ impl SessionContext {
         // we MUST notify any possible task feeding the input buffer that the
         // buffer is empty again
         if let Some(task) = self.input_empty.take() {
-            task.unpark();
+            task.notify();
         }
 
         if data.len() > 0 {
@@ -132,9 +132,9 @@ impl SessionContext {
                 None      => Ok(Async::Ready(None)),
             }
         } else {
-            // park the current task and wait until there is some data
+            // save the current task and wait until there is some data
             // available in the input buffer
-            self.input_ready = Some(task::park());
+            self.input_ready = Some(task::current());
 
             Ok(Async::NotReady)
         }
@@ -163,14 +163,14 @@ impl SessionContext {
         // there is some data available again
         if self.input.len() > 0 {
             if let Some(task) = self.input_ready.take() {
-                task.unpark();
+                task.notify();
             }
         }
 
         if msg.len() > 0 {
-            // park the current task and wait until there is some space in
+            // save the current task and wait until there is some space in
             // the input buffer again
-            self.input_empty = Some(task::park());
+            self.input_empty = Some(task::current());
 
             Ok(AsyncSink::NotReady(msg))
         } else {
@@ -183,8 +183,8 @@ impl SessionContext {
     /// * `Async::NotReady` if the buffer is not empty
     fn flush_input_buffer(&mut self) -> Poll<(), ConnectionError> {
         if self.input.len() > 0 {
-            // park the current task and wait until the input buffer is empty
-            self.input_empty = Some(task::park());
+            // save the current task and wait until the input buffer is empty
+            self.input_empty = Some(task::current());
 
             Ok(Async::NotReady)
         } else {
@@ -206,9 +206,9 @@ impl SessionContext {
         } else if self.closed {
             Ok(Async::Ready(None))
         } else {
-            // park the current task and wait until there is some data in
+            // save the current task and wait until there is some data in
             // the output buffer available again
-            self.output_ready = Some(task::park());
+            self.output_ready = Some(task::current());
 
             Ok(Async::NotReady)
         }
@@ -422,9 +422,9 @@ impl SessionManager {
 
             self.poll_order.push_back(session_id);
 
-            // unpark the message consuming task
+            // notify the message consuming task
             if let Some(task) = self.new_session.take() {
-                task.unpark();
+                task.notify();
             }
         }
 
@@ -544,7 +544,7 @@ impl Stream for SessionManager {
 
         // the session manager needs to be re-polled in case there is a new
         // session
-        self.new_session = Some(task::park());
+        self.new_session = Some(task::current());
 
         Ok(Async::NotReady)
     }
