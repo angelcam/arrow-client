@@ -553,6 +553,26 @@ impl ApplicationConfig {
         self.version
     }
 
+    /// Get Arrow Client UUID.
+    pub fn get_uuid(&self) -> Uuid {
+        self.uuid
+    }
+
+    /// Get Arrow Client password.
+    pub fn get_password(&self) -> Uuid {
+        self.passwd
+    }
+
+    /// Get Arrow Client MAC address.
+    pub fn get_mac_address(&self) -> MacAddr {
+        self.arrow_mac
+    }
+
+    /// Check if the application is in the diagnostic mode.
+    pub fn get_diagnostic_mode(&self) -> bool {
+        self.diagnostic_mode
+    }
+
     /// Get connection state file.
     pub fn get_connection_state_file(&self) -> &str {
         &self.state_file

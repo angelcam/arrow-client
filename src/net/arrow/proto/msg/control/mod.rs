@@ -73,6 +73,11 @@ pub use self::ack::{
     ACK_INTERNAL_SERVER_ERROR,
 };
 
+// status flags
+pub use self::status::{
+    STATUS_FLAG_SCAN,
+};
+
 // message type constants
 const CMSG_ACK:             u16 = 0x0000;
 const CMSG_PING:            u16 = 0x0001;

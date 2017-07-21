@@ -23,12 +23,15 @@ use std::sync::{Arc, Mutex};
 use config::ApplicationConfig;
 
 use net::arrow::proto::{ScanReport, Service};
+use net::raw::ether::MacAddr;
 
 use svc_table::SharedServiceTableRef;
 
 use utils;
 
 use utils::logger::{Logger, BoxedLogger, Severity};
+
+use uuid::Uuid;
 
 /// Arrow service connection state.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -81,6 +84,26 @@ impl ApplicationContextData {
         self.config.get_version()
     }
 
+    /// Get Arrow Client UUID.
+    fn get_arrow_uuid(&self) -> Uuid {
+        self.config.get_uuid()
+    }
+
+    /// Get Arrow Client password.
+    fn get_arrow_password(&self) -> Uuid {
+        self.config.get_password()
+    }
+
+    /// Get Arrow Client MAC address.
+    fn get_arrow_mac_address(&self) -> MacAddr {
+        self.config.get_mac_address()
+    }
+
+    /// Check if the application is in the diagnostic mode.
+    fn get_diagnostic_mode(&self) -> bool {
+        self.config.get_diagnostic_mode()
+    }
+
     /// Get application logger.
     fn get_logger(&self) -> BoxedLogger {
         self.logger.clone()
@@ -89,6 +112,16 @@ impl ApplicationContextData {
     ///
     fn get_ssl_context(&self) -> () {
         self.config.get_ssl_context()
+    }
+
+    /// Set the state of the network scanner thread.
+    fn set_scanning(&mut self, scanning: bool) {
+        self.scanning = scanning;
+    }
+
+    /// Check if the network scanner thread is running right now.
+    fn is_scanning(&self) -> bool {
+        self.scanning
     }
 
     /// Get the last scan report.
@@ -161,6 +194,34 @@ impl ApplicationContext {
             .get_config_version()
     }
 
+    /// Get Arrow Client UUID.
+    pub fn get_arrow_uuid(&self) -> Uuid {
+        self.data.lock()
+            .unwrap()
+            .get_arrow_uuid()
+    }
+
+    /// Get Arrow Client password.
+    pub fn get_arrow_password(&self) -> Uuid {
+        self.data.lock()
+            .unwrap()
+            .get_arrow_password()
+    }
+
+    /// Get Arrow Client MAC address.
+    pub fn get_arrow_mac_address(&self) -> MacAddr {
+        self.data.lock()
+            .unwrap()
+            .get_arrow_mac_address()
+    }
+
+    /// Check if the application is in the diagnostic mode.
+    pub fn get_diagnostic_mode(&self) -> bool {
+        self.data.lock()
+            .unwrap()
+            .get_diagnostic_mode()
+    }
+
     /// Get application logger.
     pub fn get_logger(&self) -> BoxedLogger {
         self.data.lock()
@@ -173,6 +234,20 @@ impl ApplicationContext {
         self.data.lock()
             .unwrap()
             .get_ssl_context()
+    }
+
+    /// Set the state of the network scanner thread.
+    pub fn set_scanning(&mut self, scanning: bool) {
+        self.data.lock()
+            .unwrap()
+            .set_scanning(scanning)
+    }
+
+    /// Check if the network scanner thread is running right now.
+    pub fn is_scanning(&self) -> bool {
+        self.data.lock()
+            .unwrap()
+            .is_scanning()
     }
 
     /// Get the last scan report.

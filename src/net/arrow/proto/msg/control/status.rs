@@ -22,6 +22,9 @@ use net::arrow::proto::codec::Encode;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
 
+/// Status flag indicating that there is a network scan currently in progress.
+pub const STATUS_FLAG_SCAN: u32 = 0x00000001;
+
 /// STATUS message.
 #[repr(packed)]
 pub struct StatusMessage {

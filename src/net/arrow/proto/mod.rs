@@ -45,6 +45,8 @@ use tokio_timer::Timer;
 
 use futures_ex::StreamEx;
 
+use context::ApplicationContext;
+
 use net::arrow::proto::codec::{ArrowCodec, FromBytes};
 use net::arrow::proto::error::{ArrowError, ConnectionError};
 use net::arrow::proto::msg::ArrowMessage;
@@ -53,6 +55,8 @@ use net::arrow::proto::msg::control::{
     ACK_UNSUPPORTED_PROTOCOL_VERSION,
     ACK_UNAUTHORIZED,
     ACK_INTERNAL_SERVER_ERROR,
+
+    STATUS_FLAG_SCAN,
 
     AckMessage,
     ControlMessage,
@@ -141,6 +145,7 @@ impl ExpectedAck {
 /// Arrow Client implementation.
 struct ArrowClientContext<S> {
     logger:           BoxedLogger,
+    app_context:      ApplicationContext,
     cmd_sender:       S,
     svc_table:        SharedServiceTableRef,
     tc_handle:        TokioCoreHandle,
@@ -159,10 +164,16 @@ impl<S> ArrowClientContext<S>
     where S: Sender {
     /// Create a new Arrow Client.
     fn new(
-        logger: BoxedLogger,
+        app_context: ApplicationContext,
         cmd_sender: S,
-        svc_table: SharedServiceTableRef,
         tc_handle: TokioCoreHandle) -> ArrowClientContext<S> {
+        let logger = app_context.get_logger();
+        let svc_table = app_context.get_service_table();
+
+        let mac = app_context.get_arrow_mac_address();
+        let uuid = app_context.get_arrow_uuid();
+        let passwd = app_context.get_arrow_password();
+
         let cmsg_factory = ControlMessageFactory::new();
         let session_manager = SessionManager::new(
             logger.clone(),
@@ -174,6 +185,7 @@ impl<S> ArrowClientContext<S>
 
         let mut client = ArrowClientContext {
             logger:           logger,
+            app_context:      app_context,
             cmd_sender:       cmd_sender,
             svc_table:        svc_table,
             tc_handle:        tc_handle,
@@ -189,9 +201,11 @@ impl<S> ArrowClientContext<S>
         };
 
         client.send_register_message(
-            MacAddr::zero(),    // TODO: get client mac address from app config
-            [0u8; 16],          // TODO: get client UUID from app config
-            [0u8; 16]);         // TODO: get client password from app config
+            mac,
+            uuid.as_bytes()
+                .clone(),
+            passwd.as_bytes()
+                .clone());
 
         client
     }
@@ -358,11 +372,8 @@ impl<S> ArrowClientContext<S>
             // switch the protocol state into normal operation
             self.state = ProtocolState::Established;
 
-            // TODO: get the diagnostic mode state
-            let diagnostic_mode = false;
-
             // report a fake redirect in case of the diagnostic mode
-            if diagnostic_mode {
+            if self.app_context.get_diagnostic_mode() {
                 self.redirect = Some(String::new());
             }
 
@@ -437,10 +448,9 @@ impl<S> ArrowClientContext<S>
 
         let mut status_flags = 0;
 
-        // TODO: get application context
-        /*if self.app_context.is_scanning() {
+        if self.app_context.is_scanning() {
             status_flags |= STATUS_FLAG_SCAN;
-        }*/
+        }
 
         log_debug!(self.logger, "sending a STATUS message...");
 
@@ -462,14 +472,11 @@ impl<S> ArrowClientContext<S>
 
         let header = msg.header();
 
-        // TODO: get scan report from application context
-        let report = ScanReport::new();
-
         log_debug!(self.logger, "sending a SCAN_REPORT message...");
 
         let msg = self.cmsg_factory.scan_report(
             header.msg_id,
-            report);
+            self.app_context.get_scan_report());
 
         self.send_control_message(msg);
 
@@ -562,14 +569,14 @@ impl<S> ArrowClient<S>
     where S: 'static + Sender {
     /// Create a new instance of Arrow Client.
     fn new(
-        mut logger: BoxedLogger,
+        app_context: ApplicationContext,
         cmd_sender: S,
-        svc_table: SharedServiceTableRef,
         tc_handle: TokioCoreHandle) -> ArrowClient<S> {
+        let mut logger = app_context.get_logger();
+
         let context = ArrowClientContext::new(
-            logger.clone(),
+            app_context,
             cmd_sender,
-            svc_table,
             tc_handle.clone());
 
         let context = Rc::new(RefCell::new(context));
@@ -634,9 +641,8 @@ impl<S> Stream for ArrowClient<S>
 
 /// Connect Arrow Client to a given address and return either a redirect address or an error.
 pub fn connect<S>(
-    logger: BoxedLogger,
+    app_context: ApplicationContext,
     cmd_sender: S,
-    svc_table: SharedServiceTableRef,
     addr: &str) -> Result<String, ArrowError>
     where S: 'static + Sender {
     let mut core = TokioCore::new()?;
@@ -647,9 +653,8 @@ pub fn connect<S>(
         .ok_or(ArrowError::connection_error("unable to resolve a given address"))?;
 
     let aclient = ArrowClient::new(
-        logger,
+        app_context,
         cmd_sender,
-        svc_table,
         core.handle());
 
     let connection = TcpStream::connect(&addr, &core.handle());
