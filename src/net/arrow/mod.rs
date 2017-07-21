@@ -16,10 +16,10 @@
 
 #[macro_use]
 pub mod error;
-pub mod protocol;
+//pub mod protocol;
 pub mod proto;
 
-use std::cmp;
+/*use std::cmp;
 use std::mem;
 use std::result;
 
@@ -1285,4 +1285,4 @@ impl<L: Logger + Clone, Q: Sender<Command>> ArrowClient<L, Q> {
             _             => panic!("result expected")
         }
     }
-}
+}*/

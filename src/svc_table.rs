@@ -40,7 +40,7 @@ use net::arrow::proto::{
 };
 use net::raw::ether::MacAddr;
 
-use utils::config::ConfigError;
+use config::ConfigError;
 
 const ACTIVE_THRESHOLD: i64 = 1200;
 

@@ -19,6 +19,10 @@ use std::result;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+use utils::RuntimeError;
+
+use native_tls;
+
 use tokio_timer::{TimerError, TimeoutError};
 
 /// Message decoding error.
@@ -178,6 +182,12 @@ impl From<ConnectionError> for ArrowError {
     }
 }
 
+impl From<RuntimeError> for ArrowError {
+    fn from(err: RuntimeError) -> ArrowError {
+        ArrowError::from(format!("runtime error: {}", err))
+    }
+}
+
 /// Connection error.
 #[derive(Debug, Clone)]
 pub struct ConnectionError {
@@ -213,6 +223,12 @@ impl<'a> From<&'a str> for ConnectionError {
 impl From<io::Error> for ConnectionError {
     fn from(err: io::Error) -> ConnectionError {
         ConnectionError::from(format!("IO error: {}", err))
+    }
+}
+
+impl From<native_tls::Error> for ConnectionError {
+    fn from(err: native_tls::Error) -> ConnectionError {
+        ConnectionError::from(format!("TLS error: {}", err))
     }
 }
 

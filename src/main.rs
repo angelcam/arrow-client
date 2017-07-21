@@ -14,13 +14,12 @@
 
 //! Arrow Client definitions.
 
-extern crate mio;
 extern crate libc;
 extern crate regex;
+extern crate native_tls;
 extern crate openssl;
 extern crate time;
 extern crate uuid;
-extern crate rustc_serialize;
 
 extern crate bytes;
 
@@ -36,6 +35,7 @@ extern crate serde_json;
 extern crate tokio_core;
 extern crate tokio_io;
 extern crate tokio_timer;
+extern crate tokio_tls;
 
 pub mod futures_ex;
 
@@ -48,7 +48,7 @@ mod config;
 mod context;
 mod svc_table;
 
-use std::io;
+/*use std::io;
 use std::env;
 use std::process;
 use std::thread;
@@ -1383,4 +1383,8 @@ fn main() {
 
     event_loop.run(&mut cmd_handler)
         .unwrap();
+}*/
+
+fn main() {
+    println!("Hello, World!!!");
 }

@@ -21,7 +21,7 @@ use std::result;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-use mio;
+//use mio;
 
 use openssl::ssl;
 
@@ -69,7 +69,7 @@ macro_rules! try_arr {
     };
 }
 
-/// Type alias for Result with ArrowError.
+/*// Type alias for Result with ArrowError.
 pub type Result<T> = result::Result<T, ArrowError>;
 
 /// Arrow error kinds.
@@ -199,4 +199,4 @@ impl From<ssl::Error> for ArrowError {
     fn from(err: ssl::Error) -> ArrowError {
         ArrowError::from(format!("OpenSSL error: {}", err))
     }
-}
+}*/

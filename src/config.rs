@@ -12,15 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io;
+use std;
+
 use std::fmt;
 use std::process;
 
 use std::env::Args;
 use std::error::Error;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::path::Path;
 use std::str::FromStr;
 
 use net;
@@ -32,9 +34,21 @@ use net::raw::devices::EthernetDevice;
 use svc_table::{SharedServiceTable, SharedServiceTableRef};
 
 use utils;
+
+use utils::RuntimeError;
+
 use utils::logger;
 
 use utils::logger::{BoxedLogger, Logger, Severity};
+
+use native_tls::{Protocol, TlsConnector};
+use native_tls::backend::openssl::TlsConnectorBuilderExt;
+
+use openssl::ssl::{
+    SSL_OP_NO_COMPRESSION,
+
+    SslContextBuilder,
+};
 
 use regex::Regex;
 
@@ -61,6 +75,16 @@ const RTSP_PATHS_FILE: &'static str = "/etc/arrow/rtsp-paths";
 /// A file containing MJPEG paths tested on service discovery (one path per
 /// line).
 const MJPEG_PATHS_FILE: &'static str = "/etc/arrow/mjpeg-paths";
+
+
+/// List of TLS protocols that can be used for connections to Arrow services.
+const SSL_METHODS: &'static [Protocol] = &[
+    Protocol::Tlsv12
+];
+
+/// List of cipher that can be used for TLS connections to Arrow services.
+const SSL_CIPHER_LIST: &'static str = "HIGH:!aNULL:!kRSA:!PSK:!MD5:!RC4";
+
 
 /// Arrow configuration loading/parsing/saving error.
 #[derive(Debug, Clone)]
@@ -92,14 +116,26 @@ impl<'a> From<&'a str> for ConfigError {
     }
 }
 
-impl From<io::Error> for ConfigError {
-    fn from(err: io::Error) -> ConfigError {
+impl From<std::io::Error> for ConfigError {
+    fn from(err: std::io::Error) -> ConfigError {
         ConfigError::from(format!("{}", err))
     }
 }
 
 impl From<serde_json::Error> for ConfigError {
     fn from(err: serde_json::Error) -> ConfigError {
+        ConfigError::from(format!("{}", err))
+    }
+}
+
+impl From<std::net::AddrParseError> for ConfigError {
+    fn from(err: std::net::AddrParseError) -> ConfigError {
+        ConfigError::from(format!("{}", err))
+    }
+}
+
+impl From<net::raw::ether::AddrParseError> for ConfigError {
+    fn from(err: net::raw::ether::AddrParseError) -> ConfigError {
         ConfigError::from(format!("{}", err))
     }
 }
@@ -583,9 +619,38 @@ impl ApplicationConfig {
         self.logger.clone()
     }
 
-    ///
-    pub fn get_ssl_context(&self) -> () {
-        () // TODO
+    /// Get TLS connector.
+    pub fn get_tls_connector(&self) -> Result<TlsConnector, RuntimeError> {
+        let mut builder = TlsConnector::builder()
+            .map_err(|err| RuntimeError::from(
+                format!("unable to create a TLS connection builder: {}", err)
+            ))?;
+
+        builder.supported_protocols(SSL_METHODS)
+            .map_err(|err| RuntimeError::from(
+                format!("unable to set supported TLS protocols: {}", err)
+            ))?;
+
+        {
+            let ssl_ctx_builder = builder.builder_mut()
+                .builder_mut();
+
+            ssl_ctx_builder.set_verify_depth(4);
+            ssl_ctx_builder.set_options(SSL_OP_NO_COMPRESSION);
+            ssl_ctx_builder.set_cipher_list(SSL_CIPHER_LIST)
+                .map_err(|err| RuntimeError::from(
+                    format!("unable to set TLS cipher list: {}", err)
+                ))?;
+
+            for ca_cert in &self.ca_certificates {
+                ssl_ctx_builder.load_ca_certificates(ca_cert)?;
+            }
+        }
+
+        builder.build()
+            .map_err(|err| RuntimeError::from(
+                format!("unable to create a TLS connector: {}", err)
+            ))
     }
 
     /// Get read-only reference to the shared service table.
@@ -769,6 +834,57 @@ fn parse_mjpeg_url(url: &str) -> Result<Service, ConfigError> {
         }
     } else {
         Err(ConfigError::from(format!("invalid HTTP URL given: {}", url)))
+    }
+}
+
+/// Check if a given file is a certificate file.
+fn is_cert_file<P: AsRef<Path>>(path: P) -> bool {
+    let path = path.as_ref();
+
+    if let Some(ext) = path.extension() {
+        let ext = ext.to_string_lossy();
+
+        match &ext.to_lowercase() as &str {
+            "der" => true,
+            "cer" => true,
+            "crt" => true,
+            "pem" => true,
+            _ => false
+        }
+    } else {
+        false
+    }
+}
+
+/// Simple extension to the SslContextBuilder.
+trait SslContextBuilderExt {
+    /// Load all CA certificates from a given path.
+    fn load_ca_certificates<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RuntimeError>;
+}
+
+impl SslContextBuilderExt for SslContextBuilder {
+    fn load_ca_certificates<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RuntimeError> {
+        let path = path.as_ref();
+
+        if path.is_dir() {
+            let dir = path.read_dir()
+                .map_err(|err| RuntimeError::from(format!("{}", err)))?;
+
+            for entry in dir {
+                let entry = entry.map_err(|err| RuntimeError::from(format!("{}", err)))?;
+
+                let path = entry.path();
+
+                if path.is_dir() || is_cert_file(&path) {
+                    self.load_ca_certificates(&path)?;
+                }
+            }
+
+            Ok(())
+        } else {
+            self.set_ca_file(&path)
+                .map_err(|err| RuntimeError::from(format!("{}", err)))
+        }
     }
 }
 

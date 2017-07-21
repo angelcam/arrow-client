@@ -14,7 +14,7 @@
 
 //! Arrow Box config definitions.
 
-use std::io;
+/*use std::io;
 use std::fmt;
 use std::net;
 use std::result;
@@ -310,4 +310,4 @@ impl AppContext {
             scan_report:     ScanReport::new()
         }
     }
-}
+}*/

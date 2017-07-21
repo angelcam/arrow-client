@@ -20,14 +20,14 @@ use std::ptr;
 use std::io::{Read, Write, ErrorKind};
 use std::net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 
-use mio::tcp::TcpStream;
-use mio::{EventLoop, EventSet, Token, PollOpt, Handler};
+//use mio::tcp::TcpStream;
+//use mio::{EventLoop, EventSet, Token, PollOpt, Handler};
 
 use utils::RuntimeError;
 
 use time;
 
-/// Register a given TCP stream in a given event loop.
+/*// Register a given TCP stream in a given event loop.
 pub fn register_socket<H: Handler>(
     token: Token,
     stream: &TcpStream,
@@ -133,7 +133,7 @@ impl Write for MioTcpStream {
     fn flush(&mut self) -> io::Result<()> {
         self.stream.flush()
     }
-}
+}*/
 
 /// Get socket address from a given argument.
 pub fn get_socket_address<T>(s: T) -> Result<SocketAddr, RuntimeError>

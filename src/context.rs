@@ -29,7 +29,11 @@ use svc_table::SharedServiceTableRef;
 
 use utils;
 
-use utils::logger::{Logger, BoxedLogger, Severity};
+use utils::RuntimeError;
+
+use utils::logger::{BoxedLogger, Severity};
+
+use native_tls::TlsConnector;
 
 use uuid::Uuid;
 
@@ -109,9 +113,9 @@ impl ApplicationContextData {
         self.logger.clone()
     }
 
-    ///
-    fn get_ssl_context(&self) -> () {
-        self.config.get_ssl_context()
+    /// Get TLS connector.
+    fn get_tls_connector(&self) -> Result<TlsConnector, RuntimeError> {
+        self.config.get_tls_connector()
     }
 
     /// Set the state of the network scanner thread.
@@ -161,7 +165,7 @@ impl ApplicationContextData {
     fn save_connection_state(&self) -> Result<(), io::Error> {
         let mut file = File::create(self.config.get_connection_state_file())?;
 
-        writeln!(&mut file, "{}", self.conn_state);
+        writeln!(&mut file, "{}", self.conn_state)?;
 
         Ok(())
     }
@@ -229,11 +233,11 @@ impl ApplicationContext {
             .get_logger()
     }
 
-    ///
-    pub fn get_ssl_context(&self) -> () {
+    /// Get TLS connector.
+    pub fn get_tls_connector(&self) -> Result<TlsConnector, RuntimeError> {
         self.data.lock()
             .unwrap()
-            .get_ssl_context()
+            .get_tls_connector()
     }
 
     /// Set the state of the network scanner thread.

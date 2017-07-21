@@ -21,7 +21,7 @@ pub mod http;
 #[cfg(feature = "discovery")]
 pub mod discovery;
 
-pub mod ssl;
+//pub mod ssl;
 pub mod raw;
 pub mod arrow;
 pub mod utils;

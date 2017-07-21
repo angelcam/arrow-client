@@ -43,6 +43,8 @@ use tokio_io::AsyncRead;
 
 use tokio_timer::Timer;
 
+use tokio_tls::TlsConnectorExt;
+
 use futures_ex::StreamEx;
 
 use context::ApplicationContext;
@@ -644,24 +646,33 @@ pub fn connect<S>(
     cmd_sender: S,
     addr: &str) -> Result<String, ArrowError>
     where S: 'static + Sender {
-    let mut core = TokioCore::new()?;
+    let mut core = TokioCore::new()
+        .map_err(|err| ArrowError::other(err))?;
 
     let addr = addr.to_socket_addrs()
         .map_err(|err| ArrowError::connection_error(err))?
         .next()
         .ok_or(ArrowError::connection_error("unable to resolve a given address"))?;
 
+    let tls_connector = app_context.get_tls_connector()
+        .map_err(|err| ArrowError::other(err))?;
+
     let aclient = ArrowClient::new(
         app_context,
         cmd_sender,
         core.handle());
 
-    let connection = TcpStream::connect(&addr, &core.handle());
+    let connection = TcpStream::connect(&addr, &core.handle())
+        .map_err(|err| ConnectionError::from(err))
+        .and_then(|socket| {
+            // XXX: replace this beast with "connect_async" once we stop using the self-signed
+            // certificate
+            tls_connector.danger_connect_async_without_providing_domain_for_certificate_verification_and_server_name_indication(socket)
+                .map_err(|err| ConnectionError::from(err))
+        });
 
     let client = Timer::default()
-        .timeout(
-            connection.map_err(|err| ConnectionError::from(err)),
-            Duration::from_secs(CONNECTION_TIMEOUT))
+        .timeout(connection, Duration::from_secs(CONNECTION_TIMEOUT))
         .map_err(|err| ArrowError::connection_error(err))
         .and_then(|stream| {
             let framed = stream.framed(ArrowCodec);
