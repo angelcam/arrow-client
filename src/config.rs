@@ -584,6 +584,14 @@ pub struct ApplicationConfig {
 }
 
 impl ApplicationConfig {
+    /// Create a new application configuration. The methods reads all command line arguments and
+    /// loads the configuration file.
+    pub fn create() -> Result<ApplicationConfig, ConfigError> {
+        ApplicationConfigBuilder::new()?
+            .parse(std::env::args())?
+            .build()
+    }
+
     /// Get version of the configuration.
     pub fn get_version(&self) -> usize {
         self.version
