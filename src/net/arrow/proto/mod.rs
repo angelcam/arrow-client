@@ -41,8 +41,6 @@ use tokio_core::reactor::Handle as TokioCoreHandle;
 
 use tokio_io::AsyncRead;
 
-use tokio_timer::Timer;
-
 use tokio_tls::TlsConnectorExt;
 
 use futures_ex::StreamEx;
@@ -91,6 +89,8 @@ pub use net::arrow::proto::msg::control::{
 use net::raw::ether::MacAddr;
 
 use svc_table::SharedServiceTableRef;
+
+use timer::Timer;
 
 use utils::logger::{Logger, BoxedLogger};
 
@@ -178,8 +178,7 @@ impl<S> ArrowClientContext<S>
 
         let cmsg_factory = ControlMessageFactory::new();
         let session_manager = SessionManager::new(
-            logger.clone(),
-            svc_table.clone(),
+            app_context.clone(),
             cmsg_factory.clone(),
             tc_handle.clone());
 
@@ -232,7 +231,7 @@ impl<S> ArrowClientContext<S>
     }
 
     /// Trigger all periodical tasks.
-    fn time_event(&mut self) -> Result<(), ArrowError> {
+    fn time_event(&mut self) {
         let t = time::precise_time_s();
 
         if self.state == ProtocolState::Established {
@@ -251,8 +250,6 @@ impl<S> ArrowClientContext<S>
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Check if the service table has been updated.
@@ -573,10 +570,8 @@ impl<S> ArrowClient<S>
         app_context: ApplicationContext,
         cmd_sender: S,
         tc_handle: TokioCoreHandle) -> ArrowClient<S> {
-        let mut logger = app_context.get_logger();
-
         let context = ArrowClientContext::new(
-            app_context,
+            app_context.clone(),
             cmd_sender,
             tc_handle.clone());
 
@@ -584,20 +579,14 @@ impl<S> ArrowClient<S>
 
         let event_handler = context.clone();
 
-        let events = Timer::default()
-            .interval(Duration::from_millis(1000))
-            .map_err(|err| ArrowError::from(err))
-            .for_each(move |_| {
-                event_handler.borrow_mut()
-                    .time_event()
-            })
-            .then(move |res| {
-                if let Err(err) = res {
-                    log_warn!(logger, "time event error: {}", err);
+        let events = app_context.get_timer()
+            .create_periodic_task(
+                Duration::from_millis(1000),
+                move || {
+                    event_handler.borrow_mut()
+                        .time_event()
                 }
-
-                Ok(())
-            });
+            );
 
         tc_handle.spawn(events);
 
@@ -658,7 +647,7 @@ pub fn connect<S>(
         .map_err(|err| ArrowError::other(err))?;
 
     let aclient = ArrowClient::new(
-        app_context,
+        app_context.clone(),
         cmd_sender,
         core.handle());
 
@@ -671,7 +660,7 @@ pub fn connect<S>(
                 .map_err(|err| ConnectionError::from(err))
         });
 
-    let client = Timer::default()
+    let client = app_context.get_timer()
         .timeout(connection, Duration::from_secs(CONNECTION_TIMEOUT))
         .map_err(|err| ArrowError::connection_error(err))
         .and_then(|stream| {

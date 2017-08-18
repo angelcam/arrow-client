@@ -27,6 +27,8 @@ use net::raw::ether::MacAddr;
 
 use svc_table::SharedServiceTableRef;
 
+use timer::Timer;
+
 use utils;
 
 use utils::RuntimeError;
@@ -65,6 +67,7 @@ impl Display for ConnectionState {
 /// Internal data of the application context.
 struct ApplicationContextData {
     logger:      BoxedLogger,
+    timer:       Timer,
     config:      ApplicationConfig,
     scanning:    bool,
     scan_report: ScanReport,
@@ -74,8 +77,11 @@ struct ApplicationContextData {
 impl ApplicationContextData {
     /// Take a given application config and create application context data.
     fn new(config: ApplicationConfig) -> ApplicationContextData {
+        let timer = Timer::new(config.get_logger());
+
         ApplicationContextData {
             logger:      config.get_logger(),
+            timer:       timer,
             config:      config,
             scanning:    false,
             scan_report: ScanReport::new(),
@@ -111,6 +117,11 @@ impl ApplicationContextData {
     /// Get application logger.
     fn get_logger(&self) -> BoxedLogger {
         self.logger.clone()
+    }
+
+    /// Get application-wide instance of the Timer.
+    fn get_timer(&self) -> Timer {
+        self.timer.clone()
     }
 
     /// Get TLS connector.
@@ -231,6 +242,13 @@ impl ApplicationContext {
         self.data.lock()
             .unwrap()
             .get_logger()
+    }
+
+    /// Get application-wide instance of the Timer.
+    pub fn get_timer(&self) -> Timer {
+        self.data.lock()
+            .unwrap()
+            .get_timer()
     }
 
     /// Get TLS connector.

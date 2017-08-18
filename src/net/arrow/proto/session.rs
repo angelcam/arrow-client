@@ -32,15 +32,17 @@ use tokio_core::reactor::Handle as TokioCoreHandle;
 
 use tokio_io::AsyncRead;
 
-use tokio_timer::Timer;
-
 use futures_ex::StreamEx;
+
+use context::ApplicationContext;
 
 use net::arrow::proto::{BoxServiceTable, ServiceTable};
 use net::arrow::proto::codec::RawCodec;
 use net::arrow::proto::error::{ArrowError, ConnectionError};
 use net::arrow::proto::msg::ArrowMessage;
 use net::arrow::proto::utils::ControlMessageFactory;
+
+use timer::Timer;
 
 use utils::logger::{Logger, BoxedLogger};
 
@@ -341,6 +343,7 @@ impl SessionErrorHandler {
 /// Arrow session manager.
 pub struct SessionManager {
     logger:       BoxedLogger,
+    timer:        Timer,
     tc_handle:    TokioCoreHandle,
     svc_table:    BoxServiceTable,
     cmsg_factory: ControlMessageFactory,
@@ -352,14 +355,15 @@ pub struct SessionManager {
 
 impl SessionManager {
     /// Create a new session manager.
-    pub fn new<T>(
-        logger: BoxedLogger,
-        svc_table: T,
+    pub fn new(
+        app_context: ApplicationContext,
         cmsg_factory: ControlMessageFactory,
-        tc_handle: TokioCoreHandle) -> SessionManager
-        where T: 'static + ServiceTable {
+        tc_handle: TokioCoreHandle) -> SessionManager {
+        let svc_table = app_context.get_service_table();
+
         SessionManager {
-            logger:       logger,
+            logger:       app_context.get_logger(),
+            timer:        app_context.get_timer(),
             tc_handle:    tc_handle,
             svc_table:    svc_table.boxed(),
             cmsg_factory: cmsg_factory,
@@ -453,7 +457,7 @@ impl SessionManager {
 
         let connection = TcpStream::connect(&addr, &self.tc_handle);
 
-        let client = Timer::default()
+        let client = self.timer
             .timeout(
                 connection.map_err(|err| ConnectionError::from(err)),
                 Duration::from_secs(CONNECTION_TIMEOUT))
