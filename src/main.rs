@@ -46,7 +46,9 @@ pub mod net;
 
 mod config;
 mod context;
+mod cmd_handler;
 mod svc_table;
+mod timer;
 
 /*use std::io;
 use std::env;
@@ -681,13 +683,18 @@ fn main() {
         .unwrap();
 }*/
 
-use std::fmt::Debug;
 use std::error::Error;
+use std::fmt::Debug;
+use std::time::Duration;
 
 use config::usage;
 
 use config::ApplicationConfig;
 use context::ApplicationContext;
+
+use cmd_handler::Command;
+
+use tokio_core::reactor::Core as TokioCore;
 
 /// Unwrap a given result (if possible) or print the error message and exit
 /// the process printing application usage.
@@ -704,10 +711,31 @@ fn result_or_usage<T, E>(res: Result<T, E>) -> T
 
 /// Arrow Client main function.
 fn main() {
+    let mut core = TokioCore::new()
+        .expect("unable to create an event loop");
+
+    let handle = core.handle();
+
     let config = result_or_usage(
         ApplicationConfig::create());
 
     let context = ApplicationContext::new(config);
 
-    println!("Hello, World!!!");
+    // create command handler
+    let (tx, rx) = cmd_handler::new(context.clone());
+
+    // schedule periodic network scan
+    let periodic_network_scan = context.get_timer()
+        .create_periodic_task(
+            Duration::from_secs(300),
+            move || {
+                tx.send(Command::ScanNetwork)
+            }
+        );
+
+    handle.spawn(periodic_network_scan);
+
+    // run the command handler event loop
+    core.run(rx)
+        .unwrap_or_default();
 }
