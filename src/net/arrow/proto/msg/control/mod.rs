@@ -325,7 +325,8 @@ impl ControlMessage {
     /// Get reference to the message body or None if the type of the message body does not match
     /// to the expected one.
     pub fn body<T: ControlMessageBody + 'static>(&self) -> Option<&T> {
-        self.body.as_any()
+        self.body.as_ref()
+            .as_any()
             .downcast_ref()
     }
 
