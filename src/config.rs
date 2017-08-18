@@ -592,6 +592,11 @@ impl ApplicationConfig {
             .build()
     }
 
+    /// Get address of the remote Arrow Service.
+    pub fn get_arrow_service_address(&self) -> String {
+        self.arrow_svc_addr.to_string()
+    }
+
     /// Get version of the configuration.
     pub fn get_version(&self) -> usize {
         self.version

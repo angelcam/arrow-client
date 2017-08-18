@@ -89,6 +89,11 @@ impl ApplicationContextData {
         }
     }
 
+    /// Get address of the remote Arrow Service.
+    pub fn get_arrow_service_address(&self) -> String {
+        self.config.get_arrow_service_address()
+    }
+
     /// Get current version of the configuration.
     fn get_config_version(&self) -> usize {
         self.config.get_version()
@@ -200,6 +205,13 @@ impl ApplicationContext {
         ApplicationContext {
             data: Arc::new(Mutex::new(ApplicationContextData::new(config)))
         }
+    }
+
+    /// Get address of the remote Arrow Service.
+    pub fn get_arrow_service_address(&self) -> String {
+        self.data.lock()
+            .unwrap()
+            .get_arrow_service_address()
     }
 
     /// Get current version of the configuration.
