@@ -47,6 +47,8 @@ use futures_ex::StreamEx;
 
 use context::ApplicationContext;
 
+use cmd_handler::{Command, CommandChannel};
+
 use net::arrow::proto::codec::{ArrowCodec, FromBytes};
 use net::arrow::proto::error::{ArrowError, ConnectionError};
 use net::arrow::proto::msg::ArrowMessage;
@@ -104,20 +106,6 @@ const CONNECTION_TIMEOUT:  u64 = 20;
 const PING_PERIOD:         f64 = 60.0;
 const UPDATE_CHECK_PERIOD: f64 =  5.0;
 
-/// Commands that might be sent by the Arrow Client into a given command queue.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum Command {
-    ResetServiceTable,
-    ScanNetwork,
-}
-
-/// Common trait for various implementations of command senders.
-pub trait Sender {
-    /// Send a given command or return the command back if the send operation
-    /// failed.
-    fn send(&self, cmd: Command) -> Result<(), Command>;
-}
-
 /// Arrow Protocol states.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum ProtocolState {
@@ -147,10 +135,10 @@ impl ExpectedAck {
 }
 
 /// Arrow Client implementation.
-struct ArrowClientContext<S> {
+struct ArrowClientContext {
     logger:           BoxedLogger,
     app_context:      ApplicationContext,
-    cmd_sender:       S,
+    cmd_channel:      CommandChannel,
     svc_table:        SharedServiceTableRef,
     tc_handle:        TokioCoreHandle,
     cmsg_factory:     ControlMessageFactory,
@@ -164,13 +152,12 @@ struct ArrowClientContext<S> {
     last_update_chck: f64,
 }
 
-impl<S> ArrowClientContext<S>
-    where S: Sender {
+impl ArrowClientContext {
     /// Create a new Arrow Client.
     fn new(
         app_context: ApplicationContext,
-        cmd_sender: S,
-        tc_handle: TokioCoreHandle) -> ArrowClientContext<S> {
+        cmd_channel: CommandChannel,
+        tc_handle: TokioCoreHandle) -> ArrowClientContext {
         let logger = app_context.get_logger();
         let svc_table = app_context.get_service_table();
 
@@ -189,7 +176,7 @@ impl<S> ArrowClientContext<S>
         let mut client = ArrowClientContext {
             logger:           logger,
             app_context:      app_context,
-            cmd_sender:       cmd_sender,
+            cmd_channel:      cmd_channel,
             svc_table:        svc_table,
             tc_handle:        tc_handle,
             cmsg_factory:     cmsg_factory,
@@ -489,9 +476,7 @@ impl<S> ArrowClientContext<S>
             return Err(ArrowError::other(format!("cannot handle the {:?} command in the Handshake state", cmd)))
         }
 
-        if let Err(cmd) = self.cmd_sender.send(cmd) {
-            log_warn!(self.logger, "unable to process command {:?}", cmd);
-        }
+        self.cmd_channel.send(cmd);
 
         Ok(())
     }
@@ -508,8 +493,7 @@ impl<S> ArrowClientContext<S>
     }
 }
 
-impl<S> Sink for ArrowClientContext<S>
-    where S: Sender {
+impl Sink for ArrowClientContext {
     type SinkItem  = ArrowMessage;
     type SinkError = ArrowError;
 
@@ -535,8 +519,7 @@ impl<S> Sink for ArrowClientContext<S>
     }
 }
 
-impl<S> Stream for ArrowClientContext<S>
-    where S: Sender {
+impl Stream for ArrowClientContext {
     type Item  = ArrowMessage;
     type Error = ArrowError;
 
@@ -561,20 +544,19 @@ impl<S> Stream for ArrowClientContext<S>
     }
 }
 
-struct ArrowClient<S> {
-    context: Rc<RefCell<ArrowClientContext<S>>>,
+struct ArrowClient {
+    context: Rc<RefCell<ArrowClientContext>>,
 }
 
-impl<S> ArrowClient<S>
-    where S: 'static + Sender {
+impl ArrowClient {
     /// Create a new instance of Arrow Client.
     fn new(
         app_context: ApplicationContext,
-        cmd_sender: S,
-        tc_handle: TokioCoreHandle) -> ArrowClient<S> {
+        cmd_channel: CommandChannel,
+        tc_handle: TokioCoreHandle) -> ArrowClient {
         let context = ArrowClientContext::new(
             app_context.clone(),
-            cmd_sender,
+            cmd_channel,
             tc_handle.clone());
 
         let context = Rc::new(RefCell::new(context));
@@ -604,8 +586,7 @@ impl<S> ArrowClient<S>
     }
 }
 
-impl<S> Sink for ArrowClient<S>
-    where S: Sender {
+impl Sink for ArrowClient {
     type SinkItem  = ArrowMessage;
     type SinkError = ArrowError;
 
@@ -620,8 +601,7 @@ impl<S> Sink for ArrowClient<S>
     }
 }
 
-impl<S> Stream for ArrowClient<S>
-    where S: Sender {
+impl Stream for ArrowClient {
     type Item  = ArrowMessage;
     type Error = ArrowError;
 
@@ -632,11 +612,10 @@ impl<S> Stream for ArrowClient<S>
 }
 
 /// Connect Arrow Client to a given address and return either a redirect address or an error.
-pub fn connect<S>(
+pub fn connect(
     app_context: ApplicationContext,
-    cmd_sender: S,
-    addr: &str) -> Result<String, ArrowError>
-    where S: 'static + Sender {
+    cmd_channel: CommandChannel,
+    addr: &str) -> Result<String, ArrowError> {
     let mut core = TokioCore::new()
         .map_err(|err| ArrowError::other(err))?;
 
@@ -652,7 +631,7 @@ pub fn connect<S>(
 
     let aclient = ArrowClient::new(
         app_context.clone(),
-        cmd_sender,
+        cmd_channel,
         core.handle());
 
     let connection = TcpStream::connect(&addr, &core.handle())
