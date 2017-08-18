@@ -92,6 +92,8 @@ use svc_table::SharedServiceTableRef;
 
 use timer::Timer;
 
+use utils::get_hostname;
+
 use utils::logger::{Logger, BoxedLogger};
 
 /// Currently supported version of the Arrow protocol.
@@ -638,6 +640,8 @@ pub fn connect<S>(
     let mut core = TokioCore::new()
         .map_err(|err| ArrowError::other(err))?;
 
+    let hostname = get_hostname(addr);
+
     let addr = addr.to_socket_addrs()
         .map_err(|err| ArrowError::connection_error(err))?
         .next()
@@ -654,9 +658,7 @@ pub fn connect<S>(
     let connection = TcpStream::connect(&addr, &core.handle())
         .map_err(|err| ConnectionError::from(err))
         .and_then(|socket| {
-            // XXX: replace this beast with "connect_async" once we stop using the self-signed
-            // certificate
-            tls_connector.danger_connect_async_without_providing_domain_for_certificate_verification_and_server_name_indication(socket)
+            tls_connector.connect_async(&hostname, socket)
                 .map_err(|err| ConnectionError::from(err))
         });
 
