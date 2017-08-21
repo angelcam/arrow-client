@@ -154,6 +154,7 @@ struct ArrowClientContext {
     state:            ProtocolState,
     task:             Option<Task>,
     redirect:         Option<String>,
+    closed:           bool,
     last_ping:        f64,
     last_update_chck: f64,
 }
@@ -192,6 +193,7 @@ impl ArrowClientContext {
             state:            ProtocolState::Handshake,
             task:             None,
             redirect:         None,
+            closed:           false,
             last_ping:        t,
             last_update_chck: t,
         };
@@ -214,7 +216,7 @@ impl ArrowClientContext {
 
     /// Check if the client has been closed.
     fn is_closed(&self) -> bool {
-        self.redirect.is_some()
+        self.closed || self.redirect.is_some()
     }
 
     /// Check if there is an ACK timeout.
@@ -250,7 +252,7 @@ impl ArrowClientContext {
     /// Check if the service table has been updated.
     fn check_for_updates(&mut self) {
         // TODO
-        let updated = true;
+        let updated = false;
 
         if updated {
             self.send_update_message();
@@ -523,6 +525,12 @@ impl Sink for ArrowClientContext {
     fn poll_complete(&mut self) -> Poll<(), ArrowError> {
         Ok(Async::Ready(()))
     }
+
+    fn close(&mut self) -> Poll<(), ArrowError> {
+        self.closed = true;
+
+        Ok(Async::Ready(()))
+    }
 }
 
 impl Stream for ArrowClientContext {
@@ -605,6 +613,11 @@ impl Sink for ArrowClient {
         self.context.borrow_mut()
             .poll_complete()
     }
+
+    fn close(&mut self) -> Poll<(), ArrowError> {
+        self.context.borrow_mut()
+            .close()
+    }
 }
 
 impl Stream for ArrowClient {
@@ -666,10 +679,9 @@ pub fn connect(
             sink.send_all(messages)
                 .and_then(|(_, pipe)| {
                     let (_, _, context) = pipe.unpipe();
-                    let redirect = context.get_redirect()
-                        .expect("connection closed, redirect expected");
 
-                    Ok(redirect)
+                    context.get_redirect()
+                        .ok_or(ArrowError::connection_error("connection to Arrow Service lost"))
                 })
         });
 
