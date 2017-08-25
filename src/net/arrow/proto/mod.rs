@@ -263,7 +263,12 @@ impl ArrowClientContext {
 
     /// Insert a given Control Protocol message into the output message queue.
     fn send_control_message(&mut self, msg: ControlMessage) {
-        self.messages.push_back(ArrowMessage::from(msg))
+        self.messages.push_back(ArrowMessage::from(msg));
+
+        // notify the task consuming Arrow Messages about a new message
+        if let Some(task) = self.task.take() {
+            task.notify();
+        }
     }
 
     /// Insert a given Control Protocol message into the output message queue
@@ -430,6 +435,11 @@ impl ArrowClientContext {
 
         self.redirect = Some(msg.target.clone());
 
+        // notify the task consuming Arrow Messages about the redirect
+        if let Some(task) = self.task.take() {
+            task.notify();
+        }
+
         Ok(())
     }
 
@@ -528,6 +538,11 @@ impl Sink for ArrowClientContext {
 
     fn close(&mut self) -> Poll<(), ArrowError> {
         self.closed = true;
+
+        // notify the task consuming Arrow Messages that the connection has been closed
+        if let Some(task) = self.task.take() {
+            task.notify();
+        }
 
         Ok(Async::Ready(()))
     }
