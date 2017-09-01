@@ -196,17 +196,25 @@ fn network_scanner_thread(mut app_context: ApplicationContext) {
     app_context.set_scanning(true);
 
     log_info!(logger, "looking for local services...");
-    let report = utils::result_or_log(&mut logger, Severity::WARN,
+
+    let result = utils::result_or_log(&mut logger, Severity::WARN,
         "network scanner error",
         discovery::scan_network(
             &rtsp_paths_file,
             &mjpeg_paths_file));
 
-    if let Some(report) = report {
-        // TODO: update the service table and set scan report
+    if let Some(result) = result {
+        let services = result.services()
+            .map(|svc| svc.clone())
+            .collect::<Vec<_>>();
 
-        //log_info!(logger, "{} services found, current service table: {}",
-        //    count, config.service_table());
+        let count = services.len();
+
+        app_context.update_service_table(services);
+        app_context.set_scan_result(result);
+
+        log_info!(logger, "{} services found, current service table: {}",
+            count, app_context.get_service_table());
     }
 
     app_context.set_scanning(false);

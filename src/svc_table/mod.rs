@@ -15,12 +15,16 @@
 pub mod service;
 
 use std;
+use std::fmt;
 
-use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::sync::{Arc, Mutex};
 
 use time;
+
+use serde_json;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::Error;
@@ -112,6 +116,15 @@ impl ServiceTableElement {
         }
     }
 
+    /// Check if the element should be visible.
+    fn is_visible(&self) -> bool {
+        if self.static_service {
+            self.enabled
+        } else {
+            self.active
+        }
+    }
+
     /// Update the internal service, the enabled flag and the last_seen timestamp.
     fn update(&mut self, svc: Service, enabled: bool) {
         self.service   = svc;
@@ -128,28 +141,6 @@ impl ServiceTableElement {
     fn to_service(&self) -> Service {
         self.service.clone()
     }
-
-    /// Check if the element should be visible.
-    fn is_visible(&self) -> bool {
-        if self.static_service {
-            self.enabled
-        } else {
-            self.active
-        }
-    }
-
-    /// Check if this element is equal to a given service (except service ID and IP address).
-    fn equals(&self, svc: &Service) -> bool {
-        self.service.service_type() == svc.service_type()
-            && self.service.mac() == svc.mac()
-            && self.service.port() == svc.port()
-            && self.service.path() == svc.path()
-    }
-
-    /// Check if this element is equal to a given service (except service ID).
-    fn equals_exact(&self, svc: &Service) -> bool {
-        self.equals(svc) && self.service.address() == svc.address()
-    }
 }
 
 /// Service table internal data.
@@ -157,6 +148,7 @@ impl ServiceTableElement {
 struct ServiceTableData {
     map:      HashMap<ServiceIdentifier, usize>,
     services: Vec<ServiceTableElement>,
+    version:  usize,
 }
 
 impl ServiceTableData {
@@ -165,7 +157,13 @@ impl ServiceTableData {
         ServiceTableData {
             map:      HashMap::new(),
             services: Vec::new(),
+            version:  0,
         }
+    }
+
+    /// Get version of the service table.
+    fn version(&self) -> usize {
+        self.version
     }
 
     /// Get visible service for a given ID.
@@ -202,16 +200,28 @@ impl ServiceTableData {
         }
     }
 
+    /// Get visible services.
+    fn visible(&self) -> ServiceTableIterator {
+        let visible = self.services.iter()
+            .filter(|elem| elem.is_visible());
+
+        ServiceTableIterator::new(visible)
+    }
+
     /// Update a given table element and return its ID.
-    fn update_element(
-        &mut self,
-        index: usize,
-        svc: Service,
-        enabled: bool) -> u16 {
-        if let Some(elem) = self.services.get_mut(index) {
-            elem.update(svc, enabled);
-        } else {
-            panic!("given service table element does not exist");
+    fn update_element(&mut self, index: usize, svc: Service, enabled: bool) -> u16 {
+        let elem = self.services.get_mut(index)
+            .expect("broken service table");
+
+        let svc_change  = elem.service != svc;
+        let old_visible = elem.is_visible();
+
+        elem.update(svc, enabled);
+
+        let new_visible = elem.is_visible();
+
+        if old_visible != new_visible || (new_visible && svc_change) {
+            self.version += 1;
         }
 
         (index + 1) as u16
@@ -219,12 +229,17 @@ impl ServiceTableData {
 
     /// Insert a new element into the table and return its ID.
     fn insert_element(&mut self, svc: Service, static_svc: bool, enabled: bool) -> u16 {
-        let id  = (self.services.len() + 1) as u16;
+        let id = self.services.len() as u16 + 1;
+
         let key = svc.to_service_identifier();
 
         assert!(!self.map.contains_key(&key));
 
         let elem = ServiceTableElement::new(svc, static_svc, enabled);
+
+        if elem.is_visible() {
+            self.version += 1;
+        }
 
         self.map.insert(key, self.services.len());
         self.services.push(elem);
@@ -248,61 +263,17 @@ impl ServiceTableData {
         }
     }
 
-    /// Update active flags of all services and return number of services
-    /// with changed visibility.
-    fn update_active_services(&mut self) -> usize {
+    /// Update active flags of all services.
+    fn update_active_services(&mut self) {
         let timestamp = get_utc_timestamp();
-
-        let mut changed = 0;
 
         for elem in &mut self.services {
             let visible = elem.is_visible();
             elem.update_active_flag(timestamp);
             if visible != elem.is_visible() {
-                changed += 1;
+                self.version += 1;
             }
         }
-
-        changed
-    }
-
-    /// Check if there is already a given service in the table.
-    fn contains(&self, svc: &Service) -> bool {
-        if svc.is_control() {
-            return true
-        }
-
-        let key = svc.to_service_identifier();
-
-        self.map.contains_key(&key)
-    }
-
-    /// Check if there is already a given service in the table and all service fields
-    /// are equal to the given one.
-    fn contains_exact(&self, svc: &Service) -> bool {
-        if svc.is_control() {
-            return true
-        }
-
-        let key = svc.to_service_identifier();
-
-        let index = self.map.get(&key)
-            .map(|index| *index);
-
-        if let Some(index) = index {
-            if let Some(elem) = self.services.get(index) {
-                elem.equals_exact(svc)
-            } else {
-                panic!("given service table element does not exist");
-            }
-        } else {
-            false
-        }
-    }
-
-    /// Get service table iterator.
-    fn iter(&self) -> ServiceTableIterator {
-        ServiceTableIterator::new(&self.services)
     }
 }
 
@@ -322,6 +293,7 @@ impl<'de> Deserialize<'de> for ServiceTableData {
         let mut res = ServiceTableData {
             services: Vec::new(),
             map:      HashMap::new(),
+            version:  0,
         };
 
         for svc in table.services {
@@ -338,6 +310,15 @@ impl<'de> Deserialize<'de> for ServiceTableData {
     }
 }
 
+impl Display for ServiceTableData {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        let json = serde_json::to_string(self)
+            .map_err(|_| fmt::Error)?;
+
+        write!(f, "{}", json)
+    }
+}
+
 /// Service table iterator.
 pub struct ServiceTableIterator {
     elements: std::vec::IntoIter<(u16, Service)>,
@@ -345,15 +326,16 @@ pub struct ServiceTableIterator {
 
 impl ServiceTableIterator {
     /// Create a new service table iterator.
-    fn new(elements: &[ServiceTableElement]) -> ServiceTableIterator {
+    fn new<'a, I>(elements: I) -> ServiceTableIterator
+        where I: IntoIterator<Item=&'a ServiceTableElement> {
         let mut res = Vec::new();
 
-        for ref element in elements {
+        for ref elem in elements {
             let id = res.len() as u16 + 1;
 
             res.push((
                 id,
-                element.to_service(),
+                elem.to_service(),
             ));
         }
 
@@ -384,6 +366,13 @@ impl SharedServiceTable {
         }
     }
 
+    /// Get version of the service table.
+    pub fn version(&self) -> usize {
+        self.data.lock()
+            .unwrap()
+            .version()
+    }
+
     /// Add a given service into the table and return its ID.
     pub fn add(&mut self, svc: Service) -> u16 {
         self.data.lock()
@@ -398,33 +387,11 @@ impl SharedServiceTable {
             .update(svc, true, true)
     }
 
-    /// Update active flags of all services and return number of services
-    /// with changed visibility.
-    pub fn update_active_services(&mut self) -> usize {
+    /// Update active flags of all services.
+    pub fn update_active_services(&mut self) {
         self.data.lock()
             .unwrap()
             .update_active_services()
-    }
-
-    /// Check if there is already a given service.
-    pub fn contains(&self, svc: &Service) -> bool {
-        self.data.lock()
-            .unwrap()
-            .contains(svc)
-    }
-
-    /// Check if there is already a given service.
-    pub fn contains_exact(&self, svc: &Service) -> bool {
-        self.data.lock()
-            .unwrap()
-            .contains_exact(svc)
-    }
-
-    /// Get service table iterator.
-    pub fn iter(&self) -> ServiceTableIterator {
-        self.data.lock()
-            .unwrap()
-            .iter()
     }
 
     /// Get read-only reference to this table.
@@ -465,6 +432,14 @@ impl ServiceTable for SharedServiceTable {
     }
 }
 
+impl Display for SharedServiceTable {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        self.data.lock()
+            .unwrap()
+            .fmt(f)
+    }
+}
+
 impl Serialize for SharedServiceTable {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where S: Serializer {
@@ -494,11 +469,18 @@ pub struct SharedServiceTableRef {
 }
 
 impl SharedServiceTableRef {
-    /// Get service table iterator.
-    pub fn iter(&self) -> ServiceTableIterator {
+    /// Get version of the service table.
+    pub fn version(&self) -> usize {
         self.data.lock()
             .unwrap()
-            .iter()
+            .version()
+    }
+
+    /// Get visible services.
+    pub fn visible(&self) -> ServiceTableIterator {
+        self.data.lock()
+            .unwrap()
+            .visible()
     }
 }
 
@@ -517,6 +499,23 @@ impl ServiceTable for SharedServiceTableRef {
 
     fn boxed(self) -> BoxServiceTable {
         Box::new(self)
+    }
+}
+
+impl Serialize for SharedServiceTableRef {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer {
+        self.data.lock()
+            .unwrap()
+            .serialize(serializer)
+    }
+}
+
+impl Display for SharedServiceTableRef {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        self.data.lock()
+            .unwrap()
+            .fmt(f)
     }
 }
 

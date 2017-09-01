@@ -699,20 +699,18 @@ impl ApplicationConfig {
             res);
     }
 
-    /// Update the service table with given services.
-    pub fn update_services<I>(&mut self, services: I)
+    /// Update service table. Add all given services into the table and update active services.
+    pub fn update_service_table<I>(&mut self, services: I)
         where I: IntoIterator<Item=Service> {
-        let mut changed = false;
+        let old_version = self.svc_table.version();
 
         for svc in services {
-            if !self.svc_table.contains_exact(&svc) {
-                changed = true;
-            }
-
             self.svc_table.add(svc);
         }
 
-        if !changed {
+        self.svc_table.update_active_services();
+
+        if old_version == self.svc_table.version() {
             return
         }
 

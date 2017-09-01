@@ -83,7 +83,7 @@ impl ServiceIdentifier {
 }
 
 /// Arrow service.
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Service {
     svc_type: ServiceType,
     mac:      Option<MacAddr>,

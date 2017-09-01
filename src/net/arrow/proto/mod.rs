@@ -137,6 +137,7 @@ struct ArrowClientContext {
     closed:           bool,
     last_ping:        f64,
     last_update_chck: f64,
+    last_stable_ver:  usize,
 }
 
 impl ArrowClientContext {
@@ -176,6 +177,7 @@ impl ArrowClientContext {
             closed:           false,
             last_ping:        t,
             last_update_chck: t,
+            last_stable_ver:  0,
         };
 
         client.send_register_message(
@@ -231,10 +233,7 @@ impl ArrowClientContext {
 
     /// Check if the service table has been updated.
     fn check_for_updates(&mut self) {
-        // TODO
-        let updated = false;
-
-        if updated {
+        if self.last_stable_ver != self.svc_table.version() {
             self.send_update_message();
         }
 
@@ -270,13 +269,15 @@ impl ArrowClientContext {
         password: [u8; 16]) {
         log_debug!(self.logger, "sending REGISTER request...");
 
-        let svc_table = SimpleServiceTable::from(self.svc_table.iter());
+        let svc_table = SimpleServiceTable::from(self.svc_table.visible());
 
         let msg = self.cmsg_factory.register(
             mac,
             uuid,
             password,
             svc_table);
+
+        self.last_stable_ver = self.svc_table.version();
 
         self.send_unconfirmed_control_message(msg);
     }
@@ -285,9 +286,11 @@ impl ArrowClientContext {
     fn send_update_message(&mut self) {
         log_debug!(self.logger, "sending a UPDATE message...");
 
-        let svc_table = SimpleServiceTable::from(self.svc_table.iter());
+        let svc_table = SimpleServiceTable::from(self.svc_table.visible());
 
         let msg = self.cmsg_factory.update(svc_table);
+
+        self.last_stable_ver = self.svc_table.version();
 
         self.send_control_message(msg);
     }

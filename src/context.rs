@@ -71,7 +71,7 @@ struct ApplicationContextData {
     timer:       Timer,
     config:      ApplicationConfig,
     scanning:    bool,
-    scan_report: ScanResult,
+    scan_result: ScanResult,
     conn_state:  ConnectionState,
 }
 
@@ -85,7 +85,7 @@ impl ApplicationContextData {
             timer:       timer,
             config:      config,
             scanning:    false,
-            scan_report: ScanResult::new(),
+            scan_result: ScanResult::new(),
             conn_state:  ConnectionState::Disconnected,
         }
     }
@@ -160,17 +160,23 @@ impl ApplicationContextData {
 
     /// Get the last scan result.
     fn get_scan_result(&self) -> ScanResult {
-        self.scan_report.clone()
+        self.scan_result.clone()
     }
 
-    /// Update the scan result.
-    fn update_scan_result(&mut self, report: ScanResult) {
-        self.scan_report = report;
+    /// Set last scan result.
+    fn set_scan_result(&mut self, result: ScanResult) {
+        self.scan_result = result;
     }
 
     /// Get read-only reference to the service table.
     fn get_service_table(&self) -> SharedServiceTableRef {
         self.config.get_service_table()
+    }
+
+    /// Update service table. Add all given services into the table and update active services.
+    pub fn update_service_table<I>(&mut self, services: I)
+        where I: IntoIterator<Item=Service> {
+        self.config.update_service_table(services)
     }
 
     /// Reset service table.
@@ -198,12 +204,6 @@ impl ApplicationContextData {
         writeln!(&mut file, "{}", self.conn_state)?;
 
         Ok(())
-    }
-
-    /// Add given services into the service table.
-    fn update_services<I>(&mut self, services: I)
-        where I: IntoIterator<Item=Service> {
-        self.config.update_services(services)
     }
 }
 
@@ -319,11 +319,11 @@ impl ApplicationContext {
             .get_scan_result()
     }
 
-    /// Update the scan result.
-    pub fn update_scan_result(&mut self, report: ScanResult) {
+    /// Set last scan result.
+    pub fn set_scan_result(&mut self, result: ScanResult) {
         self.data.lock()
             .unwrap()
-            .update_scan_result(report)
+            .set_scan_result(result)
     }
 
     /// Get read-only reference to the service table.
@@ -331,6 +331,14 @@ impl ApplicationContext {
         self.data.lock()
             .unwrap()
             .get_service_table()
+    }
+
+    /// Update service table. Add all given services into the table and update active services.
+    pub fn update_service_table<I>(&mut self, services: I)
+        where I: IntoIterator<Item=Service> {
+        self.data.lock()
+            .unwrap()
+            .update_service_table(services)
     }
 
     /// Reset service table.
@@ -345,13 +353,5 @@ impl ApplicationContext {
         self.data.lock()
             .unwrap()
             .set_connection_state(state)
-    }
-
-    /// Add given services into the service table.
-    pub fn update_services<I>(&mut self, services: I)
-        where I: IntoIterator<Item=Service> {
-        self.data.lock()
-            .unwrap()
-            .update_services(services)
     }
 }
