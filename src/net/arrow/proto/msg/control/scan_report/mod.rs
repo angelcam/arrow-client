@@ -77,10 +77,9 @@ impl ScanReportMessage {
         let mut services = Vec::new();
 
         for svc in scan_result.services() {
-            // TODO: let id = svc_table.get_id(svc);
-            let id = 0u16;
-
-            services.push((id, svc.clone()));
+            if let Some(id) = svc_table.get_id(&svc.to_service_identifier()) {
+                services.push((id, svc.clone()));
+            }
         }
 
         let svc_table = SimpleServiceTable::from(services);
