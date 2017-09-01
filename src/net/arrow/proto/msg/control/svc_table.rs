@@ -20,7 +20,7 @@ use bytes::BytesMut;
 
 use utils;
 
-use svc_table::{BoxServiceTable, Service, ServiceTable};
+use svc_table::{BoxServiceTable, Service, ServiceIdentifier, ServiceTable};
 
 use net::arrow::proto::codec::Encode;
 use net::arrow::proto::msg::MessageBody;
@@ -150,6 +150,20 @@ impl ServiceTable for SimpleServiceTable {
         for element in &self.elements {
             if id == element.id {
                 return Some(element.service.clone())
+            }
+        }
+
+        None
+    }
+
+    fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16> {
+        if identifier.is_control() {
+            return Some(0);
+        }
+
+        for element in &self.elements {
+            if *identifier == element.service.to_service_identifier() {
+                return Some(element.id);
             }
         }
 

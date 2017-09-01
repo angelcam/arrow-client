@@ -75,6 +75,13 @@ pub struct ServiceIdentifier {
     path:     Option<String>,
 }
 
+impl ServiceIdentifier {
+    /// Check if this is the Control Protocol service  identifier.
+    pub fn is_control(&self) -> bool {
+        self.svc_type == ServiceType::ControlProtocol
+    }
+}
+
 /// Arrow service.
 #[derive(Clone)]
 pub struct Service {

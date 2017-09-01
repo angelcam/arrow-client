@@ -59,6 +59,9 @@ pub trait ServiceTable {
     /// Get service with a given ID.
     fn get(&self, id: u16) -> Option<Service>;
 
+    /// Get service ID for a given ServiceIdentifier.
+    fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16>;
+
     /// Convert this service table into a trait object.
     fn boxed(self) -> BoxServiceTable;
 }
@@ -70,6 +73,11 @@ impl ServiceTable for Box<ServiceTable> {
     fn get(&self, id: u16) -> Option<Service> {
         self.as_ref()
             .get(id)
+    }
+
+    fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16> {
+        self.as_ref()
+            .get_id(identifier)
     }
 
     fn boxed(self) -> BoxServiceTable {
@@ -167,6 +175,25 @@ impl ServiceTableData {
         } else if let Some(ref elem) = self.services.get((id - 1) as usize) {
             if elem.is_visible() {
                 Some(elem.to_service())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Get service ID for a given ServiceIdentifier or None if there is no such service or
+    /// the given service is invisible.
+    fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16> {
+        if identifier.is_control() {
+            Some(0)
+        } else if let Some(index) = self.map.get(identifier) {
+            let elem = self.services.get(*index)
+                .expect("broken service table");
+
+            if elem.is_visible() {
+                Some((index + 1) as u16)
             } else {
                 None
             }
@@ -323,7 +350,7 @@ impl ServiceTableIterator {
 
         for ref element in elements {
             let id = res.len() as u16 + 1;
-            
+
             res.push((
                 id,
                 element.to_service(),
@@ -427,6 +454,12 @@ impl ServiceTable for SharedServiceTable {
             .get(id)
     }
 
+    fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16> {
+        self.data.lock()
+            .unwrap()
+            .get_id(identifier)
+    }
+
     fn boxed(self) -> BoxServiceTable {
         Box::new(self)
     }
@@ -474,6 +507,12 @@ impl ServiceTable for SharedServiceTableRef {
         self.data.lock()
             .unwrap()
             .get(id)
+    }
+
+    fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16> {
+        self.data.lock()
+            .unwrap()
+            .get_id(identifier)
     }
 
     fn boxed(self) -> BoxServiceTable {
