@@ -47,6 +47,7 @@ pub mod net;
 mod config;
 mod context;
 mod cmd_handler;
+mod scanner;
 mod svc_table;
 mod timer;
 

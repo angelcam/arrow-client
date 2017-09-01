@@ -36,6 +36,10 @@ use net::arrow::proto::error::DecodeError;
 
 use net::raw::ether::MacAddr;
 
+use svc_table::ServiceTable;
+
+use scanner::ScanResult;
+
 use self::status::StatusMessage;
 use self::scan_report::ScanReportMessage;
 use self::register::RegisterMessage;
@@ -44,13 +48,6 @@ use self::update::UpdateMessage;
 pub use self::ack::AckMessage;
 pub use self::hup::HupMessage;
 pub use self::redirect::RedirectMessage;
-
-pub use self::scan_report::{
-    ScanReport,
-
-    HR_FLAG_ARP,
-    HR_FLAG_ICMP,
-};
 
 pub use self::svc_table::{
     SimpleServiceTable,
@@ -254,16 +251,19 @@ impl ControlMessage {
     }
 
     /// Create a new SCAN_REPORT Control Protocol message.
-    pub fn scan_report(
+    pub fn scan_report<T>(
         msg_id: u16,
         request_id: u16,
-        report: ScanReport) -> ControlMessage {
+        scan_result: ScanResult,
+        svc_table: &T) -> ControlMessage
+        where T: ServiceTable {
         ControlMessage::new(
             msg_id,
             ControlMessageType::SCAN_REPORT,
             ScanReportMessage::new(
                 request_id,
-                report))
+                scan_result,
+                svc_table))
     }
 
     /// Create a new PING Control Protocol message.

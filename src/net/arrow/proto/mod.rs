@@ -76,13 +76,6 @@ pub use net::arrow::proto::error::{
     ErrorKind,
 };
 
-pub use net::arrow::proto::msg::control::{
-    ScanReport,
-
-    HR_FLAG_ARP,
-    HR_FLAG_ICMP,
-};
-
 use net::raw::ether::MacAddr;
 
 use svc_table::SharedServiceTableRef;
@@ -469,9 +462,13 @@ impl ArrowClientContext {
 
         log_debug!(self.logger, "sending a SCAN_REPORT message...");
 
+        let scan_result = self.app_context.get_scan_result();
+        let svc_table   = self.app_context.get_service_table();
+
         let msg = self.cmsg_factory.scan_report(
             header.msg_id,
-            self.app_context.get_scan_report());
+            scan_result,
+            &svc_table);
 
         self.send_control_message(msg);
 

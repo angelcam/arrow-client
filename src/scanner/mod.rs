@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2017 click2stream, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,12 +13,14 @@
 // limitations under the License.
 
 #[cfg(feature = "discovery")]
-pub mod rtsp;
+pub mod discovery;
 
-#[cfg(feature = "discovery")]
-pub mod http;
+pub mod result;
 
-//pub mod ssl;
-pub mod raw;
-pub mod arrow;
-pub mod utils;
+pub use self::result::{
+    HostRecord,
+    ScanResult,
+
+    HR_FLAG_ARP,
+    HR_FLAG_ICMP,
+};

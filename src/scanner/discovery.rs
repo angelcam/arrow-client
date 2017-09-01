@@ -39,10 +39,15 @@ use net::raw::devices::EthernetDevice;
 use net::raw::ether::MacAddr;
 use net::raw::arp::scanner::Ipv4ArpScanner;
 use net::raw::icmp::scanner::IcmpScanner;
-use net::arrow::proto::ScanReport;
-use net::arrow::proto::{HR_FLAG_ARP, HR_FLAG_ICMP};
 use net::raw::tcp::scanner::{TcpPortScanner, PortCollection};
 use net::rtsp::sdp::{SessionDescription, MediaType, RTPMap, FromAttribute};
+
+use scanner::result::{
+    ScanResult,
+
+    HR_FLAG_ARP,
+    HR_FLAG_ICMP,
+};
 
 use svc_table::Service;
 
@@ -118,7 +123,7 @@ static HTTP_PORT_CANDIDATES: &'static [u16] = &[
 /// local networks.
 pub fn scan_network(
     rtsp_paths_file: &str,
-    mjpeg_paths_file: &str) -> Result<ScanReport> {
+    mjpeg_paths_file: &str) -> Result<ScanResult> {
     let mut port_set = HashSet::<u16>::new();
 
     port_set.extend(RTSP_PORT_CANDIDATES);
@@ -317,7 +322,7 @@ fn get_http_response_header(
 
 /// Find open ports on all available hosts within all local networks accessible
 /// directly from this host.
-fn find_all_open_ports(ports: &PortCollection) -> Result<ScanReport> {
+fn find_all_open_ports(ports: &PortCollection) -> Result<ScanResult> {
     let tc      = pcap::new_threading_context();
     let devices = EthernetDevice::list();
 
@@ -333,7 +338,7 @@ fn find_all_open_ports(ports: &PortCollection) -> Result<ScanReport> {
         threads.push(handle);
     }
 
-    let mut report = ScanReport::new();
+    let mut report = ScanResult::new();
 
     for handle in threads {
         if let Ok(res) = handle.join() {
@@ -351,8 +356,8 @@ fn find_all_open_ports(ports: &PortCollection) -> Result<ScanReport> {
 fn find_open_ports_in_network(
     pc: pcap::ThreadingContext,
     device: &EthernetDevice,
-    ports: &PortCollection) -> Result<ScanReport> {
-    let mut report = ScanReport::new();
+    ports: &PortCollection) -> Result<ScanResult> {
+    let mut report = ScanResult::new();
 
     for (mac, ip) in try!(Ipv4ArpScanner::scan_device(pc.clone(), device)) {
         report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ARP);
@@ -398,7 +403,7 @@ fn find_open_ports<H: IntoIterator<Item=(MacAddr, IpAddr)>>(
 
 /// Find all RTSP services.
 fn find_rtsp_ports(
-    report: &ScanReport,
+    report: &ScanResult,
     rtsp_ports: &[u16]) -> Result<Vec<(MacAddr, SocketAddr)>> {
     let mut ports   = HashSet::<u16>::new();
     let mut threads = Vec::new();
@@ -487,7 +492,7 @@ fn find_rtsp_services(
 
 /// Find all HTTP services.
 fn find_http_ports(
-    report: &ScanReport,
+    report: &ScanResult,
     http_ports: &[u16]) -> Result<Vec<(MacAddr, SocketAddr)>> {
     let mut ports   = HashSet::<u16>::new();
     let mut threads = Vec::new();

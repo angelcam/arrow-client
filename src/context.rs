@@ -24,8 +24,9 @@ use config::ApplicationConfig;
 
 use svc_table::{Service, SharedServiceTableRef};
 
-use net::arrow::proto::ScanReport;
 use net::raw::ether::MacAddr;
+
+use scanner::ScanResult;
 
 use timer::Timer;
 
@@ -70,7 +71,7 @@ struct ApplicationContextData {
     timer:       Timer,
     config:      ApplicationConfig,
     scanning:    bool,
-    scan_report: ScanReport,
+    scan_report: ScanResult,
     conn_state:  ConnectionState,
 }
 
@@ -84,7 +85,7 @@ impl ApplicationContextData {
             timer:       timer,
             config:      config,
             scanning:    false,
-            scan_report: ScanReport::new(),
+            scan_report: ScanResult::new(),
             conn_state:  ConnectionState::Disconnected,
         }
     }
@@ -157,13 +158,13 @@ impl ApplicationContextData {
         self.scanning
     }
 
-    /// Get the last scan report.
-    fn get_scan_report(&self) -> ScanReport {
+    /// Get the last scan result.
+    fn get_scan_result(&self) -> ScanResult {
         self.scan_report.clone()
     }
 
-    /// Update the scan report.
-    fn update_scan_report(&mut self, report: ScanReport) {
+    /// Update the scan result.
+    fn update_scan_result(&mut self, report: ScanResult) {
         self.scan_report = report;
     }
 
@@ -311,18 +312,18 @@ impl ApplicationContext {
             .is_scanning()
     }
 
-    /// Get the last scan report.
-    pub fn get_scan_report(&self) -> ScanReport {
+    /// Get the last scan result.
+    pub fn get_scan_result(&self) -> ScanResult {
         self.data.lock()
             .unwrap()
-            .get_scan_report()
+            .get_scan_result()
     }
 
-    /// Update the scan report.
-    pub fn update_scan_report(&mut self, report: ScanReport) {
+    /// Update the scan result.
+    pub fn update_scan_result(&mut self, report: ScanResult) {
         self.data.lock()
             .unwrap()
-            .update_scan_report(report)
+            .update_scan_result(report)
     }
 
     /// Get read-only reference to the service table.

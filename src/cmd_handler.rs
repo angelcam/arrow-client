@@ -20,7 +20,7 @@ use std::thread::JoinHandle;
 use context::ApplicationContext;
 
 #[cfg(feature = "discovery")]
-use net::discovery;
+use scanner::discovery;
 
 #[cfg(feature="discovery")]
 use utils;

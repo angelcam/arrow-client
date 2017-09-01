@@ -15,11 +15,14 @@
 use std::rc::Rc;
 use std::cell::Cell;
 
-use net::arrow::proto::ScanReport;
 use net::arrow::proto::msg::ControlMessage;
 use net::arrow::proto::msg::control::SimpleServiceTable;
 
 use net::raw::ether::MacAddr;
+
+use svc_table::ServiceTable;
+
+use scanner::ScanResult;
 
 /// Control Protocol message factory with shared message ID counter.
 #[derive(Clone)]
@@ -74,14 +77,17 @@ impl ControlMessageFactory {
     }
 
     /// Create a new SCAN_REPORT message for a given scan report.
-    pub fn scan_report(
+    pub fn scan_report<T>(
         &mut self,
         request_id: u16,
-        report: ScanReport) -> ControlMessage {
+        scan_result: ScanResult,
+        svc_table: &T) -> ControlMessage
+        where T: ServiceTable {
         ControlMessage::scan_report(
             self.next_id(),
             request_id,
-            report)
+            scan_result,
+            svc_table)
     }
 
     /// Create a new PING message.
