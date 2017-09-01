@@ -92,6 +92,7 @@ impl ApplicationContextData {
     /// Get address of the remote Arrow Service.
     pub fn get_arrow_service_address(&self) -> String {
         self.config.get_arrow_service_address()
+            .to_string()
     }
 
     /// Get current version of the configuration.
@@ -117,6 +118,18 @@ impl ApplicationContextData {
     /// Check if the application is in the diagnostic mode.
     fn get_diagnostic_mode(&self) -> bool {
         self.config.get_diagnostic_mode()
+    }
+
+    /// Get path to a file containing RTSP paths for the network scanner.
+    fn get_rtsp_paths_file(&self) -> String {
+        self.config.get_rtsp_paths_file()
+            .to_string()
+    }
+
+    /// Get path to a file containing MJPEG paths for the network scanner.
+    fn get_mjpeg_paths_file(&self) -> String {
+        self.config.get_mjpeg_paths_file()
+            .to_string()
     }
 
     /// Get application logger.
@@ -247,6 +260,20 @@ impl ApplicationContext {
         self.data.lock()
             .unwrap()
             .get_diagnostic_mode()
+    }
+
+    /// Get path to a file containing RTSP paths for the network scanner.
+    pub fn get_rtsp_paths_file(&self) -> String {
+        self.data.lock()
+            .unwrap()
+            .get_rtsp_paths_file()
+    }
+
+    /// Get path to a file containing MJPEG paths for the network scanner.
+    pub fn get_mjpeg_paths_file(&self) -> String {
+        self.data.lock()
+            .unwrap()
+            .get_mjpeg_paths_file()
     }
 
     /// Get application logger.

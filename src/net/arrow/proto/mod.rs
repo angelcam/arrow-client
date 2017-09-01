@@ -92,6 +92,9 @@ pub use net::arrow::proto::msg::control::{
     SVC_TYPE_MJPEG,
     SVC_TYPE_LOCKED_MJPEG,
     SVC_TYPE_TCP,
+
+    HR_FLAG_ARP,
+    HR_FLAG_ICMP,
 };
 
 use net::raw::ether::MacAddr;

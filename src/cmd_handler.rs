@@ -12,7 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::thread;
+
+use std::thread::JoinHandle;
+
 use context::ApplicationContext;
+
+#[cfg(feature = "discovery")]
+use net::discovery;
+
+use utils;
+
+use utils::logger::{BoxedLogger, Logger, Severity};
 
 use futures::{BoxFuture, Future, Poll, Stream};
 
@@ -25,9 +36,15 @@ pub enum Command {
     ScanNetwork,
 }
 
-type CommandReceiver = UnboundedReceiver<Command>;
+#[derive(Debug, Copy, Clone)]
+enum Event {
+    Command(Command),
+    ScanCompleted,
+}
 
-type CommandSender = UnboundedSender<Command>;
+type CommandReceiver = UnboundedReceiver<Event>;
+
+type CommandSender = UnboundedSender<Event>;
 
 /// A channel for sending commands across threads. The channel is cloneable and every copy of it
 /// will send commands to the same handler.
@@ -46,7 +63,7 @@ impl CommandChannel {
 
     /// Send a given command.
     pub fn send(&self, cmd: Command) {
-        self.tx.send(cmd)
+        self.tx.send(Event::Command(cmd))
             .expect("broken command channel");
     }
 }
@@ -54,19 +71,71 @@ impl CommandChannel {
 /// Command handler context.
 struct CommandHandlerContext {
     app_context: ApplicationContext,
+    logger:      BoxedLogger,
+    scanner:     Option<JoinHandle<()>>,
 }
 
 impl CommandHandlerContext {
     /// Create a new command handler context.
     fn new(app_context: ApplicationContext) -> CommandHandlerContext {
+        let logger = app_context.get_logger();
+
         CommandHandlerContext {
             app_context: app_context,
+            logger:      logger,
+            scanner:     None,
+        }
+    }
+
+    /// Process a given command handler event.
+    fn proces_event(&mut self, event: Event) {
+        match event {
+            Event::Command(cmd)  => self.process_command(cmd),
+            Event::ScanCompleted => self.scan_completed(),
         }
     }
 
     /// Process a given command.
     fn process_command(&mut self, cmd: Command) {
-        // TODO
+        match cmd {
+            Command::ResetServiceTable => self.reset_service_table(),
+            Command::ScanNetwork       => self.scan_network(),
+        }
+    }
+
+    /// Reset service table.
+    fn reset_service_table(&mut self) {
+        self.app_context.reset_service_table()
+    }
+
+    #[cfg(feature="discovery")]
+    /// Trigger a network scan.
+    fn scan_network(&mut self) {
+        if self.scanner.is_some() {
+            return;
+        }
+
+        let app_context = self.app_context.clone();
+
+        let handle = thread::spawn(move || {
+            network_scanner_thread(app_context);
+        });
+
+        self.scanner = Some(handle);
+    }
+
+    #[cfg(not(feature="discovery"))]
+    /// Dummy network scan.
+    fn scan_network(&mut self) {
+    }
+
+    /// Cleanup the scanner context.
+    fn scan_completed(&mut self) {
+        if let Some(handle) = self.scanner.take() {
+            if let Err(_) = handle.join() {
+                log_warn!(self.logger, "network scanner thread panicked");
+            }
+        }
     }
 }
 
@@ -81,8 +150,8 @@ impl CommandHandler {
     fn new(app_context: ApplicationContext, rx: CommandReceiver) -> CommandHandler {
         let mut context = CommandHandlerContext::new(app_context);
 
-        let handler = rx.for_each(move |cmd| {
-            context.process_command(cmd);
+        let handler = rx.for_each(move |event| {
+            context.proces_event(event);
             Ok(())
         });
 
@@ -109,4 +178,31 @@ pub fn new(app_context: ApplicationContext) -> (CommandChannel, CommandHandler) 
     let tx = CommandChannel::new(tx);
 
     (tx, rx)
+}
+
+#[cfg(feature = "discovery")]
+/// Run device discovery and update the service table.
+fn network_scanner_thread(mut app_context: ApplicationContext) {
+    let mut logger = app_context.get_logger();
+
+    let rtsp_paths_file = app_context.get_rtsp_paths_file();
+    let mjpeg_paths_file = app_context.get_mjpeg_paths_file();
+
+    app_context.set_scanning(true);
+
+    log_info!(logger, "looking for local services...");
+    let report = utils::result_or_log(&mut logger, Severity::WARN,
+        "network scanner error",
+        discovery::scan_network(
+            &rtsp_paths_file,
+            &mjpeg_paths_file));
+
+    if let Some(report) = report {
+        // TODO: update the service table and set scan report
+
+        //log_info!(logger, "{} services found, current service table: {}",
+        //    count, config.service_table());
+    }
+
+    app_context.set_scanning(false);
 }

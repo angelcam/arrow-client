@@ -593,8 +593,8 @@ impl ApplicationConfig {
     }
 
     /// Get address of the remote Arrow Service.
-    pub fn get_arrow_service_address(&self) -> String {
-        self.arrow_svc_addr.to_string()
+    pub fn get_arrow_service_address(&self) -> &str {
+        &self.arrow_svc_addr
     }
 
     /// Get version of the configuration.
@@ -625,6 +625,16 @@ impl ApplicationConfig {
     /// Get connection state file.
     pub fn get_connection_state_file(&self) -> &str {
         &self.state_file
+    }
+
+    /// Get path to a file containing RTSP paths for the network scanner.
+    pub fn get_rtsp_paths_file(&self) -> &str {
+        &self.rtsp_paths_file
+    }
+
+    /// Get path to a file containing MJPEG paths for the network scanner.
+    pub fn get_mjpeg_paths_file(&self) -> &str {
+        &self.mjpeg_paths_file
     }
 
     /// Get logger.

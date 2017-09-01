@@ -44,7 +44,14 @@ use self::update::UpdateMessage;
 pub use self::ack::AckMessage;
 pub use self::hup::HupMessage;
 pub use self::redirect::RedirectMessage;
-pub use self::scan_report::ScanReport;
+
+pub use self::scan_report::{
+    ScanReport,
+
+    HR_FLAG_ARP,
+    HR_FLAG_ICMP,
+};
+
 pub use self::svc_table::{
     BoxServiceTable,
     Service,
