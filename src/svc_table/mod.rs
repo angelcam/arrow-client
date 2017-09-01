@@ -12,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod service;
+
+use std;
+
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -21,12 +25,14 @@ use time;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::Error;
 
-use net::arrow::proto::{
-    BoxServiceTable,
+use config::ConfigError;
+
+use net::raw::ether::MacAddr;
+
+pub use self::service::{
     Service,
-    ServiceTable,
+    ServiceIdentifier,
     ServiceType,
-    SimpleServiceTable,
 
     SVC_TYPE_CONTROL_PROTOCOL,
     SVC_TYPE_RTSP,
@@ -38,9 +44,6 @@ use net::arrow::proto::{
     SVC_TYPE_LOCKED_MJPEG,
     SVC_TYPE_TCP,
 };
-use net::raw::ether::MacAddr;
-
-use config::ConfigError;
 
 const ACTIVE_THRESHOLD: i64 = 1200;
 
@@ -51,27 +54,26 @@ fn get_utc_timestamp() -> i64 {
         .sec
 }
 
-/// Helper struct for service table keys.
-#[derive(Clone, Eq, PartialEq, Hash)]
-struct ServiceTableKey {
-    svc_type: ServiceType,
-    mac_addr: Option<MacAddr>,
-    port:     Option<u16>,
-    path:     Option<String>,
+/// Common trait for service table implementations.
+pub trait ServiceTable {
+    /// Get service with a given ID.
+    fn get(&self, id: u16) -> Option<Service>;
+
+    /// Convert this service table into a trait object.
+    fn boxed(self) -> BoxServiceTable;
 }
 
-impl<'a> From<&'a Service> for ServiceTableKey {
-    fn from(svc: &'a Service) -> ServiceTableKey {
-        let mac  = svc.mac();
-        let addr = svc.address();
-        let path = svc.path();
+/// Type alias for boxed service table.
+pub type BoxServiceTable = Box<ServiceTable>;
 
-        ServiceTableKey {
-            svc_type: svc.service_type(),
-            mac_addr: mac.map(|mac| mac.clone()),
-            port:     addr.map(|addr| addr.port()),
-            path:     path.map(|path| path.to_string()),
-        }
+impl ServiceTable for Box<ServiceTable> {
+    fn get(&self, id: u16) -> Option<Service> {
+        self.as_ref()
+            .get(id)
+    }
+
+    fn boxed(self) -> BoxServiceTable {
+        self
     }
 }
 
@@ -104,9 +106,7 @@ impl ServiceTableElement {
 
     /// Update the internal service, the enabled flag and the last_seen timestamp.
     fn update(&mut self, svc: Service, enabled: bool) {
-        let id = self.service.id();
-
-        self.service   = Service::new(id, svc);
+        self.service   = svc;
         self.enabled   = enabled;
         self.last_seen = get_utc_timestamp();
     }
@@ -147,7 +147,7 @@ impl ServiceTableElement {
 /// Service table internal data.
 #[derive(Clone)]
 struct ServiceTableData {
-    map:      HashMap<ServiceTableKey, usize>,
+    map:      HashMap<ServiceIdentifier, usize>,
     services: Vec<ServiceTableElement>,
 }
 
@@ -193,14 +193,11 @@ impl ServiceTableData {
     /// Insert a new element into the table and return its ID.
     fn insert_element(&mut self, svc: Service, static_svc: bool, enabled: bool) -> u16 {
         let id  = (self.services.len() + 1) as u16;
-        let key = ServiceTableKey::from(&svc);
+        let key = svc.to_service_identifier();
 
         assert!(!self.map.contains_key(&key));
 
-        let elem = ServiceTableElement::new(
-            Service::new(id, svc),
-            static_svc,
-            enabled);
+        let elem = ServiceTableElement::new(svc, static_svc, enabled);
 
         self.map.insert(key, self.services.len());
         self.services.push(elem);
@@ -210,7 +207,7 @@ impl ServiceTableData {
 
     /// Update service table with a given service and return ID of the service.
     fn update(&mut self, svc: Service, static_svc: bool, enabled: bool) -> u16 {
-        let key = ServiceTableKey::from(&svc);
+        let key = svc.to_service_identifier();
 
         let index = self.map.get(&key)
             .map(|index| *index);
@@ -248,19 +245,19 @@ impl ServiceTableData {
             return true
         }
 
-        let key = ServiceTableKey::from(svc);
+        let key = svc.to_service_identifier();
 
         self.map.contains_key(&key)
     }
 
     /// Check if there is already a given service in the table and all service fields
-    /// (except ID) are equal to the given one.
+    /// are equal to the given one.
     fn contains_exact(&self, svc: &Service) -> bool {
         if svc.is_control() {
             return true
         }
 
-        let key = ServiceTableKey::from(svc);
+        let key = svc.to_service_identifier();
 
         let index = self.map.get(&key)
             .map(|index| *index);
@@ -276,13 +273,9 @@ impl ServiceTableData {
         }
     }
 
-    /// Get SimpleServiceTable consisting of all visible services.
-    fn to_simple_table(&self) -> SimpleServiceTable {
-        let iter = self.services.iter()
-            .filter(|elem| elem.is_visible())
-            .map(|elem| elem.to_service());
-
-        SimpleServiceTable::from(iter)
+    /// Get service table iterator.
+    fn iter(&self) -> ServiceTableIterator {
+        ServiceTableIterator::new(&self.services)
     }
 }
 
@@ -306,15 +299,48 @@ impl<'de> Deserialize<'de> for ServiceTableData {
 
         for svc in table.services {
             let index = res.services.len();
-            let elem = svc.into_service_table_element((index + 1) as u16)
+            let elem = svc.into_service_table_element()
                 .map_err(|err| D::Error::custom(format!("{}", err)))?;
-            let key = ServiceTableKey::from(&elem.service);
+            let key = elem.service.to_service_identifier();
 
             res.services.push(elem);
             res.map.insert(key, index);
         }
 
         Ok(res)
+    }
+}
+
+/// Service table iterator.
+pub struct ServiceTableIterator {
+    elements: std::vec::IntoIter<(u16, Service)>,
+}
+
+impl ServiceTableIterator {
+    /// Create a new service table iterator.
+    fn new(elements: &[ServiceTableElement]) -> ServiceTableIterator {
+        let mut res = Vec::new();
+
+        for ref element in elements {
+            let id = res.len() as u16 + 1;
+            
+            res.push((
+                id,
+                element.to_service(),
+            ));
+        }
+
+        ServiceTableIterator {
+            elements: res.into_iter(),
+        }
+    }
+}
+
+impl Iterator for ServiceTableIterator {
+    type Item = (u16, Service);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.elements.next()
     }
 }
 
@@ -367,6 +393,13 @@ impl SharedServiceTable {
             .contains_exact(svc)
     }
 
+    /// Get service table iterator.
+    pub fn iter(&self) -> ServiceTableIterator {
+        self.data.lock()
+            .unwrap()
+            .iter()
+    }
+
     /// Get read-only reference to this table.
     pub fn get_ref(&self) -> SharedServiceTableRef {
         SharedServiceTableRef {
@@ -396,12 +429,6 @@ impl ServiceTable for SharedServiceTable {
 
     fn boxed(self) -> BoxServiceTable {
         Box::new(self)
-    }
-
-    fn to_simple_table(&self) -> SimpleServiceTable {
-        self.data.lock()
-            .unwrap()
-            .to_simple_table()
     }
 }
 
@@ -433,6 +460,15 @@ pub struct SharedServiceTableRef {
     data: Arc<Mutex<ServiceTableData>>,
 }
 
+impl SharedServiceTableRef {
+    /// Get service table iterator.
+    pub fn iter(&self) -> ServiceTableIterator {
+        self.data.lock()
+            .unwrap()
+            .iter()
+    }
+}
+
 impl ServiceTable for SharedServiceTableRef {
     fn get(&self, id: u16) -> Option<Service> {
         self.data.lock()
@@ -442,12 +478,6 @@ impl ServiceTable for SharedServiceTableRef {
 
     fn boxed(self) -> BoxServiceTable {
         Box::new(self)
-    }
-
-    fn to_simple_table(&self) -> SimpleServiceTable {
-        self.data.lock()
-            .unwrap()
-            .to_simple_table()
     }
 }
 
@@ -465,9 +495,7 @@ struct SerdeService {
 
 impl SerdeService {
     /// Convert this object into a ServiceTableElement.
-    fn into_service_table_element(
-        self,
-        id: u16) -> Result<ServiceTableElement, ConfigError> {
+    fn into_service_table_element(self) -> Result<ServiceTableElement, ConfigError> {
         let epath = String::new();
         let opath;
 
@@ -479,27 +507,43 @@ impl SerdeService {
 
         let svc = match self.svc_type {
             SVC_TYPE_CONTROL_PROTOCOL => Ok(Service::control()),
-            SVC_TYPE_RTSP => Ok(Service::rtsp(id,
-                self.mac.parse()?, self.address.parse()?,
-                opath.unwrap_or(epath))),
-            SVC_TYPE_LOCKED_RTSP => Ok(Service::locked_rtsp(id,
-                self.mac.parse()?, self.address.parse()?,
-                opath)),
-            SVC_TYPE_UNKNOWN_RTSP => Ok(Service::unknown_rtsp(id,
-                self.mac.parse()?, self.address.parse()?)),
-            SVC_TYPE_UNSUPPORTED_RTSP => Ok(Service::unsupported_rtsp(id,
-                self.mac.parse()?, self.address.parse()?,
-                opath.unwrap_or(epath))),
-            SVC_TYPE_HTTP => Ok(Service::http(id,
-                self.mac.parse()?, self.address.parse()?)),
-            SVC_TYPE_MJPEG => Ok(Service::mjpeg(id,
-                self.mac.parse()?, self.address.parse()?,
-                opath.unwrap_or(epath))),
-            SVC_TYPE_LOCKED_MJPEG => Ok(Service::locked_mjpeg(id,
-                self.mac.parse()?, self.address.parse()?,
-                opath)),
-            SVC_TYPE_TCP => Ok(Service::tcp(id,
-                self.mac.parse()?, self.address.parse()?)),
+            SVC_TYPE_RTSP => Ok(Service::rtsp(
+                self.mac.parse()?,
+                self.address.parse()?,
+                opath.unwrap_or(epath),
+            )),
+            SVC_TYPE_LOCKED_RTSP => Ok(Service::locked_rtsp(
+                self.mac.parse()?,
+                self.address.parse()?,
+                opath,
+            )),
+            SVC_TYPE_UNKNOWN_RTSP => Ok(Service::unknown_rtsp(
+                self.mac.parse()?,
+                self.address.parse()?,
+            )),
+            SVC_TYPE_UNSUPPORTED_RTSP => Ok(Service::unsupported_rtsp(
+                self.mac.parse()?,
+                self.address.parse()?,
+                opath.unwrap_or(epath),
+            )),
+            SVC_TYPE_HTTP => Ok(Service::http(
+                self.mac.parse()?,
+                self.address.parse()?,
+            )),
+            SVC_TYPE_MJPEG => Ok(Service::mjpeg(
+                self.mac.parse()?,
+                self.address.parse()?,
+                opath.unwrap_or(epath),
+            )),
+            SVC_TYPE_LOCKED_MJPEG => Ok(Service::locked_mjpeg(
+                self.mac.parse()?,
+                self.address.parse()?,
+                opath,
+            )),
+            SVC_TYPE_TCP => Ok(Service::tcp(
+                self.mac.parse()?,
+                self.address.parse()?,
+            )),
             _ => Err(ConfigError::from("unknown service type"))
         };
 

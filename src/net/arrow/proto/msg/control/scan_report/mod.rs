@@ -17,18 +17,18 @@ pub mod host;
 use std::mem;
 
 use std::net::{IpAddr, SocketAddr};
-use std::collections::{HashMap, HashSet};
-use std::collections::hash_set::Iter as HashSetIterator;
+use std::collections::HashMap;
 use std::collections::hash_map::Iter as HashMapIterator;
 
 use bytes::BytesMut;
 
 use utils;
 
+use svc_table::{Service, ServiceIdentifier};
+
 use net::arrow::proto::codec::Encode;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::ControlMessageBody;
-use net::arrow::proto::msg::control::svc_table::Service;
 use net::raw::ether::MacAddr;
 
 pub use self::host::HR_FLAG_ARP;
@@ -66,7 +66,7 @@ type HostRecordKey = (MacAddr, IpAddr);
 #[derive(Clone)]
 pub struct ScanReport {
     hosts:    HashMap<HostRecordKey, HostRecord>,
-    services: HashSet<Service>,
+    services: HashMap<ServiceIdentifier, Service>,
 }
 
 impl ScanReport {
@@ -74,7 +74,7 @@ impl ScanReport {
     pub fn new() -> ScanReport {
         ScanReport {
             hosts:    HashMap::new(),
-            services: HashSet::new()
+            services: HashMap::new(),
         }
     }
 
@@ -117,7 +117,7 @@ impl ScanReport {
 
     /// Add a given service.
     pub fn add_service(&mut self, svc: Service) {
-        self.services.insert(svc);
+        self.services.insert(svc.to_service_identifier(), svc);
     }
 
     /// Get host records.
@@ -160,11 +160,12 @@ impl Encode for ScanReport {
         }
 
         for svc in &self.services {
-            svc.encode(buf);
+            // TODO: encode service table (note that we need service IDs)
+            //svc.encode(buf);
         }
 
-        Service::control()
-            .encode(buf)
+        //Service::control()
+        //    .encode(buf)
     }
 }
 
@@ -176,13 +177,15 @@ impl MessageBody for ScanReport {
             len += host.len();
         }
 
-        for svc in &self.services {
+        // TODO
+        /*for svc in &self.services {
             len += svc.len();
         }
 
         let control = Service::control();
 
-        len + control.len()
+        len + control.len()*/
+        len
     }
 }
 
@@ -217,7 +220,7 @@ impl<'a> ExactSizeIterator for HostRecordIterator<'a> {
 
 /// Service iterator.
 pub struct ServiceIterator<'a> {
-    inner: HashSetIterator<'a, Service>,
+    inner: HashMapIterator<'a, ServiceIdentifier, Service>,
 }
 
 impl<'a> ServiceIterator<'a> {
@@ -233,7 +236,10 @@ impl<'a> Iterator for ServiceIterator<'a> {
     type Item = &'a Service;
 
     fn next(&mut self) -> Option<&'a Service> {
-        self.inner.next()
+        match self.inner.next() {
+            Some((_, service)) => Some(service),
+            None               => None,
+        }
     }
 }
 

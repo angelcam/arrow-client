@@ -22,10 +22,10 @@ use std::sync::{Arc, Mutex};
 
 use config::ApplicationConfig;
 
-use net::arrow::proto::{ScanReport, Service};
-use net::raw::ether::MacAddr;
+use svc_table::{Service, SharedServiceTableRef};
 
-use svc_table::SharedServiceTableRef;
+use net::arrow::proto::ScanReport;
+use net::raw::ether::MacAddr;
 
 use timer::Timer;
 

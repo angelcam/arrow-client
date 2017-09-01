@@ -39,10 +39,12 @@ use net::raw::devices::EthernetDevice;
 use net::raw::ether::MacAddr;
 use net::raw::arp::scanner::Ipv4ArpScanner;
 use net::raw::icmp::scanner::IcmpScanner;
-use net::arrow::proto::{Service, ScanReport};
+use net::arrow::proto::ScanReport;
 use net::arrow::proto::{HR_FLAG_ARP, HR_FLAG_ICMP};
 use net::raw::tcp::scanner::{TcpPortScanner, PortCollection};
 use net::rtsp::sdp::{SessionDescription, MediaType, RTPMap, FromAttribute};
+
+use svc_table::Service;
 
 /// Discovery error.
 #[derive(Debug, Clone)]
@@ -431,16 +433,16 @@ fn find_rtsp_path(
     mac: MacAddr,
     addr: SocketAddr,
     paths: &[String]) -> Result<Service> {
-    let mut service = Service::unknown_rtsp(0, mac, addr);
+    let mut service = Service::unknown_rtsp(mac, addr);
 
     for path in paths {
         let status = try!(get_rtsp_describe_status(addr, path));
         if status == DescribeStatus::Ok {
-            service = Service::rtsp(0, mac, addr, path.to_string());
+            service = Service::rtsp(mac, addr, path.to_string());
         } else if status == DescribeStatus::Unsupported {
-            service = Service::unsupported_rtsp(0, mac, addr, path.to_string());
+            service = Service::unsupported_rtsp(mac, addr, path.to_string());
         } else if status == DescribeStatus::Locked {
-            service = Service::locked_rtsp(0, mac, addr, None);
+            service = Service::locked_rtsp(mac, addr, None);
         }
 
         match status {
@@ -529,10 +531,10 @@ fn find_mjpeg_path(
 
                 if  ctype.starts_with("image/jpeg") ||
                     ctype.starts_with("multipart/x-mixed-replace") {
-                    return Ok(Some(Service::mjpeg(0, mac, addr, path.to_string())));
+                    return Ok(Some(Service::mjpeg(mac, addr, path.to_string())));
                 }
             } else if header.code == 401 {
-                return Ok(Some(Service::locked_mjpeg(0, mac, addr, None)));
+                return Ok(Some(Service::locked_mjpeg(mac, addr, None)));
             }
         }
     }
@@ -583,7 +585,7 @@ fn find_http_services(
 
     for &(ref mac, ref saddr) in http_ports {
         if host_set.contains(&saddr.ip()) {
-            res.push(Service::http(0, *mac, *saddr));
+            res.push(Service::http(*mac, *saddr));
         }
     }
 

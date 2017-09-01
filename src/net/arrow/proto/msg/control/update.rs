@@ -18,7 +18,6 @@ use net::arrow::proto::codec::Encode;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::{
     ControlMessageBody,
-    ServiceTable,
     SimpleServiceTable,
 };
 
@@ -29,10 +28,9 @@ pub struct UpdateMessage {
 
 impl UpdateMessage {
     /// Create a new UPDATE message.
-    pub fn new<T>(svc_table: &T) -> UpdateMessage
-        where T: ServiceTable {
+    pub fn new(svc_table: SimpleServiceTable) -> UpdateMessage {
         UpdateMessage {
-            svc_table: svc_table.to_simple_table()
+            svc_table: svc_table
         }
     }
 }

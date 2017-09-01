@@ -53,21 +53,7 @@ pub use self::scan_report::{
 };
 
 pub use self::svc_table::{
-    BoxServiceTable,
-    Service,
-    ServiceTable,
-    ServiceType,
     SimpleServiceTable,
-
-    SVC_TYPE_CONTROL_PROTOCOL,
-    SVC_TYPE_RTSP,
-    SVC_TYPE_LOCKED_RTSP,
-    SVC_TYPE_UNKNOWN_RTSP,
-    SVC_TYPE_UNSUPPORTED_RTSP,
-    SVC_TYPE_HTTP,
-    SVC_TYPE_MJPEG,
-    SVC_TYPE_LOCKED_MJPEG,
-    SVC_TYPE_TCP,
 };
 
 // ACK codes
@@ -289,13 +275,12 @@ impl ControlMessage {
     }
 
     /// Create a new REGISTER Control Protocol message.
-    pub fn register<T>(
+    pub fn register(
         msg_id: u16,
         mac: MacAddr,
         uuid: [u8; 16],
         password: [u8; 16],
-        svc_table: &T) -> ControlMessage
-        where T: ServiceTable {
+        svc_table: SimpleServiceTable) -> ControlMessage {
         ControlMessage::new(
             msg_id,
             ControlMessageType::REGISTER,
@@ -307,8 +292,7 @@ impl ControlMessage {
     }
 
     /// Create a new UPDATE Control Protocol message.
-    pub fn update<T>(msg_id: u16, svc_table: &T) -> ControlMessage
-        where T: ServiceTable {
+    pub fn update(msg_id: u16, svc_table: SimpleServiceTable) -> ControlMessage {
         ControlMessage::new(
             msg_id,
             ControlMessageType::UPDATE,

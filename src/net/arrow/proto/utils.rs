@@ -15,8 +15,9 @@
 use std::rc::Rc;
 use std::cell::Cell;
 
-use net::arrow::proto::{ServiceTable, ScanReport};
+use net::arrow::proto::ScanReport;
 use net::arrow::proto::msg::ControlMessage;
+use net::arrow::proto::msg::control::SimpleServiceTable;
 
 use net::raw::ether::MacAddr;
 
@@ -90,13 +91,12 @@ impl ControlMessageFactory {
     }
 
     /// Create a new REGISTER message.
-    pub fn register<T>(
+    pub fn register(
         &mut self,
         mac: MacAddr,
         uuid: [u8; 16],
         password: [u8; 16],
-        svc_table: &T) -> ControlMessage
-        where T: ServiceTable {
+        svc_table: SimpleServiceTable) -> ControlMessage {
         ControlMessage::register(
             self.next_id(),
             mac,
@@ -106,8 +106,7 @@ impl ControlMessageFactory {
     }
 
     /// Create a new UPDATE message.
-    pub fn update<T>(&mut self, svc_table: &T) -> ControlMessage
-        where T: ServiceTable {
+    pub fn update(&mut self, svc_table: SimpleServiceTable) -> ControlMessage {
         ControlMessage::update(
             self.next_id(),
             svc_table)

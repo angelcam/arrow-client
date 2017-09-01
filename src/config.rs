@@ -25,13 +25,16 @@ use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::Path;
 use std::str::FromStr;
 
+use svc_table::{
+    Service,
+    SharedServiceTable,
+    SharedServiceTableRef,
+};
+
 use net;
 
-use net::arrow::proto::Service;
 use net::raw::ether::MacAddr;
 use net::raw::devices::EthernetDevice;
-
-use svc_table::{SharedServiceTable, SharedServiceTableRef};
 
 use utils;
 
@@ -371,7 +374,7 @@ impl ApplicationConfigBuilder {
         let mac = get_fake_mac(0xffff, &addr);
 
         self.services.push(
-            Service::http(0, mac, addr));
+            Service::http(mac, addr));
 
         Ok(())
     }
@@ -389,7 +392,7 @@ impl ApplicationConfigBuilder {
         let mac = get_fake_mac(0xffff, &addr);
 
         self.services.push(
-            Service::tcp(0, mac, addr));
+            Service::tcp(mac, addr));
 
         Ok(())
     }
@@ -821,8 +824,8 @@ fn parse_rtsp_url(url: &str) -> Result<Service, ConfigError> {
         // NOTE: we do not want to probe the service here as it might not be
         // available on app startup
         match caps.at(1) {
-            Some(_) => Ok(Service::locked_rtsp(0, mac, socket_addr, None)),
-            None    => Ok(Service::rtsp(0, mac, socket_addr, path.to_string()))
+            Some(_) => Ok(Service::locked_rtsp(mac, socket_addr, None)),
+            None    => Ok(Service::rtsp(mac, socket_addr, path.to_string()))
         }
     } else {
         Err(ConfigError::from(format!("invalid RTSP URL given: {}", url)))
@@ -852,8 +855,8 @@ fn parse_mjpeg_url(url: &str) -> Result<Service, ConfigError> {
         // NOTE: we do not want to probe the service here as it might not be
         // available on app startup
         match caps.at(1) {
-            Some(_) => Ok(Service::locked_mjpeg(0, mac, socket_addr, None)),
-            None    => Ok(Service::mjpeg(0, mac, socket_addr, path.to_string()))
+            Some(_) => Ok(Service::locked_mjpeg(mac, socket_addr, None)),
+            None    => Ok(Service::mjpeg(mac, socket_addr, path.to_string()))
         }
     } else {
         Err(ConfigError::from(format!("invalid HTTP URL given: {}", url)))

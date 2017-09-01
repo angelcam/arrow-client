@@ -36,7 +36,8 @@ use futures_ex::StreamEx;
 
 use context::ApplicationContext;
 
-use net::arrow::proto::{BoxServiceTable, ServiceTable};
+use svc_table::{BoxServiceTable, ServiceTable};
+
 use net::arrow::proto::codec::RawCodec;
 use net::arrow::proto::error::{ArrowError, ConnectionError};
 use net::arrow::proto::msg::ArrowMessage;

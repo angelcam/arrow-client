@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[cfg(feature="discovery")]
 use std::thread;
 
 use std::thread::JoinHandle;
@@ -21,9 +22,13 @@ use context::ApplicationContext;
 #[cfg(feature = "discovery")]
 use net::discovery;
 
+#[cfg(feature="discovery")]
 use utils;
 
-use utils::logger::{BoxedLogger, Logger, Severity};
+use utils::logger::{BoxedLogger, Logger};
+
+#[cfg(feature="discovery")]
+use utils::logger::Severity;
 
 use futures::{BoxFuture, Future, Poll, Stream};
 

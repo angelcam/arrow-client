@@ -22,7 +22,6 @@ use net::arrow::proto::codec::Encode;
 use net::arrow::proto::msg::MessageBody;
 use net::arrow::proto::msg::control::{
     ControlMessageBody,
-    ServiceTable,
     SimpleServiceTable,
 };
 
@@ -65,17 +64,16 @@ pub struct RegisterMessage {
 
 impl RegisterMessage {
     /// Create a new REGISTER message.
-    pub fn new<T>(
+    pub fn new(
         mac: MacAddr,
         uuid: [u8; 16],
         password: [u8; 16],
-        svc_table: &T) -> RegisterMessage
-        where T: ServiceTable {
+        svc_table: SimpleServiceTable) -> RegisterMessage {
         let header = RegisterMessageHeader::new(mac, uuid, password);
 
         RegisterMessage {
             header:    header,
-            svc_table: svc_table.to_simple_table(),
+            svc_table: svc_table,
         }
     }
 }

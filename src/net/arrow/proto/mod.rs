@@ -66,6 +66,7 @@ use net::arrow::proto::msg::control::{
     ControlMessageType,
     HupMessage,
     RedirectMessage,
+    SimpleServiceTable,
 };
 use net::arrow::proto::session::SessionManager;
 use net::arrow::proto::utils::ControlMessageFactory;
@@ -76,22 +77,7 @@ pub use net::arrow::proto::error::{
 };
 
 pub use net::arrow::proto::msg::control::{
-    BoxServiceTable,
     ScanReport,
-    Service,
-    ServiceTable,
-    ServiceType,
-    SimpleServiceTable,
-
-    SVC_TYPE_CONTROL_PROTOCOL,
-    SVC_TYPE_RTSP,
-    SVC_TYPE_LOCKED_RTSP,
-    SVC_TYPE_UNKNOWN_RTSP,
-    SVC_TYPE_UNSUPPORTED_RTSP,
-    SVC_TYPE_HTTP,
-    SVC_TYPE_MJPEG,
-    SVC_TYPE_LOCKED_MJPEG,
-    SVC_TYPE_TCP,
 
     HR_FLAG_ARP,
     HR_FLAG_ICMP,
@@ -100,8 +86,6 @@ pub use net::arrow::proto::msg::control::{
 use net::raw::ether::MacAddr;
 
 use svc_table::SharedServiceTableRef;
-
-use timer::Timer;
 
 use utils::get_hostname;
 
@@ -293,11 +277,13 @@ impl ArrowClientContext {
         password: [u8; 16]) {
         log_debug!(self.logger, "sending REGISTER request...");
 
+        let svc_table = SimpleServiceTable::from(self.svc_table.iter());
+
         let msg = self.cmsg_factory.register(
             mac,
             uuid,
             password,
-            &self.svc_table);
+            svc_table);
 
         self.send_unconfirmed_control_message(msg);
     }
@@ -306,8 +292,9 @@ impl ArrowClientContext {
     fn send_update_message(&mut self) {
         log_debug!(self.logger, "sending a UPDATE message...");
 
-        let msg = self.cmsg_factory.update(
-            &self.svc_table);
+        let svc_table = SimpleServiceTable::from(self.svc_table.iter());
+
+        let msg = self.cmsg_factory.update(svc_table);
 
         self.send_control_message(msg);
     }
