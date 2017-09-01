@@ -35,10 +35,13 @@ use futures::{BoxFuture, Future, Poll, Stream};
 use futures::sync::mpsc;
 use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
+use time;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Command {
     ResetServiceTable,
     ScanNetwork,
+    PeriodicNetworkScan,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -75,10 +78,11 @@ impl CommandChannel {
 
 /// Command handler context.
 struct CommandHandlerContext {
-    app_context: ApplicationContext,
-    logger:      BoxedLogger,
-    cmd_sender:  CommandSender,
-    scanner:     Option<JoinHandle<()>>,
+    app_context:  ApplicationContext,
+    logger:       BoxedLogger,
+    cmd_sender:   CommandSender,
+    last_nw_scan: f64,
+    scanner:      Option<JoinHandle<()>>,
 }
 
 impl CommandHandlerContext {
@@ -86,11 +90,14 @@ impl CommandHandlerContext {
     fn new(app_context: ApplicationContext, cmd_sender: CommandSender) -> CommandHandlerContext {
         let logger = app_context.get_logger();
 
+        let t = time::precise_time_s();
+
         CommandHandlerContext {
-            app_context: app_context,
-            logger:      logger,
-            cmd_sender:  cmd_sender,
-            scanner:     None,
+            app_context:  app_context,
+            logger:       logger,
+            cmd_sender:   cmd_sender,
+            last_nw_scan: t - 300.0,
+            scanner:      None,
         }
     }
 
@@ -105,14 +112,24 @@ impl CommandHandlerContext {
     /// Process a given command.
     fn process_command(&mut self, cmd: Command) {
         match cmd {
-            Command::ResetServiceTable => self.reset_service_table(),
-            Command::ScanNetwork       => self.scan_network(),
+            Command::ResetServiceTable   => self.reset_service_table(),
+            Command::ScanNetwork         => self.scan_network(),
+            Command::PeriodicNetworkScan => self.periodic_network_scan(),
         }
     }
 
     /// Reset service table.
     fn reset_service_table(&mut self) {
         self.app_context.reset_service_table()
+    }
+
+    /// Trigger periodic netork scan.
+    fn periodic_network_scan(&mut self) {
+        let t = time::precise_time_s();
+
+        if (self.last_nw_scan + 300.0) < t {
+            self.scan_network();
+        }
     }
 
     #[cfg(feature="discovery")]
@@ -147,6 +164,8 @@ impl CommandHandlerContext {
                 log_warn!(self.logger, "network scanner thread panicked");
             }
         }
+
+        self.last_nw_scan = time::precise_time_s();
     }
 }
 

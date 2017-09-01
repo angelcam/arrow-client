@@ -874,9 +874,9 @@ fn main() {
     // schedule periodic network scan
     let periodic_network_scan = context.get_timer()
         .create_periodic_task(
-            Duration::from_secs(300),
+            Duration::from_secs(1),
             move || {
-                tx.send(Command::ScanNetwork)
+                tx.send(Command::PeriodicNetworkScan)
             }
         );
 
