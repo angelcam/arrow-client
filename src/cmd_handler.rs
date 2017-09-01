@@ -77,17 +77,19 @@ impl CommandChannel {
 struct CommandHandlerContext {
     app_context: ApplicationContext,
     logger:      BoxedLogger,
+    cmd_sender:  CommandSender,
     scanner:     Option<JoinHandle<()>>,
 }
 
 impl CommandHandlerContext {
     /// Create a new command handler context.
-    fn new(app_context: ApplicationContext) -> CommandHandlerContext {
+    fn new(app_context: ApplicationContext, cmd_sender: CommandSender) -> CommandHandlerContext {
         let logger = app_context.get_logger();
 
         CommandHandlerContext {
             app_context: app_context,
             logger:      logger,
+            cmd_sender:  cmd_sender,
             scanner:     None,
         }
     }
@@ -121,9 +123,13 @@ impl CommandHandlerContext {
         }
 
         let app_context = self.app_context.clone();
+        let cmd_sender  = self.cmd_sender.clone();
 
         let handle = thread::spawn(move || {
             network_scanner_thread(app_context);
+
+            cmd_sender.send(Event::ScanCompleted)
+                .unwrap();
         });
 
         self.scanner = Some(handle);
@@ -152,8 +158,11 @@ pub struct CommandHandler {
 
 impl CommandHandler {
     /// Create a new command handler.
-    fn new(app_context: ApplicationContext, rx: CommandReceiver) -> CommandHandler {
-        let mut context = CommandHandlerContext::new(app_context);
+    fn new(
+        app_context: ApplicationContext,
+        rx: CommandReceiver,
+        tx: CommandSender) -> CommandHandler {
+        let mut context = CommandHandlerContext::new(app_context, tx);
 
         let handler = rx.for_each(move |event| {
             context.proces_event(event);
@@ -179,7 +188,7 @@ impl Future for CommandHandler {
 pub fn new(app_context: ApplicationContext) -> (CommandChannel, CommandHandler) {
     let (tx, rx) = mpsc::unbounded();
 
-    let rx = CommandHandler::new(app_context, rx);
+    let rx = CommandHandler::new(app_context, rx, tx.clone());
     let tx = CommandChannel::new(tx);
 
     (tx, rx)
