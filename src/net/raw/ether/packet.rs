@@ -239,7 +239,7 @@ mod tests {
     use super::*;
 
     use net::raw::arp::*;
-    use net::raw::Serialize;
+    use net::raw::utils::Serialize;
 
     use std::net::Ipv4Addr;
 

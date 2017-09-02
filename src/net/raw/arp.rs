@@ -294,8 +294,9 @@ mod tests {
 
     use std::net::Ipv4Addr;
 
-    use net::raw::Serialize;
-    use net::raw::ether::{MacAddr, EtherPacket};
+    use net::raw::ether::MacAddr;
+    use net::raw::ether::packet::EtherPacket;
+    use net::raw::utils::Serialize;
 
     #[test]
     fn test_arp_packet() {

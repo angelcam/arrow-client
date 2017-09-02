@@ -465,7 +465,8 @@ mod tests {
     use super::scanner::PortCollection;
 
     use net::raw::ip::*;
-    use net::raw::ether::{MacAddr, EtherPacket};
+    use net::raw::ether::MacAddr;
+    use net::raw::ether::packet::EtherPacket;
     use net::raw::utils::Serialize;
 
     use std::net::Ipv4Addr;
