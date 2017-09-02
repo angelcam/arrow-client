@@ -78,9 +78,9 @@ pub use net::arrow::proto::error::{
 
 use net::raw::ether::MacAddr;
 
-use svc_table::SharedServiceTableRef;
+use net::utils::get_hostname;
 
-use utils::get_hostname;
+use svc_table::SharedServiceTableRef;
 
 use utils::logger::{Logger, BoxedLogger};
 

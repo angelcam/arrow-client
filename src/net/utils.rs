@@ -18,6 +18,18 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
 use utils::RuntimeError;
 
+use regex::Regex;
+
+/// Get hostname from a given socket address string.
+pub fn get_hostname(address: &str) -> String {
+    Regex::new(r"^([^:]+)(:(\d+))?$")
+        .unwrap()
+        .captures(address)
+        .and_then(|cap| cap.at(1))
+        .unwrap_or(address)
+        .to_string()
+}
+
 /// Get socket address from a given argument.
 pub fn get_socket_address<T>(s: T) -> Result<SocketAddr, RuntimeError>
     where T: ToSocketAddrs {

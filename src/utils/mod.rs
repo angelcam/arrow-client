@@ -26,8 +26,6 @@ use std::ffi::CStr;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
-use regex::Regex;
-
 use utils::logger::{Logger, Severity};
 
 /// Helper trait for getting Any reference to an object.
@@ -128,16 +126,6 @@ pub fn result_or_log<L, T, E, M>(
         },
         Ok(res)  => Some(res)
     }
-}
-
-/// Get hostname from a given socket address.
-pub fn get_hostname(address: &str) -> String {
-    Regex::new(r"^([^:]+)(:(\d+))?$")
-        .unwrap()
-        .captures(address)
-        .and_then(|cap| cap.at(1))
-        .unwrap_or(address)
-        .to_string()
 }
 
 #[cfg(test)]
