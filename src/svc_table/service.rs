@@ -135,7 +135,7 @@ impl Service {
     /// Create a new Unsupported RTSP service.
     pub fn unsupported_rtsp(mac: MacAddr, address: SocketAddr, path: String) -> Service {
         Service {
-            svc_type: ServiceType::RTSP,
+            svc_type: ServiceType::UnsupportedRTSP,
             mac:      Some(mac),
             address:  Some(address),
             path:     Some(path),
