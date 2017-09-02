@@ -620,6 +620,11 @@ impl ApplicationConfig {
         self.arrow_mac
     }
 
+    /// Get network discovery settings.
+    pub fn get_discovery(&self) -> bool {
+        self.discovery
+    }
+
     /// Check if the application is in the diagnostic mode.
     pub fn get_diagnostic_mode(&self) -> bool {
         self.diagnostic_mode

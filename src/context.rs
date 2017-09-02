@@ -116,6 +116,11 @@ impl ApplicationContextData {
         self.config.get_mac_address()
     }
 
+    /// Get network discovery settings.
+    pub fn get_discovery(&self) -> bool {
+        self.config.get_discovery()
+    }
+
     /// Check if the application is in the diagnostic mode.
     fn get_diagnostic_mode(&self) -> bool {
         self.config.get_diagnostic_mode()
@@ -254,6 +259,13 @@ impl ApplicationContext {
         self.data.lock()
             .unwrap()
             .get_arrow_mac_address()
+    }
+
+    /// Get network discovery settings.
+    pub fn get_discovery(&self) -> bool {
+        self.data.lock()
+            .unwrap()
+            .get_discovery()
     }
 
     /// Check if the application is in the diagnostic mode.

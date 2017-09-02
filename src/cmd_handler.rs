@@ -140,7 +140,8 @@ impl CommandHandlerContext {
     #[cfg(feature="discovery")]
     /// Trigger a network scan.
     fn scan_network(&mut self) {
-        if self.scanner.is_some() {
+        if !self.app_context.get_discovery() ||
+            self.scanner.is_some() {
             return;
         }
 
