@@ -96,11 +96,6 @@ impl ApplicationContextData {
             .to_string()
     }
 
-    /// Get current version of the configuration.
-    fn get_config_version(&self) -> usize {
-        self.config.get_version()
-    }
-
     /// Get Arrow Client UUID.
     fn get_arrow_uuid(&self) -> Uuid {
         self.config.get_uuid()
@@ -231,13 +226,6 @@ impl ApplicationContext {
         self.data.lock()
             .unwrap()
             .get_arrow_service_address()
-    }
-
-    /// Get current version of the configuration.
-    pub fn get_config_version(&self) -> usize {
-        self.data.lock()
-            .unwrap()
-            .get_config_version()
     }
 
     /// Get Arrow Client UUID.

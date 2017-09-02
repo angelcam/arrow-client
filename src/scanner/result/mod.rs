@@ -56,19 +56,6 @@ impl ScanResult {
         }
     }
 
-    /// Get host info for a given host.
-    pub fn get_host(&self, mac: MacAddr, ip: IpAddr) -> Option<&HostRecord> {
-        self.hosts.get(&(mac, ip))
-    }
-
-    /// Get mutable host info for a given host.
-    pub fn get_host_mut(
-        &mut self,
-        mac: MacAddr,
-        ip: IpAddr) -> Option<&mut HostRecord> {
-        self.hosts.get_mut(&(mac, ip))
-    }
-
     /// Add a given port into the corresponding host info. The host info is
     /// created if it is not already in the table.
     pub fn add_port(&mut self, mac: MacAddr, ip: IpAddr, port: u16) {

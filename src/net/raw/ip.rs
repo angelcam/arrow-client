@@ -309,8 +309,7 @@ mod tests {
     use super::*;
 
     use net::raw::tcp::*;
-    use utils::Serialize;
-    use net::utils::WriteBuffer;
+    use net::raw::Serialize;
     use net::raw::ether::{MacAddr, EtherPacket};
 
     use std::net::Ipv4Addr;
@@ -327,12 +326,12 @@ mod tests {
         let ip  = Ipv4Packet::create(sip, dip, 64, tcp);
         let pkt = EtherPacket::create(mac, mac, ip);
 
-        let mut buf = WriteBuffer::new(0);
+        let mut buf = Vec::new();
 
         pkt.serialize(&mut buf)
             .unwrap();
 
-        let ep2 = EtherPacket::<Ipv4Packet<TcpPacket>>::parse(buf.as_bytes())
+        let ep2 = EtherPacket::<Ipv4Packet<TcpPacket>>::parse(buf.as_ref())
             .unwrap();
 
         let iph  = &pkt.body.header;

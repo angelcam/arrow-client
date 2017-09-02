@@ -147,34 +147,6 @@ impl Logger for BoxedLogger {
     }
 }
 
-/// This logger does nothing but holds the severity level.
-#[derive(Debug, Copy, Clone)]
-pub struct DummyLogger {
-    level: Severity,
-}
-
-impl DummyLogger {
-    /// Create a new dummy logger.
-    pub fn new() -> DummyLogger {
-        DummyLogger {
-            level: Severity::INFO
-        }
-    }
-}
-
-impl Logger for DummyLogger {
-    fn log(&mut self, _: &str, _: u32, _: Severity, _: &str) {
-    }
-
-    fn set_level(&mut self, s: Severity) {
-        self.level = s;
-    }
-
-    fn get_level(&self) -> Severity {
-        self.level
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

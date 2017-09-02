@@ -26,7 +26,7 @@ use std::str::FromStr;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-use utils::Serialize;
+use net::raw::Serialize;
 
 /// MacAddr parse error.
 #[derive(Debug, Clone)]
@@ -325,8 +325,7 @@ mod tests {
     use super::*;
 
     use net::raw::arp::*;
-    use utils::Serialize;
-    use net::utils::WriteBuffer;
+    use net::raw::Serialize;
 
     use std::net::Ipv4Addr;
 
@@ -352,12 +351,12 @@ mod tests {
             &src, &sip, &dst, &dip);
         let pkt = EtherPacket::create(src, dst, arp);
 
-        let mut buf = WriteBuffer::new(0);
+        let mut buf = Vec::new();
 
         pkt.serialize(&mut buf)
             .unwrap();
 
-        let ep2 = EtherPacket::<ArpPacket>::parse(buf.as_bytes())
+        let ep2 = EtherPacket::<ArpPacket>::parse(buf.as_ref())
             .unwrap();
 
         assert_eq!(pkt.header.src.octets(), ep2.header.src.octets());

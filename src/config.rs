@@ -600,11 +600,6 @@ impl ApplicationConfig {
         &self.arrow_svc_addr
     }
 
-    /// Get version of the configuration.
-    pub fn get_version(&self) -> usize {
-        self.version
-    }
-
     /// Get Arrow Client UUID.
     pub fn get_uuid(&self) -> Uuid {
         self.uuid

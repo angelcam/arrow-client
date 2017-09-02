@@ -26,18 +26,6 @@ pub struct RedirectMessage {
     pub target: String,
 }
 
-impl RedirectMessage {
-    /// Create a new redirect message for a given target.
-    pub fn new<'a, T: AsRef<&'a str>>(target: T) -> RedirectMessage {
-        let target = target.as_ref()
-            .to_string();
-
-        RedirectMessage {
-            target: target,
-        }
-    }
-}
-
 impl Encode for RedirectMessage {
     fn encode(&self, buf: &mut BytesMut) {
         buf.extend(self.target.as_bytes());
