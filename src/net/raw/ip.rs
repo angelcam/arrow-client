@@ -23,8 +23,13 @@ use net::raw;
 use std::io::Write;
 use std::net::Ipv4Addr;
 
-use net::raw::ether::{Result, PacketParseError};
-use net::raw::ether::{EtherPacketHeader, EtherPacketBody, EtherPacketType};
+use net::raw::ether::packet::{
+    Result,
+    PacketParseError,
+    EtherPacketHeader,
+    EtherPacketBody,
+    EtherPacketType
+};
 
 pub const IP_PROTO_ICMP: u8 = 0x01;
 pub const IP_PROTO_TCP:  u8 = 0x06;
@@ -309,8 +314,9 @@ mod tests {
     use super::*;
 
     use net::raw::tcp::*;
-    use net::raw::Serialize;
-    use net::raw::ether::{MacAddr, EtherPacket};
+    use net::raw::ether::MacAddr;
+    use net::raw::ether::packet::EtherPacket;
+    use net::raw::utils::Serialize;
 
     use std::net::Ipv4Addr;
 

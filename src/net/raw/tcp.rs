@@ -22,7 +22,7 @@ use net::raw;
 
 use std::io::Write;
 
-use net::raw::ether::{Result, PacketParseError};
+use net::raw::ether::packet::{Result, PacketParseError};
 use net::raw::ip::{Ipv4PacketHeader, Ipv4PacketBody, Ipv4PacketType};
 
 pub const TCP_FLAG_NS:  u16 = 1 << 8;
@@ -205,7 +205,6 @@ impl PseudoIpv4PacketHeader {
     }
 }
 
-#[cfg(feature = "discovery")]
 pub mod scanner {
     use super::*;
 
@@ -216,12 +215,12 @@ pub mod scanner {
     use std::ops::Range;
     use std::net::Ipv4Addr;
 
-    use net::raw::Serialize;
-    use net::raw::ip::Ipv4Packet;
-    use net::raw::pcap::ThreadingContext;
     use net::raw::devices::EthernetDevice;
-    use net::raw::ether::{MacAddr, EtherPacket};
-    use net::raw::pcap::{Scanner, PacketGenerator};
+    use net::raw::ether::MacAddr;
+    use net::raw::ether::packet::EtherPacket;
+    use net::raw::ip::Ipv4Packet;
+    use net::raw::pcap::{Scanner, PacketGenerator, ThreadingContext};
+    use net::raw::utils::Serialize;
 
     /// TCP port range.
     #[derive(Debug, Clone, Eq, PartialEq)]
@@ -463,17 +462,15 @@ pub mod scanner {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "discovery")]
     use super::scanner::PortCollection;
 
     use net::raw::ip::*;
-    use net::raw::Serialize;
     use net::raw::ether::{MacAddr, EtherPacket};
+    use net::raw::utils::Serialize;
 
     use std::net::Ipv4Addr;
 
     #[test]
-    #[cfg(feature = "discovery")]
     fn test_port_collection() {
         let col = PortCollection::new()
             .add_all([3, 5].iter()

@@ -12,29 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod devices;
+pub mod ether;
+
+#[cfg(feature = "discovery")]
+pub mod ip;
+
+#[cfg(feature = "discovery")]
+pub mod arp;
+
+#[cfg(feature = "discovery")]
+pub mod tcp;
+
+#[cfg(feature = "discovery")]
+pub mod icmp;
+
 #[cfg(feature = "discovery")]
 pub mod pcap;
 
-pub mod devices;
-pub mod ether;
-pub mod ip;
-pub mod arp;
-pub mod tcp;
-pub mod icmp;
+#[cfg(feature = "discovery")]
 pub mod utils;
-
-use std::io;
-
-use std::io::Write;
-
-/// Common trait for serializable objects.
-pub trait Serialize {
-    /// Serialize this object using a given writer.
-    fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()>;
-}
-
-impl Serialize for Vec<u8> {
-    fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()> {
-        w.write_all(self)
-    }
-}

@@ -24,9 +24,9 @@ use utils;
 
 use net::raw;
 
-use net::raw::Serialize;
-use net::raw::ether::{PacketParseError, Result};
+use net::raw::ether::packet::{PacketParseError, Result};
 use net::raw::ip::{Ipv4PacketHeader, Ipv4PacketType, Ipv4PacketBody};
+use net::raw::utils::Serialize;
 
 const ICMP_TYPE_ECHO_REPLY: u8 = 0x00;
 const ICMP_TYPE_ECHO:       u8 = 0x08;
@@ -248,7 +248,6 @@ impl IcmpPacketBody for Vec<u8> {
     }
 }
 
-#[cfg(feature = "discovery")]
 pub mod scanner {
     use super::*;
 
@@ -257,12 +256,12 @@ pub mod scanner {
 
     use std::net::Ipv4Addr;
 
-    use net::raw::Serialize;
-    use net::raw::ip::Ipv4Packet;
-    use net::raw::pcap::ThreadingContext;
     use net::raw::devices::EthernetDevice;
-    use net::raw::ether::{MacAddr, EtherPacket};
-    use net::raw::pcap::{Scanner, PacketGenerator};
+    use net::raw::ether::MacAddr;
+    use net::raw::ether::packet::EtherPacket;
+    use net::raw::ip::Ipv4Packet;
+    use net::raw::pcap::{Scanner, PacketGenerator, ThreadingContext};
+    use net::raw::utils::Serialize;
 
     /// Type alias for the expected packet type.
     type ParsePacketType = EtherPacket<Ipv4Packet<IcmpPacket<Vec<u8>>>>;

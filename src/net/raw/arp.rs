@@ -23,8 +23,13 @@ use std::io::Write;
 use std::net::Ipv4Addr;
 
 use net::raw::ether::MacAddr;
-use net::raw::ether::{Result, PacketParseError};
-use net::raw::ether::{EtherPacketHeader, EtherPacketBody, EtherPacketType};
+use net::raw::ether::packet::{
+    Result,
+    PacketParseError,
+    EtherPacketHeader,
+    EtherPacketBody,
+    EtherPacketType
+};
 
 /// ARP packet.
 #[derive(Debug, Clone)]
@@ -166,7 +171,6 @@ impl RawArpPacketHeader {
     }
 }
 
-#[cfg(feature = "discovery")]
 pub mod scanner {
     use super::*;
 
@@ -175,11 +179,11 @@ pub mod scanner {
 
     use std::net::Ipv4Addr;
 
-    use net::raw::Serialize;
-    use net::raw::pcap::ThreadingContext;
     use net::raw::devices::EthernetDevice;
-    use net::raw::ether::{MacAddr, EtherPacket};
-    use net::raw::pcap::{Scanner, PacketGenerator};
+    use net::raw::ether::MacAddr;
+    use net::raw::ether::packet::EtherPacket;
+    use net::raw::pcap::{Scanner, PacketGenerator, ThreadingContext};
+    use net::raw::utils::Serialize;
 
     /// IPv4 ARP scanner.
     pub struct Ipv4ArpScanner {
