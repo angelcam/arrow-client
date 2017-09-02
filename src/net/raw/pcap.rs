@@ -1,11 +1,11 @@
 // Copyright 2015 click2stream, Inc.
-// 
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// 
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -41,7 +41,7 @@ impl PcapError {
     unsafe fn from_cstr(msg: *const c_char) -> PcapError {
         PcapError { msg: utils::cstr_to_string(msg as *const _) }
     }
-    
+
     fn from_pcap(p: pcap_t) -> PcapError {
         unsafe {
             let cstr = pcap_geterr(p);
@@ -119,14 +119,14 @@ extern "C" {
     fn pcap_set_promisc(p: pcap_t, promisc: c_int) -> c_int;
     fn pcap_set_timeout(p: pcap_t, ms: c_int) -> c_int;
     fn pcap_next_ex(
-        p: pcap_t, 
-        header: *mut *mut pcap_pkthdr, 
+        p: pcap_t,
+        header: *mut *mut pcap_pkthdr,
         data: *mut *const c_uchar) -> c_int;
     fn pcap_compile(
-        p: pcap_t, 
-        prog: *mut bpf_program, 
-        pstr: *const c_char, 
-        optimize: c_int, 
+        p: pcap_t,
+        prog: *mut bpf_program,
+        pstr: *const c_char,
+        optimize: c_int,
         netmask: bpf_u_int32) -> c_int;
     fn pcap_freecode(prog: *mut bpf_program) -> c_void;
     fn pcap_setfilter(p: pcap_t, prog: *mut bpf_program) -> c_int;
@@ -159,34 +159,33 @@ impl CaptureBuilder {
                 h:      ptr::null_mut()
             }
         };
-        
-        let dname_cstr = CString::new(dname)
-            .unwrap()
-            .as_ptr() as *const c_char;
+
+        let dname_cstr = CString::new(dname).unwrap();
+        let dname_ptr = dname_cstr.as_ptr() as *const c_char;
         let errbuf_ptr = result.capture.errbuf.as_mut_ptr();
         result.capture.h = unsafe {
-            pcap_create(dname_cstr, errbuf_ptr as *mut c_char)
+            pcap_create(dname_ptr, errbuf_ptr as *mut c_char)
         };
-        
+
         if result.capture.h.is_null() {
             Err(unsafe { PcapError::from_cstr(errbuf_ptr as *const c_char) })
         } else {
             Ok(result)
         }
     }
-    
+
     /// Set promiscuous mode.
     pub fn promisc(self, p: bool) -> CaptureBuilder {
         unsafe { pcap_set_promisc(self.capture.h, p as c_int); }
         self
     }
-    
+
     /// Set timeout.
     pub fn timeout(self, ms: i32) -> CaptureBuilder {
         unsafe { pcap_set_timeout(self.capture.h, ms as c_int); }
         self
     }
-    
+
     /// Activate.
     pub fn activate(self) -> Result<Capture> {
         let ret = unsafe { pcap_activate(self.capture.h) };
@@ -212,7 +211,7 @@ impl Capture {
     pub fn next(&mut self) -> CaptureResult {
         let mut header: *mut pcap_pkthdr = ptr::null_mut();
         let mut data:   *const c_uchar   = ptr::null();
-        
+
         unsafe {
             match pcap_next_ex(self.h, &mut header, &mut data) {
                 1 => {
@@ -226,48 +225,47 @@ impl Capture {
             }
         }
     }
-    
+
     /// Set packet filter.
     pub fn filter(&mut self, f: &str) -> Result<()> {
         unsafe {
             let mut prog = try!(self.compile_filter(f));
             let ret      = pcap_setfilter(self.h, &mut prog);
-            
+
             pcap_freecode(&mut prog);
-            
+
             match ret {
                 0 => Ok(()),
                 _ => Err(PcapError::from_pcap(self.h))
             }
         }
     }
-    
+
     /// Inject a given raw packet.
     pub fn inject(&mut self, data: &[u8]) -> Result<usize> {
         let ptr = data.as_ptr() as *const c_void;
         let ret = unsafe {
             pcap_inject(self.h, ptr, data.len() as size_t)
         };
-        
+
         if ret < 0 {
             Err(PcapError::from_pcap(self.h))
         } else {
             Ok(ret as usize)
         }
     }
-    
+
     /// Compile a given filter string.
     unsafe fn compile_filter(&mut self, f: &str) -> Result<bpf_program> {
         let _lock = self.pc.lock()
             .unwrap();
-        
-        let f_cstr = CString::new(f)
-            .unwrap()
-            .as_ptr() as *const c_char;
-        
+
+        let f_cstr = CString::new(f).unwrap();
+        let f_ptr = f_cstr.as_ptr() as *const c_char;
+
         let mut prog = bpf_program::new();
-        
-        match pcap_compile(self.h, &mut prog, f_cstr, 0, 0) {
+
+        match pcap_compile(self.h, &mut prog, f_ptr, 0, 0) {
             0 => Ok(prog),
             _ => Err(PcapError::from_pcap(self.h))
         }
@@ -276,14 +274,16 @@ impl Capture {
 
 impl Drop for Capture {
     fn drop(&mut self) {
-        unsafe { pcap_close(self.h); }
+        if !self.h.is_null() {
+            unsafe { pcap_close(self.h); }
+        }
     }
 }
 
 unsafe impl Send for Capture {
 }
 
-/// Common trait for packet generators which may be used in combination with 
+/// Common trait for packet generators which may be used in combination with
 /// the PCAP packet scanner.
 pub trait PacketGenerator {
     /// Get next packet.
@@ -306,102 +306,102 @@ impl Scanner {
             end_indicator: Arc::new(Mutex::new(false))
         }
     }
-    
-    /// Send all packets from a given iterator and receive all packets 
+
+    /// Send all packets from a given iterator and receive all packets
     /// according to a given filter.
     pub fn sr<G: PacketGenerator>(
-        &mut self, 
-        filter: &str, 
-        gen: &mut G, 
+        &mut self,
+        filter: &str,
+        gen: &mut G,
         timeout: u64) -> Result<Vec<Vec<u8>>> {
         self.set_end_indicator(false);
-        
+
         let thread = try!(self.start_listener(filter, timeout));
-        
+
         try!(self.send_requests(gen));
-        
+
         self.set_end_indicator(true);
-        
+
         match thread.join() {
             Err(_)  => Err(PcapError::from("listener thread panicked")),
             Ok(res) => Ok(res)
         }
     }
-    
+
     /// Start packet listener thread.
     fn start_listener(
-        &mut self, 
-        filter: &str, 
+        &mut self,
+        filter: &str,
         timeout: u64) -> Result<JoinHandle<Vec<Vec<u8>>>> {
         let ei = self.end_indicator.clone();
-        
+
         let cap = try!(CaptureBuilder::new(self.pc.clone(), &self.device))
             .timeout((timeout / 1000000) as i32)
             .promisc(true);
-        
+
         let mut cap = try!(cap.activate());
-        
+
         try!(cap.filter(filter));
-        
+
         let handle = thread::spawn(move || {
             Self::packet_listener(cap, ei, timeout)
         });
-        
+
         Ok(handle)
     }
-    
+
     /// Packet listener thread.
     fn packet_listener(
-        mut cap: Capture, 
-        shared_end_indicator: Arc<Mutex<bool>>, 
+        mut cap: Capture,
+        shared_end_indicator: Arc<Mutex<bool>>,
         timeout: u64) -> Vec<Vec<u8>> {
         let mut vec = Vec::new();
         let mut t   = time::precise_time_ns();
         let mut end = false;
-        
+
         while !end || time::precise_time_ns() < (t + timeout) {
             match cap.next() {
                 Ok(Some(data)) => vec.push(data),
                 Err(error)     => panic!(error),
                 _ => (),
             }
-            
+
             if !end && Self::get_end_indicator_value(&shared_end_indicator) {
                 t   = time::precise_time_ns();
                 end = true;
             }
         }
-        
+
         vec
     }
-    
+
     /// Send all pending packets.
     fn send_requests<G: PacketGenerator>(
-        &mut self, 
+        &mut self,
         gen: &mut G) -> Result<()> {
         let cap     = try!(CaptureBuilder::new(self.pc.clone(), &self.device));
         let mut cap = try!(cap.activate());
-        
+
         while let Some(pkt) = gen.next() {
             try!(cap.inject(pkt));
         }
-        
+
         Ok(())
     }
-    
+
     /// Set listener end indicator.
     fn set_end_indicator(&mut self, val: bool) {
         let mut end_indicator = self.end_indicator.lock()
             .unwrap();
-        
+
         *end_indicator = val;
     }
-    
+
     /// Get end indicator value.
     fn get_end_indicator_value(end_indicator: &Arc<Mutex<bool>>) -> bool {
         let ei = end_indicator.lock()
             .unwrap();
-        
+
         *ei
     }
 }

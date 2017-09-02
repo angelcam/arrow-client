@@ -292,7 +292,7 @@ fn is_http_service(addr: SocketAddr) -> Result<bool> {
     // treat connection errors as error responses
     if let Ok(mut client) = HttpClient::new(&host, port) {
         try!(client.set_timeout(Some(1000)));
-        let response = client.head("/");
+        let response = client.get_header("/");
         Ok(response.is_ok())
     } else {
         Ok(false)
