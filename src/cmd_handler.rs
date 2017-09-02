@@ -37,6 +37,10 @@ use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use time;
 
+/// Network scan period.
+const NETWORK_SCAN_PERIOD: f64 = 300.0;
+
+/// Different command types that the command handler can receive.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Command {
     ResetServiceTable,
@@ -44,6 +48,7 @@ pub enum Command {
     PeriodicNetworkScan,
 }
 
+/// Command handler event.
 #[derive(Debug, Copy, Clone)]
 enum Event {
     Command(Command),
@@ -127,7 +132,7 @@ impl CommandHandlerContext {
     fn periodic_network_scan(&mut self) {
         let t = time::precise_time_s();
 
-        if (self.last_nw_scan + 300.0) < t {
+        if (self.last_nw_scan + NETWORK_SCAN_PERIOD) < t {
             self.scan_network();
         }
     }
