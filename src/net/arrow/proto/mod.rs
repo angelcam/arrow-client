@@ -650,7 +650,7 @@ pub fn connect(
             format!("failed to lookup Arrow Service {} address information", addr)
         ))?;
 
-    let tls_connector = app_context.get_tls_connector()
+    let tls_connector = app_context.get_tls_connector(&hostname)
         .map_err(|err| ArrowError::other(err))?;
 
     let aclient = ArrowClient::new(
@@ -661,9 +661,8 @@ pub fn connect(
     let connection = TcpStream::connect(&saddr, &core.handle())
         .map_err(|err| ConnectionError::from(err))
         .and_then(|socket| {
-            // TODO: provide our own version of domain name verification, which verifies
-            // the domain name only if it's possible (i.e. the record is present in the
-            // certificate)
+            // NOTE: we use our own hostname verification for now, this will be later
+            // replaced by a propper one
             tls_connector.danger_connect_async_without_providing_domain_for_certificate_verification_and_server_name_indication(socket)
                 .map_err(|err| ConnectionError::from(err))
         });

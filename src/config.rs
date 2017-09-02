@@ -16,6 +16,7 @@ use std;
 
 use std::fmt;
 use std::process;
+use std::str;
 
 use std::env::Args;
 use std::error::Error;
@@ -47,11 +48,10 @@ use utils::logger::{BoxedLogger, Logger, Severity};
 use native_tls::{Protocol, TlsConnector};
 use native_tls::backend::openssl::TlsConnectorBuilderExt;
 
-use openssl::ssl::{
-    SSL_OP_NO_COMPRESSION,
-
-    SslContextBuilder,
-};
+use openssl::nid::COMMONNAME;
+use openssl::ssl::SSL_VERIFY_PEER;
+use openssl::ssl::SslContextBuilder;
+use openssl::x509::X509StoreContextRef;
 
 use regex::Regex;
 
@@ -645,8 +645,8 @@ impl ApplicationConfig {
         self.logger.clone()
     }
 
-    /// Get TLS connector.
-    pub fn get_tls_connector(&self) -> Result<TlsConnector, RuntimeError> {
+    /// Get TLS connector for a given server hostname.
+    pub fn get_tls_connector(&self, hostname: &str) -> Result<TlsConnector, RuntimeError> {
         let mut builder = TlsConnector::builder()
             .map_err(|err| RuntimeError::from(
                 format!("unable to create a TLS connection builder: {}", err)
@@ -661,8 +661,6 @@ impl ApplicationConfig {
             let ssl_ctx_builder = builder.builder_mut()
                 .builder_mut();
 
-            ssl_ctx_builder.set_verify_depth(4);
-            ssl_ctx_builder.set_options(SSL_OP_NO_COMPRESSION);
             ssl_ctx_builder.set_cipher_list(SSL_CIPHER_LIST)
                 .map_err(|err| RuntimeError::from(
                     format!("unable to set TLS cipher list: {}", err)
@@ -671,6 +669,12 @@ impl ApplicationConfig {
             for ca_cert in &self.ca_certificates {
                 ssl_ctx_builder.load_ca_certificates(ca_cert)?;
             }
+
+            let hostname = hostname.to_string();
+
+            ssl_ctx_builder.set_verify_callback(SSL_VERIFY_PEER, move |p, x509| {
+                verify_callback(&hostname, p, x509)
+            });
         }
 
         builder.build()
@@ -858,6 +862,51 @@ fn parse_mjpeg_url(url: &str) -> Result<Service, ConfigError> {
         }
     } else {
         Err(ConfigError::from(format!("invalid HTTP URL given: {}", url)))
+    }
+}
+
+/// Verify callback.
+fn verify_callback(
+    hostname: &str,
+    preverify_ok: bool,
+    x509_ctx: &X509StoreContextRef) -> bool {
+    if !preverify_ok || x509_ctx.error_depth() != 0 {
+        return preverify_ok;
+    }
+
+    validate_hostname(hostname, x509_ctx)
+}
+
+/// Validate a given hostname using peer certificate. This function returns
+/// true if there is no CN record or the CN record matches with the given
+/// hostname. False is returned if there is no certificate or the hostname does
+/// not match.
+fn validate_hostname(hostname: &str, x509_ctx: &X509StoreContextRef) -> bool {
+    if let Some(cert) = x509_ctx.current_cert() {
+        let subject_name   = cert.subject_name();
+        let mut cn_entries = subject_name.entries_by_nid(COMMONNAME);
+
+        if let Some(cn) = cn_entries.next() {
+            let cn = cn.data();
+
+            if let Ok(pattern) = str::from_utf8(cn.as_slice()) {
+                let pattern = pattern.replace(r".", r"\\.");
+                let pattern = pattern.replace(r"*", r"\S+");
+                let pattern = format!("^{}$", pattern);
+
+                if let Ok(re) = Regex::new(&pattern) {
+                    re.is_match(hostname)
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            true
+        }
+    } else {
+        false
     }
 }
 

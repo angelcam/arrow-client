@@ -248,12 +248,12 @@ impl ApplicationContext {
             .get_timer()
     }
 
-    /// Get TLS connector.
-    pub fn get_tls_connector(&self) -> Result<TlsConnector, RuntimeError> {
+    /// Get TLS connector for a given server hostname.
+    pub fn get_tls_connector(&self, hostname: &str) -> Result<TlsConnector, RuntimeError> {
         self.data.lock()
             .unwrap()
             .get_config()
-            .get_tls_connector()
+            .get_tls_connector(hostname)
     }
 
     /// Set the state of the network scanner thread.
