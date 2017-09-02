@@ -274,9 +274,9 @@ impl ResponseHeaderParser {
     /// Parse HTTP status line.
     fn parse_status_line(&mut self, line: &str) -> ParsingResult<()> {
         if let Some(caps) = self.status_re.captures(line) {
-            let version     = caps.at(1).unwrap();
-            let status_code = caps.at(2).unwrap();
-            let status_line = caps.at(3).unwrap();
+            let version     = caps.get(1).unwrap().as_str();
+            let status_code = caps.get(2).unwrap().as_str();
+            let status_line = caps.get(3).unwrap().as_str();
 
             self.header.code    = try!(i32::from_str(status_code));
             self.header.line    = status_line.to_string();
@@ -299,11 +299,11 @@ impl ResponseHeaderParser {
             }
             self.complete = true;
         } else if let Some(caps) = self.header_re.captures(line) {
-            let name  = caps.at(1).unwrap();
-            let value = caps.at(2).unwrap();
+            let name  = caps.get(1).unwrap().as_str();
+            let value = caps.get(2).unwrap().as_str();
             self.header.headers.push((name.to_string(), value.to_string()));
         } else if let Some(caps) = self.cont_re.captures(line) {
-            let cont = caps.at(1).unwrap();
+            let cont = caps.get(1).unwrap().as_str();
 
             if let Some((name, val)) = self.header.headers.pop() {
                 self.header.headers.push((name, val + cont));

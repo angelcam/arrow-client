@@ -25,8 +25,8 @@ pub fn get_hostname(address: &str) -> String {
     Regex::new(r"^([^:]+)(:(\d+))?$")
         .unwrap()
         .captures(address)
-        .and_then(|cap| cap.at(1))
-        .unwrap_or(address)
+        .and_then(|cap| cap.get(1))
+        .map_or(address, |m| m.as_str())
         .to_string()
 }
 

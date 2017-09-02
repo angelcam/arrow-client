@@ -426,8 +426,9 @@ impl ApplicationConfigBuilder {
 
         self.log_file = re.captures(arg)
             .unwrap()
-            .at(1)
+            .get(1)
             .unwrap()
+            .as_str()
             .to_string();
 
         Ok(())
@@ -442,8 +443,9 @@ impl ApplicationConfigBuilder {
             .ok_or(ConfigError::from(
                 format!("invalid value given for {}, number expeced", arg)
             ))?
-            .at(1)
+            .get(1)
             .unwrap()
+            .as_str()
             .parse()
             .unwrap();
 
@@ -459,8 +461,9 @@ impl ApplicationConfigBuilder {
             .ok_or(ConfigError::from(
                 format!("invalid value given for {}, number expeced", arg)
             ))?
-            .at(1)
+            .get(1)
             .unwrap()
+            .as_str()
             .parse()
             .unwrap();
 
@@ -474,8 +477,9 @@ impl ApplicationConfigBuilder {
 
         self.config_file = re.captures(arg)
             .unwrap()
-            .at(1)
+            .get(1)
             .unwrap()
+            .as_str()
             .to_string();
     }
 
@@ -486,8 +490,9 @@ impl ApplicationConfigBuilder {
 
         self.state_file = re.captures(arg)
             .unwrap()
-            .at(1)
+            .get(1)
             .unwrap()
+            .as_str()
             .to_string();
     }
 
@@ -502,8 +507,9 @@ impl ApplicationConfigBuilder {
 
         self.rtsp_paths_file = re.captures(arg)
             .unwrap()
-            .at(1)
+            .get(1)
             .unwrap()
+            .as_str()
             .to_string();
 
         Ok(())
@@ -520,8 +526,9 @@ impl ApplicationConfigBuilder {
 
         self.mjpeg_paths_file = re.captures(arg)
             .unwrap()
-            .at(1)
+            .get(1)
             .unwrap()
+            .as_str()
             .to_string();
 
         Ok(())
@@ -809,10 +816,10 @@ fn parse_rtsp_url(url: &str) -> Result<Service, ConfigError> {
     let re  = Regex::new(res).unwrap();
 
     if let Some(caps) = re.captures(url) {
-        let host = caps.at(2).unwrap();
-        let path = caps.at(5).unwrap();
-        let port = caps.at(4)
-            .map(|p| u16::from_str(p))
+        let host = caps.get(2).unwrap().as_str();
+        let path = caps.get(5).unwrap().as_str();
+        let port = caps.get(4)
+            .map(|m| u16::from_str(m.as_str()))
             .unwrap_or(Ok(554))
             .unwrap();
 
@@ -825,7 +832,7 @@ fn parse_rtsp_url(url: &str) -> Result<Service, ConfigError> {
 
         // NOTE: we do not want to probe the service here as it might not be
         // available on app startup
-        match caps.at(1) {
+        match caps.get(1) {
             Some(_) => Ok(Service::locked_rtsp(mac, socket_addr, None)),
             None    => Ok(Service::rtsp(mac, socket_addr, path.to_string()))
         }
@@ -840,10 +847,10 @@ fn parse_mjpeg_url(url: &str) -> Result<Service, ConfigError> {
     let re  = Regex::new(res).unwrap();
 
     if let Some(caps) = re.captures(url) {
-        let host = caps.at(2).unwrap();
-        let path = caps.at(5).unwrap();
-        let port = caps.at(4)
-            .map(|p| u16::from_str(p))
+        let host = caps.get(2).unwrap().as_str();
+        let path = caps.get(5).unwrap().as_str();
+        let port = caps.get(4)
+            .map(|m| u16::from_str(m.as_str()))
             .unwrap_or(Ok(80))
             .unwrap();
 
@@ -856,7 +863,7 @@ fn parse_mjpeg_url(url: &str) -> Result<Service, ConfigError> {
 
         // NOTE: we do not want to probe the service here as it might not be
         // available on app startup
-        match caps.at(1) {
+        match caps.get(1) {
             Some(_) => Ok(Service::locked_mjpeg(mac, socket_addr, None)),
             None    => Ok(Service::mjpeg(mac, socket_addr, path.to_string()))
         }

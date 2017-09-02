@@ -1,11 +1,11 @@
 // Copyright 2015 click2stream, Inc.
-// 
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// 
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -125,7 +125,7 @@ impl Request {
             headers:  Vec::new()
         }
     }
-    
+
     /// Add a new header field into the request.
     fn add_header<N, V>(mut self, name: N, value: V) -> Request
         where N: ToString, V: ToString {
@@ -136,7 +136,7 @@ impl Request {
 
 impl Display for Request {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
-        try!(f.write_str(&format!("{} {} RTSP/1.0\r\n", 
+        try!(f.write_str(&format!("{} {} RTSP/1.0\r\n",
             self.method.name(), &self.endpoint)));
         for &(ref name, ref val) in &self.headers {
             try!(f.write_str(&format!("{}: {}\r\n", name, val)));
@@ -182,8 +182,8 @@ pub struct ResponseHeader {
 impl ResponseHeader {
     /// Create a new RTSP response header.
     fn new(
-        code: i32, 
-        line: String, 
+        code: i32,
+        line: String,
         headers: Vec<Header>) -> ResponseHeader {
         let mut res = ResponseHeader {
             code:       code,
@@ -191,17 +191,17 @@ impl ResponseHeader {
             headers:    headers,
             header_map: HashMap::new()
         };
-        
+
         for i in 0..res.headers.len() {
             let &(ref name, _) = res.headers.get(i).unwrap();
             res.header_map.insert(name.to_lowercase(), i);
         }
-        
+
         res
     }
-    
+
     /// Get response header value.
-    pub fn get<T: FromStr>(&self, name: &str) -> Option<T> 
+    pub fn get<T: FromStr>(&self, name: &str) -> Option<T>
         where T::Err: Debug {
         let key = name.to_lowercase();
         if let Some(i) = self.header_map.get(&key) {
@@ -212,7 +212,7 @@ impl ResponseHeader {
             None
         }
     }
-    
+
     /// Get response header value string without copying it.
     pub fn get_str<'a>(&'a self, name: &str) -> Option<&'a str> {
         let key = name.to_lowercase();
@@ -227,12 +227,12 @@ impl ResponseHeader {
 
 impl Display for ResponseHeader {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
-        try!(f.write_str(&format!("RTSP/1.0 {} {}\r\n", 
+        try!(f.write_str(&format!("RTSP/1.0 {} {}\r\n",
             self.code, &self.line)));
         for &(ref name, ref value) in &self.headers {
             try!(f.write_str(&format!("{}: {}\r\n", name, value)));
         }
-        
+
         f.write_str("\r\n")
     }
 }
@@ -265,12 +265,12 @@ impl ResponseHeaderParser {
             complete:    false
         }
     }
-    
+
     /// Check if the current header is complete.
     fn is_complete(&self) -> bool {
         self.complete
     }
-    
+
     /// Parse a given header line.
     fn add(&mut self, line: &str) -> ParsingResult<()> {
         if self.lines >= self.max_lines {
@@ -280,38 +280,38 @@ impl ResponseHeaderParser {
         } else {
             try!(self.parse_status_line(line));
         }
-        
+
         self.lines += 1;
-        
+
         Ok(())
     }
-    
+
     /// Parse RTSP status line.
     fn parse_status_line(&mut self, line: &str) -> ParsingResult<()> {
         if let Some(caps) = self.status_re.captures(line) {
-            let status_code = caps.at(1).unwrap();
-            let status_line = caps.at(2).unwrap();
-            
+            let status_code = caps.get(1).unwrap().as_str();
+            let status_line = caps.get(2).unwrap().as_str();
+
             self.status_code = try!(i32::from_str(status_code));
             self.status_line = status_line.to_string();
-            
+
             Ok(())
         } else {
             Err(ParseError::from("invalid RTSP status line"))
         }
     }
-    
+
     /// Parse RTSP header line.
     fn parse_header_line(&mut self, line: &str) -> ParsingResult<()> {
         if line.is_empty() {
             self.complete = true;
         } else if let Some(caps) = self.header_re.captures(line) {
-            let name  = caps.at(1).unwrap();
-            let value = caps.at(2).unwrap();
+            let name  = caps.get(1).unwrap().as_str();
+            let value = caps.get(2).unwrap().as_str();
             self.headers.push((name.to_string(), value.to_string()));
         } else if let Some(caps) = self.cont_re.captures(line) {
-            let cont = caps.at(1).unwrap();
-            
+            let cont = caps.get(1).unwrap().as_str();
+
             if let Some((name, val)) = self.headers.pop() {
                 self.headers.push((name, val + cont));
             } else {
@@ -320,20 +320,20 @@ impl ResponseHeaderParser {
         } else {
             return Err(ParseError::from("invalid RTSP header line"));
         }
-        
+
         Ok(())
     }
-    
+
     /// Clear the parser.
     fn clear(&mut self) {
         self.status_code = 0;
         self.status_line = String::new();
         self.lines       = 0;
         self.complete    = false;
-        
+
         self.headers.clear();
     }
-    
+
     /// Get current response header.
     fn header(&self) -> ParsingResult<ResponseHeader> {
         if self.complete {
@@ -341,7 +341,7 @@ impl ResponseHeaderParser {
                 self.status_code,
                 self.status_line.clone(),
                 self.headers.clone());
-            
+
             Ok(res)
         } else {
             Err(ParseError::from("incomplete RTSP header"))
@@ -369,12 +369,12 @@ impl ResponseParser {
             expected:      0
         }
     }
-    
+
     /// Check if the RTSP response is complete.
     fn is_complete(&self) -> bool {
         self.header.is_some() && self.expected == 0
     }
-    
+
     /// Get the last response.
     fn response(&self) -> ParsingResult<Response> {
         match self.header {
@@ -386,21 +386,21 @@ impl ResponseParser {
             _ => Err(ParseError::from("incomplete RTSP response"))
         }
     }
-    
+
     /// Clear the current message.
     fn clear(&mut self) {
         self.line_reader.clear();
         self.header_parser.clear();
         self.body.clear();
-        
+
         self.header   = None;
         self.expected = 0;
     }
-    
+
     /// Process a given chunk of data and return the number of bytes used.
     fn add(&mut self, chunk: &[u8]) -> ParsingResult<usize> {
         let mut pos = 0;
-        
+
         while pos < chunk.len() && !self.is_complete() {
             if self.header.is_none() {
                 pos += try!(self.process_header_data(&chunk[pos..]));
@@ -408,14 +408,14 @@ impl ResponseParser {
                 pos += self.process_body_data(&chunk[pos..])
             }
         }
-        
+
         Ok(pos)
     }
-    
+
     /// Process given header data.
     fn process_header_data(&mut self, data: &[u8]) -> ParsingResult<usize> {
         let mut pos = 0;
-        
+
         while pos < data.len() && self.header.is_none() {
             pos += try!(self.line_reader.add(&data[pos..]));
             if self.line_reader.is_complete() {
@@ -424,27 +424,27 @@ impl ResponseParser {
                     let line = try!(str::from_utf8(line));
                     try!(self.header_parser.add(line));
                 }
-                
+
                 if self.header_parser.is_complete() {
                     let header = try!(self.header_parser.header());
-                    
+
                     self.expected = header.get("content-length")
                         .unwrap_or(0);
-                    
+
                     self.header = Some(header);
                 }
-                
+
                 self.line_reader.clear();
             }
         }
-        
+
         Ok(pos)
     }
-    
+
     /// Process given body data.
     fn process_body_data(&mut self, data: &[u8]) -> usize {
         let mut pos = 0;
-        
+
         while pos < data.len() && !self.is_complete() {
             let buffer = &data[pos..];
             let len = if self.expected > buffer.len() {
@@ -452,13 +452,13 @@ impl ResponseParser {
             } else {
                 self.expected
             };
-            
+
             self.body.extend_from_slice(&buffer[..len]);
-            
+
             self.expected -= len;
             pos           += len;
         }
-        
+
         pos
     }
 }
@@ -486,10 +486,10 @@ impl Client {
             buffer: Vec::new(),
             offset: 0
         };
-        
+
         Ok(client)
     }
-    
+
     /// Set timeout for read and write operations.
     pub fn set_timeout(&mut self, ms: Option<u64>) -> Result<()> {
         let duration = ms.map(|ms| Duration::from_millis(ms));
@@ -497,81 +497,81 @@ impl Client {
         try!(self.stream.set_write_timeout(duration));
         Ok(())
     }
-    
+
     /// Send OPTIONS command.
     pub fn options(&mut self) -> Result<Response> {
         let request = self.create_request(Method::OPTIONS, "/", 1);
-        
+
         self.perform_request(&request)
     }
-    
+
     /// Send DESCRIBE command.
     pub fn describe(&mut self, path: &str) -> Result<Response> {
         let request = self.create_request(Method::DESCRIBE, path, 1)
             .add_header("Accept", "application/sdp");
-        
+
         self.perform_request(&request)
     }
-    
+
     /// Create an RTSP request for a given method, path and sequence number.
     fn create_request(
-        &self, 
-        method: Method, 
-        path: &str, 
+        &self,
+        method: Method,
+        path: &str,
         cseq: usize) -> Request {
         let version  = env!("CARGO_PKG_VERSION");
         let uagent   = format!("ArrowClient/{}", version);
         let endpoint = format!("rtsp://{}:{}{}", self.host, self.port, path);
-        
+
         Request::new(method, &endpoint)
             .add_header("CSeq", cseq)
             .add_header("User-Agent", &uagent)
     }
-    
+
     /// Send a given request and wait for response.
     fn perform_request(&mut self, request: &Request) -> Result<Response> {
         let request = format!("{}", request)
             .into_bytes();
-        
+
         try!(self.stream.write_all(&request));
-        
+
         // process buffered data
         while self.offset < self.buffer.len() && !self.parser.is_complete() {
             let data = &self.buffer[self.offset..];
             self.offset += try!(self.parser.add(data));
         }
-        
+
         // reset the buffer if it's empty
         if self.offset >= self.buffer.len() {
             self.buffer.clear();
             self.offset = 0;
         }
-        
+
         let mut buffer = [0u8; 4096];
-        
+
         while !self.parser.is_complete() {
             let length = try!(self.stream.read(&mut buffer));
-            
+
             if length == 0 {
                 break;
             }
-            
+
             let mut offset = 0;
-            
+
             while offset < length && !self.parser.is_complete() {
                 offset += try!(self.parser.add(&buffer[offset..length]));
             }
-            
+
             // put all possible leftovers into the internal buffer
             if offset < length {
                 self.buffer.extend_from_slice(&buffer[offset..length]);
             }
         }
-        
+
         let response = try!(self.parser.response());
-        
+
         self.parser.clear();
-        
+
         Ok(response)
     }
 }
@@ -582,14 +582,14 @@ fn test_rtsp_request() {
     let request = Request::new(Method::DESCRIBE, "rtsp://127.0.0.1:554/foo")
         .add_header("CSeq", 1)
         .add_header("Connection", "close");
-    
+
     let expected = "DESCRIBE rtsp://127.0.0.1:554/foo RTSP/1.0\r\n".to_string()
         + "CSeq: 1\r\n"
         + "Connection: close\r\n"
         + "\r\n";
-    
+
     let msg = format!("{}", request);
-    
+
     assert_eq!(expected, msg);
 }
 
@@ -599,31 +599,31 @@ fn test_rtsp_response() {
     let mut header_fields = Vec::new();
     header_fields.push(("CSeq".to_string(), "1".to_string()));
     header_fields.push(("Content-Length".to_string(), "5".to_string()));
-    
+
     let header = ResponseHeader::new(200, "OK".to_string(), header_fields);
     let body   = "hello".as_bytes()
         .to_vec();
-    
+
     let response = Response::new(header, body);
-    
+
     let expected = "RTSP/1.0 200 OK\r\n".to_string()
         + "CSeq: 1\r\n"
         + "Content-Length: 5\r\n"
         + "\r\n"
         + "hello";
-    
+
     let msg = format!("{}", response);
-    
+
     assert_eq!(expected, msg);
-    
+
     let mut parser = ResponseParser::new(4096, 256);
-    
+
     parser.add(expected.as_bytes())
         .unwrap();
-    
+
     let response = parser.response()
         .unwrap();
-    
+
     assert_eq!(response.header.code, 200);
     assert_eq!(response.header.line, "OK");
     assert_eq!(response.header.get("cseq"), Some(1));
