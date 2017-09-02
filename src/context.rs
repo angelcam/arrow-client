@@ -90,47 +90,14 @@ impl ApplicationContextData {
         }
     }
 
-    /// Get address of the remote Arrow Service.
-    pub fn get_arrow_service_address(&self) -> String {
-        self.config.get_arrow_service_address()
-            .to_string()
+    /// Get application config.
+    fn get_config(&self) -> &ApplicationConfig {
+        &self.config
     }
 
-    /// Get Arrow Client UUID.
-    fn get_arrow_uuid(&self) -> Uuid {
-        self.config.get_uuid()
-    }
-
-    /// Get Arrow Client password.
-    fn get_arrow_password(&self) -> Uuid {
-        self.config.get_password()
-    }
-
-    /// Get Arrow Client MAC address.
-    fn get_arrow_mac_address(&self) -> MacAddr {
-        self.config.get_mac_address()
-    }
-
-    /// Get network discovery settings.
-    pub fn get_discovery(&self) -> bool {
-        self.config.get_discovery()
-    }
-
-    /// Check if the application is in the diagnostic mode.
-    fn get_diagnostic_mode(&self) -> bool {
-        self.config.get_diagnostic_mode()
-    }
-
-    /// Get path to a file containing RTSP paths for the network scanner.
-    fn get_rtsp_paths_file(&self) -> String {
-        self.config.get_rtsp_paths_file()
-            .to_string()
-    }
-
-    /// Get path to a file containing MJPEG paths for the network scanner.
-    fn get_mjpeg_paths_file(&self) -> String {
-        self.config.get_mjpeg_paths_file()
-            .to_string()
+    /// Get application config.
+    fn get_config_mut(&mut self) -> &mut ApplicationConfig {
+        &mut self.config
     }
 
     /// Get application logger.
@@ -141,11 +108,6 @@ impl ApplicationContextData {
     /// Get application-wide instance of the Timer.
     fn get_timer(&self) -> Timer {
         self.timer.clone()
-    }
-
-    /// Get TLS connector.
-    fn get_tls_connector(&self) -> Result<TlsConnector, RuntimeError> {
-        self.config.get_tls_connector()
     }
 
     /// Set the state of the network scanner thread.
@@ -166,22 +128,6 @@ impl ApplicationContextData {
     /// Set last scan result.
     fn set_scan_result(&mut self, result: ScanResult) {
         self.scan_result = result;
-    }
-
-    /// Get read-only reference to the service table.
-    fn get_service_table(&self) -> SharedServiceTableRef {
-        self.config.get_service_table()
-    }
-
-    /// Update service table. Add all given services into the table and update active services.
-    pub fn update_service_table<I>(&mut self, services: I)
-        where I: IntoIterator<Item=Service> {
-        self.config.update_service_table(services)
-    }
-
-    /// Reset service table.
-    fn reset_service_table(&mut self) {
-        self.config.reset_service_table()
     }
 
     /// Set connection state.
@@ -225,34 +171,40 @@ impl ApplicationContext {
     pub fn get_arrow_service_address(&self) -> String {
         self.data.lock()
             .unwrap()
+            .get_config()
             .get_arrow_service_address()
+            .to_string()
     }
 
     /// Get Arrow Client UUID.
     pub fn get_arrow_uuid(&self) -> Uuid {
         self.data.lock()
             .unwrap()
-            .get_arrow_uuid()
+            .get_config()
+            .get_uuid()
     }
 
     /// Get Arrow Client password.
     pub fn get_arrow_password(&self) -> Uuid {
         self.data.lock()
             .unwrap()
-            .get_arrow_password()
+            .get_config()
+            .get_password()
     }
 
     /// Get Arrow Client MAC address.
     pub fn get_arrow_mac_address(&self) -> MacAddr {
         self.data.lock()
             .unwrap()
-            .get_arrow_mac_address()
+            .get_config()
+            .get_mac_address()
     }
 
     /// Get network discovery settings.
     pub fn get_discovery(&self) -> bool {
         self.data.lock()
             .unwrap()
+            .get_config()
             .get_discovery()
     }
 
@@ -260,6 +212,7 @@ impl ApplicationContext {
     pub fn get_diagnostic_mode(&self) -> bool {
         self.data.lock()
             .unwrap()
+            .get_config()
             .get_diagnostic_mode()
     }
 
@@ -267,14 +220,18 @@ impl ApplicationContext {
     pub fn get_rtsp_paths_file(&self) -> String {
         self.data.lock()
             .unwrap()
+            .get_config()
             .get_rtsp_paths_file()
+            .to_string()
     }
 
     /// Get path to a file containing MJPEG paths for the network scanner.
     pub fn get_mjpeg_paths_file(&self) -> String {
         self.data.lock()
             .unwrap()
+            .get_config()
             .get_mjpeg_paths_file()
+            .to_string()
     }
 
     /// Get application logger.
@@ -295,6 +252,7 @@ impl ApplicationContext {
     pub fn get_tls_connector(&self) -> Result<TlsConnector, RuntimeError> {
         self.data.lock()
             .unwrap()
+            .get_config()
             .get_tls_connector()
     }
 
@@ -330,6 +288,7 @@ impl ApplicationContext {
     pub fn get_service_table(&self) -> SharedServiceTableRef {
         self.data.lock()
             .unwrap()
+            .get_config()
             .get_service_table()
     }
 
@@ -338,6 +297,7 @@ impl ApplicationContext {
         where I: IntoIterator<Item=Service> {
         self.data.lock()
             .unwrap()
+            .get_config_mut()
             .update_service_table(services)
     }
 
@@ -345,6 +305,7 @@ impl ApplicationContext {
     pub fn reset_service_table(&mut self) {
         self.data.lock()
             .unwrap()
+            .get_config_mut()
             .reset_service_table()
     }
 
