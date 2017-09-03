@@ -34,7 +34,7 @@ use utils;
 
 use utils::RuntimeError;
 
-use utils::logger::{BoxedLogger, Severity};
+use utils::logger::{BoxLogger, Severity};
 
 use native_tls::TlsConnector;
 
@@ -67,7 +67,7 @@ impl Display for ConnectionState {
 
 /// Internal data of the application context.
 struct ApplicationContextData {
-    logger:      BoxedLogger,
+    logger:      BoxLogger,
     timer:       Timer,
     config:      ApplicationConfig,
     scanning:    bool,
@@ -101,7 +101,7 @@ impl ApplicationContextData {
     }
 
     /// Get application logger.
-    fn get_logger(&self) -> BoxedLogger {
+    fn get_logger(&self) -> BoxLogger {
         self.logger.clone()
     }
 
@@ -235,7 +235,7 @@ impl ApplicationContext {
     }
 
     /// Get application logger.
-    pub fn get_logger(&self) -> BoxedLogger {
+    pub fn get_logger(&self) -> BoxLogger {
         self.data.lock()
             .unwrap()
             .get_logger()

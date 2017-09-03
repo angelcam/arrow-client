@@ -96,7 +96,7 @@ pub trait Logger : Send {
     }
 }
 
-/// Helper trait for implementing Clone to the LoggerWrapper.
+/// Helper trait for implementing Clone to the BoxLogger.
 pub trait CloneableLogger : Logger {
     /// Clone as trait object.
     fn clone(&self) -> Box<CloneableLogger>;
@@ -109,31 +109,31 @@ impl<T> CloneableLogger for T where T: 'static + Logger + Clone {
 }
 
 /// Abstraction from a concrete logger type.
-pub struct BoxedLogger {
+pub struct BoxLogger {
     logger: Box<CloneableLogger>,
 }
 
-impl BoxedLogger {
+impl BoxLogger {
     /// Create a new boxed logger.
-    pub fn new<L: 'static + CloneableLogger>(logger: L) -> BoxedLogger {
-        BoxedLogger {
+    pub fn new<L: 'static + CloneableLogger>(logger: L) -> BoxLogger {
+        BoxLogger {
             logger: Box::new(logger)
         }
     }
 }
 
-impl Clone for BoxedLogger {
-    fn clone(&self) -> BoxedLogger {
+impl Clone for BoxLogger {
+    fn clone(&self) -> BoxLogger {
         let logger = self.logger.as_ref()
             .clone();
 
-        BoxedLogger {
+        BoxLogger {
             logger: logger
         }
     }
 }
 
-impl Logger for BoxedLogger {
+impl Logger for BoxLogger {
     fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str) {
         self.logger.log(file, line, s, msg)
     }

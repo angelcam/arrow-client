@@ -50,7 +50,7 @@ use net::arrow::proto::msg::control::{
 
 use timer::Timer;
 
-use utils::logger::{Logger, BoxedLogger};
+use utils::logger::{Logger, BoxLogger};
 
 const INPUT_BUFFER_LIMIT:  usize = 32768;
 const OUTPUT_BUFFER_LIMIT: usize = 4 * 1024 * 1024;
@@ -348,7 +348,7 @@ impl SessionErrorHandler {
 
 /// Arrow session manager.
 pub struct SessionManager {
-    logger:       BoxedLogger,
+    logger:       BoxLogger,
     timer:        Timer,
     tc_handle:    TokioCoreHandle,
     svc_table:    BoxServiceTable,

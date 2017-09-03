@@ -15,7 +15,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use utils::logger::{BoxedLogger, Logger};
+use utils::logger::{BoxLogger, Logger};
 
 use futures::{Future, Poll, Stream};
 
@@ -36,13 +36,13 @@ impl Future for PeriodicTask {
 }
 
 struct TimerContext {
-    logger: BoxedLogger,
+    logger: BoxLogger,
     timer:  TokioTimer,
 }
 
 impl TimerContext {
     /// Create a new timer context.
-    fn new(logger: BoxedLogger) -> TimerContext {
+    fn new(logger: BoxLogger) -> TimerContext {
         let timer = TokioTimer::default();
 
         TimerContext {
@@ -86,7 +86,7 @@ pub struct Timer {
 
 impl Timer {
     /// Create a new timer context.
-    pub fn new(logger: BoxedLogger) -> Timer {
+    pub fn new(logger: BoxLogger) -> Timer {
         Timer {
             context: Arc::new(Mutex::new(TimerContext::new(logger))),
         }

@@ -25,7 +25,7 @@ use scanner::discovery;
 #[cfg(feature="discovery")]
 use utils;
 
-use utils::logger::{BoxedLogger, Logger};
+use utils::logger::{BoxLogger, Logger};
 
 #[cfg(feature="discovery")]
 use utils::logger::Severity;
@@ -84,7 +84,7 @@ impl CommandChannel {
 /// Command handler context.
 struct CommandHandlerContext {
     app_context:  ApplicationContext,
-    logger:       BoxedLogger,
+    logger:       BoxLogger,
     cmd_sender:   CommandSender,
     last_nw_scan: f64,
     scanner:      Option<JoinHandle<()>>,

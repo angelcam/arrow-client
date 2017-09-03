@@ -43,7 +43,7 @@ use utils::RuntimeError;
 
 use utils::logger;
 
-use utils::logger::{BoxedLogger, Logger, Severity};
+use utils::logger::{BoxLogger, Logger, Severity};
 
 use native_tls::{Protocol, TlsConnector};
 use native_tls::backend::openssl::TlsConnectorBuilderExt;
@@ -200,10 +200,10 @@ impl ApplicationConfigBuilder {
     /// Build application configuration.
     fn build(self) -> Result<ApplicationConfig, ConfigError> {
         let mut logger = match self.logger_type {
-            LoggerType::Syslog       => BoxedLogger::new(logger::syslog::new()),
-            LoggerType::Stderr       => BoxedLogger::new(logger::stderr::new()),
-            LoggerType::StderrPretty => BoxedLogger::new(logger::stderr::new_pretty()),
-            LoggerType::FileLogger   => BoxedLogger::new(
+            LoggerType::Syslog       => BoxLogger::new(logger::syslog::new()),
+            LoggerType::Stderr       => BoxLogger::new(logger::stderr::new()),
+            LoggerType::StderrPretty => BoxLogger::new(logger::stderr::new_pretty()),
+            LoggerType::FileLogger   => BoxLogger::new(
                 logger::file::new(
                         &self.log_file,
                         self.log_file_size,
@@ -590,7 +590,7 @@ pub struct ApplicationConfig {
     discovery:         bool,
     svc_table:         SharedServiceTable,
     default_svc_table: SharedServiceTable,
-    logger:            BoxedLogger,
+    logger:            BoxLogger,
 }
 
 impl ApplicationConfig {
@@ -648,7 +648,7 @@ impl ApplicationConfig {
     }
 
     /// Get logger.
-    pub fn get_logger(&self) -> BoxedLogger {
+    pub fn get_logger(&self) -> BoxLogger {
         self.logger.clone()
     }
 

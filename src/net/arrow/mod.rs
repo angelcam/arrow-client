@@ -74,7 +74,7 @@ use net::utils::get_hostname;
 
 use svc_table::SharedServiceTableRef;
 
-use utils::logger::{Logger, BoxedLogger};
+use utils::logger::{Logger, BoxLogger};
 
 pub use self::error::{
     ArrowError,
@@ -116,7 +116,7 @@ impl ExpectedAck {
 
 /// Arrow Client implementation.
 struct ArrowClientContext {
-    logger:           BoxedLogger,
+    logger:           BoxLogger,
     app_context:      ApplicationContext,
     cmd_channel:      CommandChannel,
     svc_table:        SharedServiceTableRef,
