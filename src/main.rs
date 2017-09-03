@@ -37,19 +37,19 @@ extern crate tokio_io;
 extern crate tokio_timer;
 extern crate tokio_tls;
 
-mod futures_ex;
+pub mod futures_ex;
 
 #[macro_use]
-mod utils;
+pub mod utils;
 
-mod net;
+pub mod net;
 
-mod config;
-mod context;
-mod cmd_handler;
-mod scanner;
-mod svc_table;
-mod timer;
+pub mod config;
+pub mod context;
+pub mod cmd_handler;
+pub mod scanner;
+pub mod svc_table;
+pub mod timer;
 
 use std::process;
 use std::thread;
