@@ -12,17 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod ack;
-pub mod hup;
-pub mod redirect;
-pub mod register;
-pub mod scan_report;
-pub mod status;
-pub mod svc_table;
-pub mod update;
+mod ack;
+mod hup;
+mod redirect;
+mod register;
+mod scan_report;
+mod status;
+mod svc_table;
+mod update;
 
 use std::mem;
 use std::str;
+
+use std::rc::Rc;
+use std::cell::Cell;
 
 use bytes::BytesMut;
 
@@ -53,20 +56,20 @@ pub use self::svc_table::{
     SimpleServiceTable,
 };
 
-// ACK codes
-pub use self::ack::{
-    ACK_NO_ERROR,
-    ACK_UNSUPPORTED_PROTOCOL_VERSION,
-    ACK_UNAUTHORIZED,
-    ACK_CONNECTION_ERROR,
-    ACK_UNSUPPORTED_METHOD,
-    ACK_INTERNAL_SERVER_ERROR,
-};
-
 // status flags
 pub use self::status::{
     STATUS_FLAG_SCAN,
 };
+
+// error codes
+pub const EC_NO_ERROR:                     u32 = 0x00000000;
+pub const EC_UNSUPPORTED_PROTOCOL_VERSION: u32 = 0x00000001;
+pub const EC_UNAUTHORIZED:                 u32 = 0x00000002;
+pub const EC_CONNECTION_ERROR:             u32 = 0x00000003;
+pub const EC_INTERNAL_SERVER_ERROR:        u32 = 0xffffffff;
+
+// unused error codes
+//pub const EC_UNSUPPORTED_METHOD:           u32 = 0x00000004;
 
 // message type constants
 const CMSG_ACK:             u16 = 0x0000;
@@ -412,5 +415,100 @@ impl FromBytes for ControlMessage {
         } else {
             panic!("unable to decode an Arrow Control Protocol message")
         }
+    }
+}
+
+/// Control Protocol message factory with shared message ID counter.
+#[derive(Clone)]
+pub struct ControlMessageFactory {
+    counter: Rc<Cell<u16>>,
+}
+
+impl ControlMessageFactory {
+    /// Create a new Control Protocol message factory.
+    pub fn new() -> ControlMessageFactory {
+        ControlMessageFactory {
+            counter: Rc::new(Cell::new(0)),
+        }
+    }
+
+    /// Get next message ID and increment the counter.
+    fn next_id(&mut self) -> u16 {
+        let res = self.counter.get();
+
+        self.counter.set(res.wrapping_add(1));
+
+        res
+    }
+
+    /// Create a new ACK message with a given error code.
+    pub fn ack(&mut self, msg_id: u16, error_code: u32) -> ControlMessage {
+        ControlMessage::ack(
+            msg_id,
+            error_code)
+    }
+
+    /// Create a new HUP message with a given session ID and error code.
+    pub fn hup(&mut self, session_id: u32, error_code: u32) -> ControlMessage {
+        ControlMessage::hup(
+            self.next_id(),
+            session_id,
+            error_code)
+    }
+
+    /// Create a new STATUS message with a given request ID, flags and number
+    /// of active sessions.
+    pub fn status(
+        &mut self,
+        request_id: u16,
+        status_flags: u32,
+        active_sessions: u32) -> ControlMessage {
+        ControlMessage::status(
+            self.next_id(),
+            request_id,
+            status_flags,
+            active_sessions)
+    }
+
+    /// Create a new SCAN_REPORT message for a given scan report.
+    pub fn scan_report<T>(
+        &mut self,
+        request_id: u16,
+        scan_result: ScanResult,
+        svc_table: &T) -> ControlMessage
+        where T: ServiceTable {
+        ControlMessage::scan_report(
+            self.next_id(),
+            request_id,
+            scan_result,
+            svc_table)
+    }
+
+    /// Create a new PING message.
+    pub fn ping(&mut self) -> ControlMessage {
+        ControlMessage::ping(
+            self.next_id())
+    }
+
+    /// Create a new REGISTER message.
+    pub fn register(
+        &mut self,
+        mac: MacAddr,
+        uuid: [u8; 16],
+        password: [u8; 16],
+        svc_table: SimpleServiceTable) -> ControlMessage {
+        ControlMessage::register(
+            self.next_id(),
+            mac,
+            uuid,
+            password,
+            svc_table)
+    }
+
+    /// Create a new UPDATE message.
+    pub fn update(&mut self, svc_table: SimpleServiceTable) -> ControlMessage {
+        ControlMessage::update(
+            self.next_id(),
+            svc_table)
     }
 }

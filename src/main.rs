@@ -67,7 +67,9 @@ use context::{ApplicationContext, ConnectionState};
 
 use cmd_handler::{Command, CommandChannel};
 
-use net::arrow::proto::{connect, ArrowError, ErrorKind};
+use net::arrow;
+
+use net::arrow::{ArrowError, ErrorKind};
 
 use utils::logger::Logger;
 
@@ -112,7 +114,7 @@ fn arrow_thread(mut app_context: ApplicationContext, cmd_channel: CommandChannel
 
         app_context.set_connection_state(ConnectionState::Connected);
 
-        let res = connect(
+        let res = arrow::connect(
             app_context.clone(),
             cmd_channel.clone(),
             &cur_addr);

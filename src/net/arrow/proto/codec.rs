@@ -16,7 +16,8 @@ use bytes::{Bytes, BytesMut};
 
 use tokio_io::codec::{Decoder, Encoder};
 
-use net::arrow::proto::error::{ArrowError, ConnectionError, DecodeError};
+use net::arrow::error::{ArrowError, ConnectionError};
+use net::arrow::proto::error::DecodeError;
 use net::arrow::proto::msg::ArrowMessage;
 
 /// Common trait for objects that can be encoded as a sequence of bytes.

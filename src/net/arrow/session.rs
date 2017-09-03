@@ -38,10 +38,15 @@ use context::ApplicationContext;
 
 use svc_table::{BoxServiceTable, ServiceTable};
 
+use net::arrow::error::{ArrowError, ConnectionError};
 use net::arrow::proto::codec::RawCodec;
-use net::arrow::proto::error::{ArrowError, ConnectionError};
 use net::arrow::proto::msg::ArrowMessage;
-use net::arrow::proto::utils::ControlMessageFactory;
+use net::arrow::proto::msg::control::{
+    EC_NO_ERROR,
+    EC_CONNECTION_ERROR,
+
+    ControlMessageFactory,
+};
 
 use timer::Timer;
 
@@ -400,7 +405,7 @@ impl SessionManager {
 
             let msg = self.create_hup_message(
                 header.session,
-                0x03);
+                EC_CONNECTION_ERROR);
 
             self.cmsg_queue.push_back(msg);
         }
@@ -521,7 +526,7 @@ impl Stream for SessionManager {
 
                             let msg = self.create_hup_message(
                                 session_id,
-                                0x00);
+                                EC_NO_ERROR);
 
                             return Ok(Async::Ready(Some(msg)))
                         },
@@ -536,7 +541,7 @@ impl Stream for SessionManager {
 
                             let msg = self.create_hup_message(
                                 session_id,
-                                0x03);
+                                EC_CONNECTION_ERROR);
 
                             return Ok(Async::Ready(Some(msg)))
                         },
