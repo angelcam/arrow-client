@@ -30,7 +30,7 @@ use utils::logger::{BoxLogger, Logger};
 #[cfg(feature="discovery")]
 use utils::logger::Severity;
 
-use futures::{BoxFuture, Future, Poll, Stream};
+use futures::{Future, Poll, Stream};
 
 use futures::sync::mpsc;
 use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -76,7 +76,7 @@ impl CommandChannel {
 
     /// Send a given command.
     pub fn send(&self, cmd: Command) {
-        self.tx.send(Event::Command(cmd))
+        self.tx.unbounded_send(Event::Command(cmd))
             .expect("broken command channel");
     }
 }
@@ -151,7 +151,7 @@ impl CommandHandlerContext {
         let handle = thread::spawn(move || {
             network_scanner_thread(app_context);
 
-            cmd_sender.send(Event::ScanCompleted)
+            cmd_sender.unbounded_send(Event::ScanCompleted)
                 .unwrap();
         });
 
@@ -178,7 +178,7 @@ impl CommandHandlerContext {
 /// Command handler. It implements the future trait and it's designed to be used in combination
 /// with tokio event loop.
 pub struct CommandHandler {
-    handler: BoxFuture<(), ()>,
+    handler: Box<Future<Item=(), Error=()>>,
 }
 
 impl CommandHandler {
@@ -195,7 +195,7 @@ impl CommandHandler {
         });
 
         CommandHandler {
-            handler: handler.boxed(),
+            handler: Box::new(handler),
         }
     }
 }
