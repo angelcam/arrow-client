@@ -22,16 +22,13 @@ use std::fmt::{Display, Formatter};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, Mutex};
 
+use json::JsonValue;
+
 use time;
 
-use serde_json;
-
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde::de::Error;
-
-use config::ConfigError;
-
 use net::raw::ether::MacAddr;
+
+use utils::json::{FromJson, ParseError, ToJson};
 
 pub use self::service::{
     Service,
@@ -140,6 +137,136 @@ impl ServiceTableElement {
     /// Get service for this element.
     fn to_service(&self) -> Service {
         self.service.clone()
+    }
+}
+
+impl ToJson for ServiceTableElement {
+    fn to_json(&self) -> JsonValue {
+        let default_mac = MacAddr::zero();
+        let default_address = SocketAddr::V4(
+            SocketAddrV4::new(
+                Ipv4Addr::new(0, 0, 0, 0),
+                0));
+
+        let svc_type = self.service.service_type();
+
+        let mac = self.service.mac()
+            .unwrap_or(default_mac);
+        let address = self.service.address()
+            .unwrap_or(default_address);
+        let path = self.service.path()
+            .unwrap_or("");
+
+        object!{
+            "svc_type" => svc_type.code(),
+            "mac" => format!("{}", mac),
+            "address" => format!("{}", address),
+            "path" => path,
+            "static_svc" => self.static_service,
+            "last_seen" => self.last_seen,
+            "active" => self.active
+        }
+    }
+}
+
+impl FromJson for ServiceTableElement {
+    fn from_json(value: JsonValue) -> Result<Self, ParseError> {
+        let service;
+
+        if let JsonValue::Object(svc) = value {
+            service = svc;
+        } else {
+            return Err(ParseError::from("JSON object expected"));
+        }
+
+        let svc_type = service.get("svc_type")
+            .and_then(|v| v.as_u16())
+            .ok_or(ParseError::from("missing field \"svc_type\""))?;
+        let mac = service.get("mac")
+            .and_then(|v| v.as_str())
+            .ok_or(ParseError::from("missing field \"mac\""))?;
+        let address = service.get("address")
+            .and_then(|v| v.as_str())
+            .ok_or(ParseError::from("missing field \"address\""))?;
+        let path = service.get("path")
+            .and_then(|v| v.as_str())
+            .ok_or(ParseError::from("missing field \"path\""))?;
+
+        let epath = String::new();
+        let opath;
+
+        if path.len() > 0 {
+            opath = Some(path.to_string());
+        } else {
+            opath = None;
+        }
+
+        let mac = mac.parse()
+            .map_err(|_| ParseError::from("unable to parse MAC address"));
+        let address = address.parse()
+            .map_err(|_| ParseError::from("unable to parse socket address"));
+
+        let svc = match svc_type {
+            SVC_TYPE_CONTROL_PROTOCOL => Ok(Service::control()),
+            SVC_TYPE_RTSP => Ok(Service::rtsp(
+                mac?,
+                address?,
+                opath.unwrap_or(epath),
+            )),
+            SVC_TYPE_LOCKED_RTSP => Ok(Service::locked_rtsp(
+                mac?,
+                address?,
+                opath,
+            )),
+            SVC_TYPE_UNKNOWN_RTSP => Ok(Service::unknown_rtsp(
+                mac?,
+                address?,
+            )),
+            SVC_TYPE_UNSUPPORTED_RTSP => Ok(Service::unsupported_rtsp(
+                mac?,
+                address?,
+                opath.unwrap_or(epath),
+            )),
+            SVC_TYPE_HTTP => Ok(Service::http(
+                mac?,
+                address?,
+            )),
+            SVC_TYPE_MJPEG => Ok(Service::mjpeg(
+                mac?,
+                address?,
+                opath.unwrap_or(epath),
+            )),
+            SVC_TYPE_LOCKED_MJPEG => Ok(Service::locked_mjpeg(
+                mac?,
+                address?,
+                opath,
+            )),
+            SVC_TYPE_TCP => Ok(Service::tcp(
+                mac?,
+                address?,
+            )),
+            _ => Err(ParseError::from("unknown service type"))
+        };
+
+        let static_svc = service.get("static_svc")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let last_seen = service.get("last_seen")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(get_utc_timestamp());
+        let active = service.get("active")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let elem = ServiceTableElement {
+            service:        svc?,
+            static_service: static_svc,
+            last_seen:      last_seen,
+            active:         active,
+            enabled:        false,
+        };
+
+        Ok(elem)
     }
 }
 
@@ -277,29 +404,48 @@ impl ServiceTableData {
     }
 }
 
-impl Serialize for ServiceTableData {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer {
-        SerdeServiceTable::from(&self.services)
-            .serialize(serializer)
+impl ToJson for ServiceTableData {
+    fn to_json(&self) -> JsonValue {
+        let services = self.services.iter()
+            .map(|elem| elem.to_json())
+            .collect::<Vec<_>>();
+
+        object!{
+            "services" => services
+        }
     }
 }
 
-impl<'de> Deserialize<'de> for ServiceTableData {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: Deserializer<'de> {
-        let table = SerdeServiceTable::deserialize(deserializer)?;
-
+impl FromJson for ServiceTableData {
+    fn from_json(value: JsonValue) -> Result<Self, ParseError> {
         let mut res = ServiceTableData {
             services: Vec::new(),
             map:      HashMap::new(),
             version:  0,
         };
 
-        for svc in table.services {
+        let mut table;
+
+        if let JsonValue::Object(t) = value {
+            table = t;
+        } else {
+            return Err(ParseError::from("JSON object expected"));
+        }
+
+        let tmp = table.remove("services")
+            .ok_or(ParseError::from("missing field \"mac\""))?;
+
+        let services;
+
+        if let JsonValue::Array(svcs) = tmp {
+            services = svcs;
+        } else {
+            return Err(ParseError::from("JSON array expected"));
+        }
+
+        for service in services {
             let index = res.services.len();
-            let elem = svc.into_service_table_element()
-                .map_err(|err| D::Error::custom(format!("{}", err)))?;
+            let elem = ServiceTableElement::from_json(service)?;
             let key = elem.service.to_service_identifier();
 
             res.services.push(elem);
@@ -312,10 +458,7 @@ impl<'de> Deserialize<'de> for ServiceTableData {
 
 impl Display for ServiceTableData {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        let json = serde_json::to_string(self)
-            .map_err(|_| fmt::Error)?;
-
-        write!(f, "{}", json)
+        write!(f, "{}", self.to_json())
     }
 }
 
@@ -440,19 +583,17 @@ impl Display for SharedServiceTable {
     }
 }
 
-impl Serialize for SharedServiceTable {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer {
+impl ToJson for SharedServiceTable {
+    fn to_json(&self) -> JsonValue {
         self.data.lock()
             .unwrap()
-            .serialize(serializer)
+            .to_json()
     }
 }
 
-impl<'de> Deserialize<'de> for SharedServiceTable {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: Deserializer<'de> {
-        let data = ServiceTableData::deserialize(deserializer)?;
+impl FromJson for SharedServiceTable {
+    fn from_json(value: JsonValue) -> Result<Self, ParseError> {
+        let data = ServiceTableData::from_json(value)?;
 
         let res = SharedServiceTable {
             data: Arc::new(Mutex::new(data)),
@@ -502,12 +643,11 @@ impl ServiceTable for SharedServiceTableRef {
     }
 }
 
-impl Serialize for SharedServiceTableRef {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer {
+impl ToJson for SharedServiceTableRef {
+    fn to_json(&self) -> JsonValue {
         self.data.lock()
             .unwrap()
-            .serialize(serializer)
+            .to_json()
     }
 }
 
@@ -516,135 +656,5 @@ impl Display for SharedServiceTableRef {
         self.data.lock()
             .unwrap()
             .fmt(f)
-    }
-}
-
-/// Helper struct for service table element serialization/deserialization.
-#[derive(Serialize, Deserialize)]
-struct SerdeService {
-    svc_type:   u16,
-    mac:        String,
-    address:    String,
-    path:       String,
-    static_svc: Option<bool>,
-    last_seen:  Option<i64>,
-    active:     Option<bool>,
-}
-
-impl SerdeService {
-    /// Convert this object into a ServiceTableElement.
-    fn into_service_table_element(self) -> Result<ServiceTableElement, ConfigError> {
-        let epath = String::new();
-        let opath;
-
-        if self.path.len() > 0 {
-            opath = Some(self.path);
-        } else {
-            opath = None;
-        }
-
-        let svc = match self.svc_type {
-            SVC_TYPE_CONTROL_PROTOCOL => Ok(Service::control()),
-            SVC_TYPE_RTSP => Ok(Service::rtsp(
-                self.mac.parse()?,
-                self.address.parse()?,
-                opath.unwrap_or(epath),
-            )),
-            SVC_TYPE_LOCKED_RTSP => Ok(Service::locked_rtsp(
-                self.mac.parse()?,
-                self.address.parse()?,
-                opath,
-            )),
-            SVC_TYPE_UNKNOWN_RTSP => Ok(Service::unknown_rtsp(
-                self.mac.parse()?,
-                self.address.parse()?,
-            )),
-            SVC_TYPE_UNSUPPORTED_RTSP => Ok(Service::unsupported_rtsp(
-                self.mac.parse()?,
-                self.address.parse()?,
-                opath.unwrap_or(epath),
-            )),
-            SVC_TYPE_HTTP => Ok(Service::http(
-                self.mac.parse()?,
-                self.address.parse()?,
-            )),
-            SVC_TYPE_MJPEG => Ok(Service::mjpeg(
-                self.mac.parse()?,
-                self.address.parse()?,
-                opath.unwrap_or(epath),
-            )),
-            SVC_TYPE_LOCKED_MJPEG => Ok(Service::locked_mjpeg(
-                self.mac.parse()?,
-                self.address.parse()?,
-                opath,
-            )),
-            SVC_TYPE_TCP => Ok(Service::tcp(
-                self.mac.parse()?,
-                self.address.parse()?,
-            )),
-            _ => Err(ConfigError::from("unknown service type"))
-        };
-
-        let static_svc = self.static_svc.unwrap_or(false);
-        let last_seen  = self.last_seen.unwrap_or(get_utc_timestamp());
-        let active     = self.active.unwrap_or(true);
-
-        let elem = ServiceTableElement {
-            service:        svc?,
-            static_service: static_svc,
-            last_seen:      last_seen,
-            active:         active,
-            enabled:        false,
-        };
-
-        Ok(elem)
-    }
-}
-
-impl<'a> From<&'a ServiceTableElement> for SerdeService {
-    fn from(elem: &'a ServiceTableElement) -> SerdeService {
-        let default_mac = MacAddr::zero();
-        let default_address = SocketAddr::V4(
-            SocketAddrV4::new(
-                Ipv4Addr::new(0, 0, 0, 0),
-                0));
-
-        let svc_type = elem.service.service_type();
-
-        let mac = elem.service.mac()
-            .unwrap_or(default_mac);
-        let address = elem.service.address()
-            .unwrap_or(default_address);
-        let path = elem.service.path()
-            .unwrap_or("");
-
-        SerdeService {
-            svc_type:   svc_type.code(),
-            mac:        format!("{}", mac),
-            address:    format!("{}", address),
-            path:       path.to_string(),
-            static_svc: Some(elem.static_service),
-            last_seen:  Some(elem.last_seen),
-            active:     Some(elem.active),
-        }
-    }
-}
-
-/// Helper struct for service table serialization/deserialization.
-#[derive(Serialize, Deserialize)]
-struct SerdeServiceTable {
-    services: Vec<SerdeService>,
-}
-
-impl<'a, I> From<I> for SerdeServiceTable
-    where I: IntoIterator<Item=&'a ServiceTableElement> {
-    fn from(services: I) -> SerdeServiceTable {
-        let services = services.into_iter()
-            .map(|svc| SerdeService::from(svc))
-            .collect::<_>();
-
-        SerdeServiceTable {
-            services: services,
-        }
     }
 }

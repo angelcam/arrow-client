@@ -22,6 +22,7 @@ use std::env::Args;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
+use std::io::Read;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::Path;
 use std::str::FromStr;
@@ -41,9 +42,15 @@ use utils;
 
 use utils::RuntimeError;
 
+use utils::json::{FromJson, ParseError, ToJson};
+
 use utils::logger;
 
 use utils::logger::{BoxLogger, Logger, Severity};
+
+use json;
+
+use json::JsonValue;
 
 use native_tls::{Protocol, TlsConnector};
 use native_tls::backend::openssl::TlsConnectorBuilderExt;
@@ -54,8 +61,6 @@ use openssl::ssl::SslContextBuilder;
 use openssl::x509::X509StoreContextRef;
 
 use regex::Regex;
-
-use serde_json;
 
 use uuid::Uuid;
 
@@ -125,8 +130,8 @@ impl From<std::io::Error> for ConfigError {
     }
 }
 
-impl From<serde_json::Error> for ConfigError {
-    fn from(err: serde_json::Error) -> ConfigError {
+impl From<utils::json::ParseError> for ConfigError {
+    fn from(err: utils::json::ParseError) -> ConfigError {
         ConfigError::from(format!("{}", err))
     }
 }
@@ -536,7 +541,6 @@ impl ApplicationConfigBuilder {
 }
 
 /// Persistent part of application configuration.
-#[derive(Deserialize, Serialize)]
 struct PersistentConfig {
     uuid:      Uuid,
     passwd:    Uuid,
@@ -557,8 +561,17 @@ impl PersistentConfig {
 
     /// Load configuration from a given file.
     fn load(path: &str) -> Result<PersistentConfig, ConfigError> {
-        let file   = File::open(path)?;
-        let config = serde_json::from_reader(file)?;
+        let mut file = File::open(path)?;
+        let mut data = String::new();
+
+        file.read_to_string(&mut data)?;
+
+        let object = json::parse(&data)
+            .map_err(|err| {
+                utils::json::ParseError::from(format!("unable to parse configuration: {}", err))
+            })?;
+
+        let config = PersistentConfig::from_json(object)?;
 
         Ok(config)
     }
@@ -567,9 +580,65 @@ impl PersistentConfig {
     fn save(&self, path: &str) -> Result<(), ConfigError> {
         let mut file = File::create(path)?;
 
-        serde_json::to_writer(&mut file, self)?;
+        self.to_json()
+            .write(&mut file)?;
 
         Ok(())
+    }
+}
+
+impl ToJson for PersistentConfig {
+    fn to_json(&self) -> JsonValue {
+        object!{
+            "uuid" => format!("{}", self.uuid.hyphenated()),
+            "passwd" => format!("{}", self.passwd.hyphenated()),
+            "version" => self.version,
+            "svc_table" => self.svc_table.to_json()
+        }
+    }
+}
+
+impl FromJson for PersistentConfig {
+    fn from_json(value: JsonValue) -> Result<Self, ParseError> {
+        let mut config;
+
+        if let JsonValue::Object(cfg) = value {
+            config = cfg;
+        } else {
+            return Err(ParseError::from("JSON object expected"));
+        }
+
+        let svc_table = config.remove("svc_table")
+            .ok_or(ParseError::from("missing field \"svc_table\""))?;
+
+        let svc_table = SharedServiceTable::from_json(svc_table)
+            .map_err(|err| {
+                ParseError::from(format!("unable to parse service table: {}", err))
+            })?;
+
+        let uuid = config.get("uuid")
+            .and_then(|v| v.as_str())
+            .ok_or(ParseError::from("missing field \"uuid\""))?;
+        let passwd = config.get("passwd")
+            .and_then(|v| v.as_str())
+            .ok_or(ParseError::from("missing field \"passwd\""))?;
+        let version = config.get("version")
+            .and_then(|v| v.as_usize())
+            .ok_or(ParseError::from("missing field \"version\""))?;
+
+        let uuid = Uuid::from_str(uuid)
+            .map_err(|_| ParseError::from("unable to parse UUID"))?;
+        let passwd = Uuid::from_str(passwd)
+            .map_err(|_| ParseError::from("unable to parse UUID"))?;
+
+        let res = PersistentConfig {
+            uuid:      uuid,
+            passwd:    passwd,
+            version:   version,
+            svc_table: svc_table,
+        };
+
+        Ok(res)
     }
 }
 

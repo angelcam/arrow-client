@@ -12,13 +12,11 @@ discovery = []
 [dependencies]
 bytes        = "0.4"
 futures      = "0.1"
+json         = "0.11.9"
 libc         = "0.2"
 native-tls   = "0.1"
 openssl      = "0.9"
 regex        = "0.2"
-serde        = "1.0"
-serde_json   = "1.0"
-serde_derive = "1.0"
 time         = "0.1"
 tokio-core   = "0.1"
 tokio-io     = "0.1"
@@ -27,7 +25,7 @@ tokio-tls    = "0.1"
 
 [dependencies.uuid]
 version  = "0.5"
-features = ["use_std", "v4", "serde"]
+features = ["v4"]
 
 [build-dependencies]
 gcc = "0.3"

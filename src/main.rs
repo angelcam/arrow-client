@@ -21,16 +21,13 @@ extern crate openssl;
 extern crate time;
 extern crate uuid;
 
+#[macro_use]
+extern crate json;
+
 extern crate bytes;
 
 #[macro_use]
 extern crate futures;
-
-#[macro_use]
-extern crate serde_derive;
-
-extern crate serde;
-extern crate serde_json;
 
 extern crate tokio_core;
 extern crate tokio_io;
