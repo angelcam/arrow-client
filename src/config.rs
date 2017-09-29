@@ -18,6 +18,7 @@ use std::fmt;
 use std::process;
 use std::str;
 
+use std::ascii::AsciiExt;
 use std::env::Args;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -37,6 +38,7 @@ use net;
 
 use net::raw::ether::MacAddr;
 use net::raw::devices::EthernetDevice;
+use net::url::Url;
 
 use utils;
 
@@ -59,8 +61,6 @@ use openssl::nid::COMMONNAME;
 use openssl::ssl::SSL_VERIFY_PEER;
 use openssl::ssl::SslContextBuilder;
 use openssl::x509::X509StoreContextRef;
-
-use regex::Regex;
 
 use uuid::Uuid;
 
@@ -426,79 +426,50 @@ impl ApplicationConfigBuilder {
     fn log_file(&mut self, arg: &str) -> Result<(), ConfigError> {
         self.logger_type = LoggerType::FileLogger;
 
-        let re = Regex::new(r"^--log-file=(.*)$")
-            .unwrap();
+        // skip "--log-file=" length
+        let log_file = &arg[11..];
 
-        self.log_file = re.captures(arg)
-            .unwrap()
-            .get(1)
-            .unwrap()
-            .as_str()
-            .to_string();
+        self.log_file = log_file.to_string();
 
         Ok(())
     }
 
     /// Process the log-file-size argument.
     fn log_file_size(&mut self, arg: &str) -> Result<(), ConfigError> {
-        let re = Regex::new(r"^--log-file-size=(\d+)$")
-            .unwrap();
+        // skip "--log-file-size=" length
+        let size = &arg[16..];
 
-        self.log_file_size = re.captures(arg)
-            .ok_or(ConfigError::from(
+        self.log_file_size = size.parse()
+            .map_err(|_| ConfigError::from(
                 format!("invalid value given for {}, number expeced", arg)
-            ))?
-            .get(1)
-            .unwrap()
-            .as_str()
-            .parse()
-            .unwrap();
+            ))?;
 
         Ok(())
     }
 
     /// Process the log-file-rotations argument.
     fn log_file_rotations(&mut self, arg: &str) -> Result<(), ConfigError> {
-        let re = Regex::new(r"^--log-file-rotations=(\d+)$")
-            .unwrap();
+        // skip "--log-file-rotations=" length
+        let rotations = &arg[21..];
 
-        self.log_file_size = re.captures(arg)
-            .ok_or(ConfigError::from(
+        self.log_file_rotations = rotations.parse()
+            .map_err(|_| ConfigError::from(
                 format!("invalid value given for {}, number expeced", arg)
-            ))?
-            .get(1)
-            .unwrap()
-            .as_str()
-            .parse()
-            .unwrap();
+            ))?;
 
         Ok(())
     }
 
     /// Process the config-file argument.
     fn config_file(&mut self, arg: &str) {
-        let re = Regex::new(r"^--config-file=(.*)$")
-            .unwrap();
-
-        self.config_file = re.captures(arg)
-            .unwrap()
-            .get(1)
-            .unwrap()
-            .as_str()
-            .to_string();
+        // skip "--config-file=" length
+        self.config_file = arg[14..].to_string()
     }
 
     /// Process the conn-state-file argument.
     fn conn_state_file(&mut self, arg: &str) {
-        let re = Regex::new(r"^--conn-state-file=(.*)$")
-            .unwrap();
-
-        self.state_file = re.captures(arg)
-            .unwrap()
-            .get(1)
-            .unwrap()
-            .as_str()
-            .to_string();
+        // skip "--conn-state-file=" length
+        self.state_file = arg[18..].to_string()
     }
 
     /// Process the rtsp-paths argument.
@@ -507,15 +478,10 @@ impl ApplicationConfigBuilder {
             return Err(ConfigError::from("unknown argument: \"--rtsp-paths\""))
         }
 
-        let re = Regex::new(r"^--rtsp-paths=(.*)$")
-            .unwrap();
+        // skip "--rtsp-paths=" length
+        let rtsp_paths_file = &arg[13..];
 
-        self.rtsp_paths_file = re.captures(arg)
-            .unwrap()
-            .get(1)
-            .unwrap()
-            .as_str()
-            .to_string();
+        self.rtsp_paths_file = rtsp_paths_file.to_string();
 
         Ok(())
     }
@@ -526,15 +492,10 @@ impl ApplicationConfigBuilder {
             return Err(ConfigError::from("unknown argument: \"--mjpeg-paths\""))
         }
 
-        let re = Regex::new(r"^--mjpeg-paths=(.*)$")
-            .unwrap();
+        // skip "--mjpeg-paths=" length
+        let mjpeg_paths_file = &arg[14..];
 
-        self.mjpeg_paths_file = re.captures(arg)
-            .unwrap()
-            .get(1)
-            .unwrap()
-            .as_str()
-            .to_string();
+        self.mjpeg_paths_file = mjpeg_paths_file.to_string();
 
         Ok(())
     }
@@ -881,63 +842,81 @@ fn get_fake_mac_from_ipv6(prefix: u16, addr: &SocketAddrV6) -> MacAddr {
 
 /// Parse a given RTSP URL and return an RTSP service, a LockedRTSP service or an error.
 fn parse_rtsp_url(url: &str) -> Result<Service, ConfigError> {
-    let res = r"^rtsp://([^/]+@)?([^/@:]+|\[[0-9a-fA-F:.]+\])(:(\d+))?(/.*)?$";
-    let re  = Regex::new(res).unwrap();
+    let url = url.parse::<Url>()
+        .map_err(|_| ConfigError::from(
+            format!("invalid RTSP URL given: {}", url)
+        ))?;
 
-    if let Some(caps) = re.captures(url) {
-        let host = caps.get(2).unwrap().as_str();
-        let path = caps.get(5).unwrap().as_str();
-        let port = caps.get(4)
-            .map(|m| u16::from_str(m.as_str()))
-            .unwrap_or(Ok(554))
-            .unwrap();
+    let scheme = url.scheme();
 
-        let socket_addr = net::utils::get_socket_address((host, port))
-            .map_err(|_| ConfigError::from(
-                format!("unable to resolve RTSP service address: {}:{}", host, port)
-            ))?;
+    if !scheme.eq_ignore_ascii_case("rtsp") {
+        return Err(ConfigError::from(
+            format!("invalid RTSP URL given: {}", url)
+        ));
+    }
 
-        let mac = get_fake_mac(0xffff, &socket_addr);
+    let host = url.host();
+    let port = url.port()
+        .unwrap_or(554);
 
-        // NOTE: we do not want to probe the service here as it might not be
-        // available on app startup
-        match caps.get(1) {
-            Some(_) => Ok(Service::locked_rtsp(mac, socket_addr, None)),
-            None    => Ok(Service::rtsp(mac, socket_addr, path.to_string()))
-        }
-    } else {
-        Err(ConfigError::from(format!("invalid RTSP URL given: {}", url)))
+    let socket_addr = net::utils::get_socket_address((host, port))
+        .map_err(|_| ConfigError::from(
+            format!("unable to resolve RTSP service address: {}:{}", host, port)
+        ))?;
+
+    let mac = get_fake_mac(0xffff, &socket_addr);
+
+    let mut path = url.path()
+        .to_string();
+
+    if let Some(query) = url.query() {
+        path = format!("{}?{}", path, query);
+    }
+
+    // NOTE: we do not want to probe the service here as it might not be available on app startup
+    match url.username() {
+        Some(_) => Ok(Service::locked_rtsp(mac, socket_addr, Some(path))),
+        None    => Ok(Service::rtsp(mac, socket_addr, path)),
     }
 }
 
 /// Parse a given HTTP URL and return an MJPEG service, a LockedMJPEG service or an error.
 fn parse_mjpeg_url(url: &str) -> Result<Service, ConfigError> {
-    let res = r"^http://([^/]+@)?([^/@:]+|\[[0-9a-fA-F:.]+\])(:(\d+))?(/.*)?$";
-    let re  = Regex::new(res).unwrap();
+    let url = url.parse::<Url>()
+        .map_err(|_| ConfigError::from(
+            format!("invalid HTTP URL given: {}", url)
+        ))?;
 
-    if let Some(caps) = re.captures(url) {
-        let host = caps.get(2).unwrap().as_str();
-        let path = caps.get(5).unwrap().as_str();
-        let port = caps.get(4)
-            .map(|m| u16::from_str(m.as_str()))
-            .unwrap_or(Ok(80))
-            .unwrap();
+    let scheme = url.scheme();
 
-        let socket_addr = net::utils::get_socket_address((host, port))
-            .map_err(|_| ConfigError::from(
-                format!("unable to resolve HTTP service address: {}:{}", host, port)
-            ))?;
+    if !scheme.eq_ignore_ascii_case("http") {
+        return Err(ConfigError::from(
+            format!("invalid HTTP URL given: {}", url)
+        ));
+    }
 
-        let mac = get_fake_mac(0xffff, &socket_addr);
+    let host = url.host();
+    let port = url.port()
+        .unwrap_or(80);
 
-        // NOTE: we do not want to probe the service here as it might not be
-        // available on app startup
-        match caps.get(1) {
-            Some(_) => Ok(Service::locked_mjpeg(mac, socket_addr, None)),
-            None    => Ok(Service::mjpeg(mac, socket_addr, path.to_string()))
-        }
-    } else {
-        Err(ConfigError::from(format!("invalid HTTP URL given: {}", url)))
+    let socket_addr = net::utils::get_socket_address((host, port))
+        .map_err(|_| ConfigError::from(
+            format!("unable to resolve HTTP service address: {}:{}", host, port)
+        ))?;
+
+    let mac = get_fake_mac(0xffff, &socket_addr);
+
+    let mut path = url.path()
+        .to_string();
+
+    if let Some(query) = url.query() {
+        path = format!("{}?{}", path, query);
+    }
+
+    // NOTE: we do not want to probe the service here as it might not be available on app startup
+    match url.username() {
+        Some(_) => Ok(Service::locked_mjpeg(mac, socket_addr, Some(path))),
+        None    => Ok(Service::mjpeg(mac, socket_addr, path)),
     }
 }
 
@@ -966,15 +945,7 @@ fn validate_hostname(hostname: &str, x509_ctx: &X509StoreContextRef) -> bool {
             let cn = cn.data();
 
             if let Ok(pattern) = str::from_utf8(cn.as_slice()) {
-                let pattern = pattern.replace(r".", r"\\.");
-                let pattern = pattern.replace(r"*", r"\S+");
-                let pattern = format!("^{}$", pattern);
-
-                if let Ok(re) = Regex::new(&pattern) {
-                    re.is_match(hostname)
-                } else {
-                    false
-                }
+                validate_hostname_pattern(hostname, pattern)
             } else {
                 false
             }
@@ -984,6 +955,35 @@ fn validate_hostname(hostname: &str, x509_ctx: &X509StoreContextRef) -> bool {
     } else {
         false
     }
+}
+
+/// Validate a given hostname against a given wildcard pattern.
+fn validate_hostname_pattern(mut hostname: &str, pattern: &str) -> bool {
+    let mut split = pattern.split('*');
+
+    if !pattern.starts_with('*') {
+        if let Some(fragment) = split.next() {
+            let len = fragment.len();
+
+            if hostname.starts_with(fragment) {
+                hostname = &hostname[len..];
+            } else {
+                return false;
+            }
+        }
+    }
+
+    while let Some(fragment) = split.next() {
+        let len = fragment.len();
+
+        if let Some(pos) = hostname.find(fragment) {
+            hostname = &hostname[pos+len..];
+        } else {
+            return false;
+        }
+    }
+
+    hostname.is_empty() || pattern.ends_with('*')
 }
 
 /// Check if a given file is a certificate file.

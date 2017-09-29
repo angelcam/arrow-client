@@ -33,7 +33,7 @@ use net::utils;
 
 use utils::RuntimeError;
 
-use regex::Regex;
+use utils::string::reader::Reader;
 
 /// Message parse error.
 #[derive(Debug, Clone)]
@@ -228,9 +228,6 @@ impl Display for ResponseHeader {
 
 /// HTTP response header parser.
 struct ResponseHeaderParser {
-    status_re:   Regex,
-    header_re:   Regex,
-    cont_re:     Regex,
     header:      ResponseHeader,
     max_lines:   usize,
     lines:       usize,
@@ -241,9 +238,6 @@ impl ResponseHeaderParser {
     /// Create a new response header parser with a given header line limit.
     fn new(max_lines: usize) -> ResponseHeaderParser {
         ResponseHeaderParser {
-            status_re:   Regex::new(r"^HTTP/(\d\.\d) (\d+) (.*)$").unwrap(),
-            header_re:   Regex::new(r"^([^ :]+):\s*(.*)$").unwrap(),
-            cont_re:     Regex::new(r"^\s+(.*)$").unwrap(),
             header:      ResponseHeader::new(),
             max_lines:   max_lines,
             lines:       0,
@@ -273,24 +267,51 @@ impl ResponseHeaderParser {
 
     /// Parse HTTP status line.
     fn parse_status_line(&mut self, line: &str) -> ParsingResult<()> {
-        if let Some(caps) = self.status_re.captures(line) {
-            let version     = caps.get(1).unwrap().as_str();
-            let status_code = caps.get(2).unwrap().as_str();
-            let status_line = caps.get(3).unwrap().as_str();
+        let mut reader = Reader::new(line);
 
-            self.header.code    = try!(i32::from_str(status_code));
-            self.header.line    = status_line.to_string();
-            self.header.version = version.to_string();
+        reader.match_str("HTTP/")
+            .map_err(|_| ParseError::from("invalid HTTP status line"))?;
 
-            Ok(())
-        } else {
-            Err(ParseError::from("invalid HTTP status line"))
-        }
+        let v = reader.read_word()
+            .to_string();
+        reader.skip_whitespace();
+        let sc = reader.read_decimal_u32()
+            .map_err(|_| ParseError::from("invalid HTTP status line"))?;
+        reader.skip_whitespace();
+        let sl = reader.as_str()
+            .to_string();
+
+        self.header.code    = sc as i32;
+        self.header.line    = sl;
+        self.header.version = v;
+
+        Ok(())
     }
 
     /// Parse HTTP header line.
     fn parse_header_line(&mut self, line: &str) -> ParsingResult<()> {
-        if line.is_empty() {
+        let mut chars = line.chars();
+
+        if let Some(c) = chars.next() {
+            if c.is_whitespace() {
+                if let Some((name, val)) = self.header.headers.pop() {
+                    self.header.headers.push((name, val + line.trim_left()));
+                } else {
+                    return Err(ParseError::from("first HTTP header cannot be continuation"));
+                }
+            } else if let Some(delim) = line.find(':') {
+                let (name, value) = line.split_at(delim);
+
+                let value = &value[1..];
+
+                let name = name.trim();
+                let value = value.trim();
+
+                self.header.headers.push((name.to_string(), value.to_string()));
+            } else {
+                return Err(ParseError::from("invalid HTTP header line"));
+            }
+        } else {
             for i in 0..self.header.headers.len() {
                 let &(ref name, _) = self.header.headers.get(i)
                     .unwrap();
@@ -298,20 +319,6 @@ impl ResponseHeaderParser {
                 self.header.header_map.insert(name.to_lowercase(), i);
             }
             self.complete = true;
-        } else if let Some(caps) = self.header_re.captures(line) {
-            let name  = caps.get(1).unwrap().as_str();
-            let value = caps.get(2).unwrap().as_str();
-            self.header.headers.push((name.to_string(), value.to_string()));
-        } else if let Some(caps) = self.cont_re.captures(line) {
-            let cont = caps.get(1).unwrap().as_str();
-
-            if let Some((name, val)) = self.header.headers.pop() {
-                self.header.headers.push((name, val + cont));
-            } else {
-                return Err(ParseError::from("first HTTP header cannot be continuation"));
-            }
-        } else {
-            return Err(ParseError::from("invalid HTTP header line"));
         }
 
         Ok(())

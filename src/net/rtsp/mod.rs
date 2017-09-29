@@ -34,9 +34,9 @@ use net::utils;
 
 use utils::RuntimeError;
 
-pub use net::http::{LineReader, ParseError, ParsingResult};
+use utils::string::reader::Reader;
 
-use regex::Regex;
+pub use net::http::{LineReader, ParseError, ParsingResult};
 
 /// Error returned by RTSP client.
 #[derive(Debug, Clone)]
@@ -239,9 +239,6 @@ impl Display for ResponseHeader {
 
 /// RTSP response header parser.
 struct ResponseHeaderParser {
-    status_re:   Regex,
-    header_re:   Regex,
-    cont_re:     Regex,
     status_code: i32,
     status_line: String,
     headers:     Vec<Header>,
@@ -254,9 +251,6 @@ impl ResponseHeaderParser {
     /// Create a new response header parser with a given header line limit.
     fn new(max_lines: usize) -> ResponseHeaderParser {
         ResponseHeaderParser {
-            status_re:   Regex::new(r"^RTSP/1.0 (\d+) (.*)$").unwrap(),
-            header_re:   Regex::new(r"^([^ :]+):\s*(.*)$").unwrap(),
-            cont_re:     Regex::new(r"^\s+(.*)$").unwrap(),
             status_code: 0,
             status_line: String::new(),
             headers:     Vec::new(),
@@ -288,37 +282,49 @@ impl ResponseHeaderParser {
 
     /// Parse RTSP status line.
     fn parse_status_line(&mut self, line: &str) -> ParsingResult<()> {
-        if let Some(caps) = self.status_re.captures(line) {
-            let status_code = caps.get(1).unwrap().as_str();
-            let status_line = caps.get(2).unwrap().as_str();
+        let mut reader = Reader::new(line);
 
-            self.status_code = try!(i32::from_str(status_code));
-            self.status_line = status_line.to_string();
+        reader.match_str("RTSP/1.0")
+            .map_err(|_| ParseError::from("invalid RTSP status line"))?;
 
-            Ok(())
-        } else {
-            Err(ParseError::from("invalid RTSP status line"))
-        }
+        reader.skip_whitespace();
+        let sc = reader.read_decimal_u32()
+            .map_err(|_| ParseError::from("invalid RTSP status line"))?;
+        reader.skip_whitespace();
+        let sl = reader.as_str()
+            .to_string();
+
+        self.status_code = sc as i32;
+        self.status_line = sl;
+
+        Ok(())
     }
 
     /// Parse RTSP header line.
     fn parse_header_line(&mut self, line: &str) -> ParsingResult<()> {
-        if line.is_empty() {
-            self.complete = true;
-        } else if let Some(caps) = self.header_re.captures(line) {
-            let name  = caps.get(1).unwrap().as_str();
-            let value = caps.get(2).unwrap().as_str();
-            self.headers.push((name.to_string(), value.to_string()));
-        } else if let Some(caps) = self.cont_re.captures(line) {
-            let cont = caps.get(1).unwrap().as_str();
+        let mut chars = line.chars();
 
-            if let Some((name, val)) = self.headers.pop() {
-                self.headers.push((name, val + cont));
+        if let Some(c) = chars.next() {
+            if c.is_whitespace() {
+                if let Some((name, val)) = self.headers.pop() {
+                    self.headers.push((name, val + line.trim_left()));
+                } else {
+                    return Err(ParseError::from("first RTSP header cannot be continuation"));
+                }
+            } else if let Some(delim) = line.find(':') {
+                let (name, value) = line.split_at(delim);
+
+                let value = &value[1..];
+
+                let name = name.trim();
+                let value = value.trim();
+
+                self.headers.push((name.to_string(), value.to_string()));
             } else {
-                return Err(ParseError::from("first RTSP header cannot be continuation"));
+                return Err(ParseError::from("invalid RTSP header line"));
             }
         } else {
-            return Err(ParseError::from("invalid RTSP header line"));
+            self.complete = true;
         }
 
         Ok(())

@@ -15,7 +15,6 @@
 //! Arrow Client definitions.
 
 extern crate libc;
-extern crate regex;
 extern crate native_tls;
 extern crate openssl;
 extern crate time;

@@ -19,6 +19,8 @@ pub mod json;
 #[macro_use]
 pub mod logger;
 
+pub mod string;
+
 use std::mem;
 use std::fmt;
 use std::slice;

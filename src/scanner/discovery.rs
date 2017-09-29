@@ -216,7 +216,7 @@ fn is_supported_rtsp_service(sdp: &[u8]) -> bool {
 
         for md in video_streams {
             for attr in md.attributes {
-                if let Ok(rtpmap) = RTPMap::parse(&attr) {
+                if let Ok(rtpmap) = RTPMap::from_attr(&attr) {
                     vcodecs.insert(rtpmap.encoding.to_uppercase());
                 }
             }

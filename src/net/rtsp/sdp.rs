@@ -21,7 +21,9 @@ use std::str::FromStr;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-use regex::Regex;
+use utils::string::reader;
+
+use utils::string::reader::Reader;
 
 /// SDP parsing error.
 #[derive(Debug, Clone)]
@@ -127,9 +129,54 @@ pub struct MediaDescription {
     // XXX: we ignore the i, c, b and k lines as we don't need them
 }
 
-/// Common trait for types that can be parsed from a given attribute.
-pub trait FromAttribute : Sized {
-    fn parse(attr: &Attribute) -> Result<Self>;
+impl FromStr for MediaDescription {
+    type Err = reader::ParseError;
+
+    fn from_str(val: &str) -> result::Result<Self, Self::Err> {
+        let mut reader = Reader::new(val.trim());
+
+        let mtype = reader.read_word();
+        let port  = reader.read_decimal_u32()?;
+
+        reader.skip_whitespace();
+
+        let c = reader.current_char()
+            .ok_or(reader::ParseError::from("empty input"))?;
+
+        let np;
+
+        if c == '/' {
+            reader.skip_char();
+
+            let val = reader.read_decimal_u32()?;
+
+            np = Some(val as u16);
+        } else {
+            np = None;
+        }
+
+        let protocol = reader.read_word();
+
+        let mut formats = Vec::new();
+
+        while !reader.is_empty() {
+            let format = reader.read_word()
+                .to_string();
+
+            formats.push(format);
+        }
+
+        let res = MediaDescription {
+            media_type: MediaType::from(mtype),
+            port:       port as u16,
+            nb_ports:   np,
+            protocol:   protocol.to_string(),
+            formats:    formats,
+            attributes: Vec::new(),
+        };
+
+        Ok(res)
+    }
 }
 
 /// Session or media attribute.
@@ -151,10 +198,29 @@ impl Attribute {
     }
 }
 
-impl FromAttribute for Attribute {
-    fn parse(attr: &Attribute) -> Result<Attribute> {
-        Ok(attr.clone())
+impl FromStr for Attribute {
+    type Err = ParseError;
+
+    fn from_str(val: &str) -> Result<Attribute> {
+        let mut val = val.splitn(2, ':');
+
+        if let Some(name) = val.next() {
+            let name  = name.trim();
+            let value = val.next()
+                .map(|v| v.trim());
+
+            Ok(Attribute::new(name, value))
+        } else {
+            Err(ParseError::from("invalid attribute"))
+        }
     }
+}
+
+/// Common trait for types that can be parsed from a given attribute.
+pub trait FromAttribute : Sized {
+    type Err;
+
+    fn from_attr(attr: &Attribute) -> result::Result<Self, Self::Err>;
 }
 
 /// Representation of the "rtpmap" attribute.
@@ -170,30 +236,58 @@ pub struct RTPMap {
     pub encoding_params: Option<String>
 }
 
+impl FromStr for RTPMap {
+    type Err = reader::ParseError;
+
+    fn from_str(val: &str) -> result::Result<Self, Self::Err> {
+        let mut reader = Reader::new(val.trim());
+
+        let pt  = reader.read_decimal_u32()?;
+        let enc = reader.read_until(|c| c == '/')
+            .trim()
+            .to_string();
+
+        reader.match_char('/')?;
+
+        let cr = reader.read_decimal_u32()?;
+
+        reader.skip_whitespace();
+
+        let eps;
+
+        if !reader.is_empty() {
+            reader.match_char('/')?;
+            reader.skip_whitespace();
+
+            let params = reader.as_str()
+                .to_string();
+
+            eps = Some(params);
+        } else {
+            eps = None;
+        }
+
+        let res = RTPMap {
+            payload_type:    pt,
+            encoding:        enc,
+            clock_rate:      cr,
+            encoding_params: eps,
+        };
+
+        Ok(res)
+    }
+}
+
 impl FromAttribute for RTPMap {
-    fn parse(attr: &Attribute) -> Result<RTPMap> {
+    type Err = ParseError;
+
+    fn from_attr(attr: &Attribute) -> result::Result<Self, Self::Err> {
         let key = attr.name.to_lowercase();
 
-        if key != "rtpmap" {
-            Err(ParseError::from("invalid attribute"))
-        } else if let Some(ref val) = attr.value {
-            let re = Regex::new(r"^\s*(\d+)\s*([^/\s]+)\s*/\s*(\d+)(\s*/\s*((\s*\S+)*))?\s*$")
-                .unwrap();
-
-            if let Some(cap) = re.captures(val) {
-                let ptype = cap.get(1).map_or("0", |m| m.as_str());
-                let enc   = cap.get(2).map_or("", |m| m.as_str());
-                let crt   = cap.get(3).map_or("0", |m| m.as_str());
-                let eps   = cap.get(5).map(|m| m.as_str().to_string());
-
-                let res = RTPMap {
-                    payload_type:    u32::from_str(ptype).unwrap(),
-                    encoding:        enc.to_string(),
-                    clock_rate:      u32::from_str(crt).unwrap(),
-                    encoding_params: eps,
-                };
-
-                Ok(res)
+        if key == "rtpmap" {
+            if let Some(ref val) = attr.value {
+                RTPMap::from_str(val)
+                    .map_err(|_| ParseError::from("invalid attribute"))
             } else {
                 Err(ParseError::from("invalid attribute"))
             }
@@ -308,26 +402,13 @@ impl<'a> LineIterator<'a> {
 /// Session description parser.
 struct SessionDescriptionParser {
     sdp:  SessionDescription,
-    re_v: Regex,
-    re_m: Regex,
-    re_a: Regex,
 }
 
 impl SessionDescriptionParser {
     /// Parse session description from a given string.
     fn parse(sdp: &[u8]) -> Result<SessionDescription> {
-        let re_v = Regex::new(r"^\s*v\s*=\s*(\d+)\s*$")
-            .unwrap();
-        let re_m = Regex::new(r"^\s*m\s*=\s*(\S+)\s+(\d+)(\s*/\s*(\d+))?\s+(\S+)\s*(.*)?$")
-            .unwrap();
-        let re_a = Regex::new(r"^\s*a\s*=\s*([^:\s]+)\s*(:(.*))?$")
-            .unwrap();
-
         let mut parser = SessionDescriptionParser {
             sdp:  SessionDescription::new(),
-            re_v: re_v,
-            re_m: re_m,
-            re_a: re_a
         };
 
         let reader    = LineReader::new(4096);
@@ -380,16 +461,22 @@ impl SessionDescriptionParser {
     /// Process SDP "v" line.
     fn process_version(&mut self, line: &[u8]) -> Result<()> {
         let line = String::from_utf8_lossy(line);
-        if let Some(cap) = self.re_v.captures(&line) {
-            let ver = cap.get(1).unwrap().as_str();
 
-            self.sdp.version = i32::from_str(ver)
-                .unwrap();
+        let mut reader = Reader::new(line.as_ref());
 
-            Ok(())
-        } else {
-            Err(ParseError::from("invalid version line"))
-        }
+        reader.skip_whitespace();
+        reader.match_char('v')
+            .map_err(|_| ParseError::from("invalid version line"))?;
+        reader.skip_whitespace();
+        reader.match_char('=')
+            .map_err(|_| ParseError::from("invalid version line"))?;
+
+        let val = reader.read_decimal_u32()
+            .map_err(|_| ParseError::from("invalid version line"))?;
+
+        self.sdp.version = val as i32;
+
+        Ok(())
     }
 
     /// Process SDP time description.
@@ -413,30 +500,21 @@ impl SessionDescriptionParser {
         &mut self, line: &[u8],
         lines: &mut LineIterator<'a>) -> Result<()> {
         let line = String::from_utf8_lossy(line);
-        if let Some(cap) = self.re_m.captures(&line) {
-            let mt = cap.get(1).unwrap().as_str();
-            let p  = cap.get(2).unwrap().as_str();
-            let np = cap.get(4);
-            let pt = cap.get(5).unwrap().as_str();
-            let fs = cap.get(6)
-                .map_or("", |m| m.as_str())
-                .split_whitespace()
-                .map(|f| f.to_string())
-                .collect::<Vec<_>>();
 
-            let md = MediaDescription {
-                media_type: MediaType::from(mt),
-                port:       u16::from_str(p).unwrap(),
-                nb_ports:   np.map(|m| u16::from_str(m.as_str()).unwrap()),
-                protocol:   pt.to_string(),
-                formats:    fs,
-                attributes: Vec::new()
-            };
+        let mut reader = Reader::new(line.as_ref());
 
-            self.sdp.media_descriptions.push(md);
-        } else {
-            return Err(ParseError::from("invalid media description line"))
-        }
+        reader.skip_whitespace();
+        reader.match_char('m')
+            .map_err(|_| ParseError::from("invalid media description line"))?;
+        reader.skip_whitespace();
+        reader.match_char('=')
+            .map_err(|_| ParseError::from("invalid media description line"))?;
+        reader.skip_whitespace();
+
+        let md = MediaDescription::from_str(reader.as_str())
+            .map_err(|_| ParseError::from("invalid media description line"))?;
+
+        self.sdp.media_descriptions.push(md);
 
         while let Some(ref line) = try!(lines.next()) {
             if let Some(first) = trim_left(line).first() {
@@ -457,19 +535,26 @@ impl SessionDescriptionParser {
     /// Process SDP media attribute.
     fn process_media_attribute(&mut self, line: &[u8]) -> Result<()> {
         let line = String::from_utf8_lossy(line);
-        if let Some(cap) = self.re_a.captures(&line) {
-            let name    = cap.get(1).unwrap().as_str();
-            let value   = cap.get(3).map(|m| m.as_str());
-            let attr    = Attribute::new(name, value);
-            let last_md = self.sdp.media_descriptions.last_mut()
-                .unwrap();
 
-            last_md.attributes.push(attr);
+        let mut reader = Reader::new(line.as_ref());
 
-            Ok(())
-        } else {
-            Err(ParseError::from("invalid media attribute line"))
-        }
+        reader.skip_whitespace();
+        reader.match_char('a')
+            .map_err(|_| ParseError::from("invalid media attribute line"))?;
+        reader.skip_whitespace();
+        reader.match_char('=')
+            .map_err(|_| ParseError::from("invalid media attribute line"))?;
+        reader.skip_whitespace();
+
+        let attr = Attribute::from_str(reader.as_str())
+            .map_err(|_| ParseError::from("invalid media attribute line"))?;
+
+        let last_md = self.sdp.media_descriptions.last_mut()
+            .unwrap();
+
+        last_md.attributes.push(attr);
+
+        Ok(())
     }
 }
 
@@ -520,7 +605,7 @@ mod test {
         assert_eq!(&md1.formats as &[String], &["0"]);
         assert_eq!(md1.attributes.len(), 1);
 
-        let attr = RTPMap::parse(&md1.attributes[0])
+        let attr = RTPMap::from_attr(&md1.attributes[0])
             .unwrap();
 
         assert_eq!(attr.payload_type, 0);
@@ -528,7 +613,7 @@ mod test {
         assert_eq!(attr.clock_rate, 8000);
 
         let md2  = &sdp.media_descriptions[1];
-        let attr = RTPMap::parse(&md2.attributes[0])
+        let attr = RTPMap::from_attr(&md2.attributes[0])
             .unwrap();
 
         assert_eq!(&attr.encoding_params, &Some("2".to_string()));
@@ -542,7 +627,7 @@ mod test {
         assert_eq!(&md3.formats as &[String], &["96"]);
         assert_eq!(md3.attributes.len(), 2);
 
-        let attr = RTPMap::parse(&md3.attributes[0])
+        let attr = RTPMap::from_attr(&md3.attributes[0])
             .unwrap();
 
         assert_eq!(attr.payload_type, 96);
@@ -576,7 +661,7 @@ mod test {
         assert_eq!(&md.formats as &[String], &["0", "1", "2", "3"]);
         assert_eq!(md.attributes.len(), 1);
 
-        let attr = RTPMap::parse(&md.attributes[0])
+        let attr = RTPMap::from_attr(&md.attributes[0])
             .unwrap();
 
         assert_eq!(attr.payload_type, 96);
@@ -603,19 +688,19 @@ mod test {
 
         assert!(sdp.is_err());
 
-        let attr = RTPMap::parse(&Attribute::new("rtpsmap", Some("9 H264/9")));
+        let attr = RTPMap::from_attr(&Attribute::new("rtpsmap", Some("9 H264/9")));
 
         assert!(attr.is_err());
 
-        let attr = RTPMap::parse(&Attribute::new("rtpmap", Some("f H264/9")));
+        let attr = RTPMap::from_attr(&Attribute::new("rtpmap", Some("f H264/9")));
 
         assert!(attr.is_err());
 
-        let attr = RTPMap::parse(&Attribute::new("rtpmap", Some("0 H264/f")));
+        let attr = RTPMap::from_attr(&Attribute::new("rtpmap", Some("0 H264/f")));
 
         assert!(attr.is_err());
 
-        let attr = RTPMap::parse(&Attribute::new("rtpmap", Some("0 H/9\\x")));
+        let attr = RTPMap::from_attr(&Attribute::new("rtpmap", Some("0 H/9\\x")));
 
         assert!(attr.is_err());
     }
