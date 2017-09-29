@@ -276,7 +276,7 @@ impl ArrowClientContext {
 
     /// Send UPDATE message.
     fn send_update_message(&mut self) {
-        log_debug!(self.logger, "sending a UPDATE message...");
+        log_debug!(self.logger, "sending an UPDATE message...");
 
         let svc_table = SimpleServiceTable::from(self.svc_table.visible());
 
