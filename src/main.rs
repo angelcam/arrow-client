@@ -231,6 +231,12 @@ fn main() {
 
     let context = ApplicationContext::new(config);
 
+    let mut logger = context.get_logger();
+
+    log_info!(&mut logger,
+        "application started (uuid: {}, mac: {})",
+        context.get_arrow_uuid(), context.get_arrow_mac_address());
+
     // create command handler
     let (tx, rx) = cmd_handler::new(context.clone());
 
