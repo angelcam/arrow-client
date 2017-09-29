@@ -161,6 +161,8 @@ impl CommandHandlerContext {
     #[cfg(not(feature="discovery"))]
     /// Dummy network scan.
     fn scan_network(&mut self) {
+        self.cmd_sender.unbounded_send(Event::ScanCompleted)
+            .unwrap();
     }
 
     /// Cleanup the scanner context.
