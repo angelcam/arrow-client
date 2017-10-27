@@ -330,7 +330,8 @@ impl ServiceTableData {
     /// Get visible services.
     fn visible(&self) -> ServiceTableIterator {
         let visible = self.services.iter()
-            .filter(|elem| elem.is_visible());
+            .enumerate()
+            .filter(|&(_, elem)| elem.is_visible());
 
         ServiceTableIterator::new(visible)
     }
@@ -470,20 +471,15 @@ pub struct ServiceTableIterator {
 impl ServiceTableIterator {
     /// Create a new service table iterator.
     fn new<'a, I>(elements: I) -> ServiceTableIterator
-        where I: IntoIterator<Item=&'a ServiceTableElement> {
-        let mut res = Vec::new();
-
-        for ref elem in elements {
-            let id = res.len() as u16 + 1;
-
-            res.push((
-                id,
-                elem.to_service(),
-            ));
-        }
+        where I: IntoIterator<Item=(usize, &'a ServiceTableElement)> {
+        let elements = elements.into_iter()
+            .map(|(index, elem)| {
+                (index as u16 + 1, elem.to_service())
+            })
+            .collect::<Vec<_>>();
 
         ServiceTableIterator {
-            elements: res.into_iter(),
+            elements: elements.into_iter(),
         }
     }
 }
@@ -657,4 +653,30 @@ impl Display for SharedServiceTableRef {
             .unwrap()
             .fmt(f)
     }
+}
+
+#[cfg(test)]
+#[test]
+fn test_visible_services_iterator() {
+    let mut table = ServiceTableData::new();
+
+    let mac = MacAddr::zero();
+    let ip = Ipv4Addr::new(0, 0, 0, 0);
+    let addr = SocketAddr::V4(SocketAddrV4::new(ip, 0));
+
+    let svc_1 = Service::rtsp(mac, addr, "/1".to_string());
+    let svc_2 = Service::rtsp(mac, addr, "/2".to_string());
+    let svc_3 = Service::rtsp(mac, addr, "/3".to_string());
+
+    table.update(svc_1.clone(), true, true);
+    table.update(svc_2.clone(), true, false);
+    table.update(svc_3.clone(), true, true);
+
+    let visible = table.visible()
+        .collect::<Vec<_>>();
+
+    assert_eq!(visible, vec![
+        (1, svc_1),
+        (3, svc_3),
+    ]);
 }

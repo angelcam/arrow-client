@@ -27,7 +27,7 @@ pub const SVC_TYPE_LOCKED_MJPEG:     u16 = 0x0007;
 pub const SVC_TYPE_TCP:              u16 = 0xffff;
 
 /// Service type.
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum ServiceType {
     /// Control Protocol service.
     ControlProtocol,
@@ -83,7 +83,7 @@ impl ServiceIdentifier {
 }
 
 /// Arrow service.
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Service {
     svc_type: ServiceType,
     mac:      Option<MacAddr>,
