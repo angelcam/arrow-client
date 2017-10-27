@@ -76,14 +76,17 @@ impl Url {
         self.hier = start;
 
         if self.serialized[start..].starts_with("//") {
-            let authority = start + 3;
-            let path = self.serialized[authority..].find('/');
-            let end = path.unwrap_or(self.serialized.len());
+            let authority = start + 2;
 
-            self.process_authority(authority, end)?;
+            if let Some(pos) = self.serialized[authority..].find('/') {
+                let path = authority + pos;
 
-            if let Some(path) = path {
+                self.process_authority(authority, path)?;
                 self.process_path(path);
+            } else {
+                let authority_end = self.serialized.len();
+
+                self.process_authority(authority, authority_end)?;
             }
 
             Ok(())
@@ -95,9 +98,9 @@ impl Url {
     /// Process the authority part.
     fn process_authority(&mut self, start: usize, end: usize) -> Result<()> {
         if let Some(delim) = self.serialized[start..end].rfind('@') {
-            self.process_user_info(start, delim);
+            self.process_user_info(start, start + delim);
 
-            self.netloc = delim + 1;
+            self.netloc = start + delim + 1;
         } else {
             self.netloc = start;
         }
@@ -110,7 +113,7 @@ impl Url {
                 let port = u16::from_str(&netloc[ppos..])
                     .map_err(|_| UrlParseError::from("invalid port"))?;
 
-                self.portpos = Some(ppos);
+                self.portpos = Some(self.netloc + ppos);
                 self.port    = Some(port);
             }
         }
@@ -125,7 +128,7 @@ impl Url {
         self.username = Some(start);
 
         if let Some(delim) = uinfo.find(':') {
-            self.password = Some(delim + 1);
+            self.password = Some(start + delim + 1);
         }
     }
 
@@ -136,7 +139,7 @@ impl Url {
         self.path = Some(start);
 
         if let Some(delim) = path.rfind('#') {
-            self.fragment = Some(delim + 1);
+            self.fragment = Some(start + delim + 1);
         }
 
         let end = self.fragment.map(|f| f - 1)
@@ -145,7 +148,7 @@ impl Url {
         let path = &self.serialized[start..end];
 
         if let Some(delim) = path.rfind('?') {
-            self.query = Some(delim + 1);
+            self.query = Some(start + delim + 1);
         }
     }
 
@@ -262,5 +265,181 @@ impl FromStr for Url {
         url.init()?;
 
         Ok(url)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_plain_hostname() {
+        let url = Url::from_str("foo");
+
+        assert!(url.is_err());
+    }
+
+    #[test]
+    fn test_no_authority() {
+        let url = Url::from_str("foo:bar");
+
+        assert!(url.is_err());
+    }
+
+    #[test]
+    fn test_invalid_port() {
+        let url = Url::from_str("http://foo:100000");
+
+        assert!(url.is_err());
+    }
+
+    #[test]
+    fn test_minimal_url() {
+        let url = Url::from_str("http://foo")
+            .unwrap();
+
+        assert_eq!(url.scheme(), "http");
+        assert_eq!(url.username(), None);
+        assert_eq!(url.password(), None);
+        assert_eq!(url.host(), "foo");
+        assert_eq!(url.port(), None);
+        assert_eq!(url.path(), "/");
+        assert_eq!(url.query(), None);
+        assert_eq!(url.fragment(), None);
+    }
+
+    #[test]
+    fn test_empty_port() {
+        let url = Url::from_str("http://foo:12")
+            .unwrap();
+
+        assert_eq!(url.scheme(), "http");
+        assert_eq!(url.username(), None);
+        assert_eq!(url.password(), None);
+        assert_eq!(url.host(), "foo");
+        assert_eq!(url.port(), Some(12));
+        assert_eq!(url.path(), "/");
+        assert_eq!(url.query(), None);
+        assert_eq!(url.fragment(), None);
+    }
+
+    #[test]
+    fn test_empty_username() {
+        let url = Url::from_str("http://@foo/some/path")
+            .unwrap();
+
+        assert_eq!(url.scheme(), "http");
+        assert_eq!(url.username(), Some(""));
+        assert_eq!(url.password(), None);
+        assert_eq!(url.host(), "foo");
+        assert_eq!(url.port(), None);
+        assert_eq!(url.path(), "/some/path");
+        assert_eq!(url.query(), None);
+        assert_eq!(url.fragment(), None);
+    }
+
+    #[test]
+    fn test_no_password() {
+        let url = Url::from_str("http://user@foo/")
+            .unwrap();
+
+        assert_eq!(url.scheme(), "http");
+        assert_eq!(url.username(), Some("user"));
+        assert_eq!(url.password(), None);
+        assert_eq!(url.host(), "foo");
+        assert_eq!(url.port(), None);
+        assert_eq!(url.path(), "/");
+        assert_eq!(url.query(), None);
+        assert_eq!(url.fragment(), None);
+    }
+
+    #[test]
+    fn test_empty_password() {
+        let url = Url::from_str("http://user:@foo/")
+            .unwrap();
+
+        assert_eq!(url.scheme(), "http");
+        assert_eq!(url.username(), Some("user"));
+        assert_eq!(url.password(), Some(""));
+        assert_eq!(url.host(), "foo");
+        assert_eq!(url.port(), None);
+        assert_eq!(url.path(), "/");
+        assert_eq!(url.query(), None);
+        assert_eq!(url.fragment(), None);
+    }
+
+    #[test]
+    fn test_password() {
+        let url = Url::from_str("http://user:pass@foo/")
+            .unwrap();
+
+        assert_eq!(url.scheme(), "http");
+        assert_eq!(url.username(), Some("user"));
+        assert_eq!(url.password(), Some("pass"));
+        assert_eq!(url.host(), "foo");
+        assert_eq!(url.port(), None);
+        assert_eq!(url.path(), "/");
+        assert_eq!(url.query(), None);
+        assert_eq!(url.fragment(), None);
+    }
+
+    #[test]
+    fn test_fragment_and_query() {
+        let url = Url::from_str("http://foo/some/path?and=query&a=b#and-fragment")
+            .unwrap();
+
+        assert_eq!(url.scheme(), "http");
+        assert_eq!(url.username(), None);
+        assert_eq!(url.password(), None);
+        assert_eq!(url.host(), "foo");
+        assert_eq!(url.port(), None);
+        assert_eq!(url.path(), "/some/path");
+        assert_eq!(url.query(), Some("and=query&a=b"));
+        assert_eq!(url.fragment(), Some("and-fragment"));
+    }
+
+    #[test]
+    fn test_query_alone() {
+        let url = Url::from_str("http://foo/some/path?and=query&a=b")
+            .unwrap();
+
+        assert_eq!(url.scheme(), "http");
+        assert_eq!(url.username(), None);
+        assert_eq!(url.password(), None);
+        assert_eq!(url.host(), "foo");
+        assert_eq!(url.port(), None);
+        assert_eq!(url.path(), "/some/path");
+        assert_eq!(url.query(), Some("and=query&a=b"));
+        assert_eq!(url.fragment(), None);
+    }
+
+    #[test]
+    fn test_fragment_alone() {
+        let url = Url::from_str("http://foo/some/path#and-fragment")
+            .unwrap();
+
+        assert_eq!(url.scheme(), "http");
+        assert_eq!(url.username(), None);
+        assert_eq!(url.password(), None);
+        assert_eq!(url.host(), "foo");
+        assert_eq!(url.port(), None);
+        assert_eq!(url.path(), "/some/path");
+        assert_eq!(url.query(), None);
+        assert_eq!(url.fragment(), Some("and-fragment"));
+    }
+
+    #[test]
+    fn test_full_featured_url() {
+        let url = Url::from_str("http://user:pass@foo:123/some/path?and=query&a=b#and-fragment")
+            .unwrap();
+
+        assert_eq!(url.scheme(), "http");
+        assert_eq!(url.username(), Some("user"));
+        assert_eq!(url.password(), Some("pass"));
+        assert_eq!(url.host(), "foo");
+        assert_eq!(url.port(), Some(123));
+        assert_eq!(url.path(), "/some/path");
+        assert_eq!(url.query(), Some("and=query&a=b"));
+        assert_eq!(url.fragment(), Some("and-fragment"));
     }
 }
