@@ -17,19 +17,25 @@
 use std::io;
 use std::mem;
 
-use utils;
-use net::raw;
-
 use std::io::Write;
 use std::net::Ipv4Addr;
+
+use net::raw;
 
 use net::raw::ether::packet::{
     Result,
     PacketParseError,
-    EtherPacketHeader,
     EtherPacketBody,
-    EtherPacketType
 };
+use net::raw::icmp::IcmpPacket;
+use net::raw::tcp::TcpPacket;
+use net::raw::utils::Serialize;
+
+use net::utils::Ipv4AddrEx;
+
+use utils;
+
+use utils::AsAny;
 
 pub const IP_PROTO_ICMP: u8 = 0x01;
 pub const IP_PROTO_TCP:  u8 = 0x06;
@@ -45,10 +51,10 @@ pub struct Ipv4PacketHeader {
     pub flags:    u8,
     pub foffset:  u16,
     pub ttl:      u8,
-    pub protocol: u8,
+    pub protocol: Ipv4PacketType,
     pub src:      Ipv4Addr,
     pub dst:      Ipv4Addr,
-    pub options:  Vec<u32>,
+    pub options:  Box<[u32]>,
     length:       usize,
 }
 
@@ -57,7 +63,7 @@ impl Ipv4PacketHeader {
     pub fn new(
         src: Ipv4Addr,
         dst: Ipv4Addr,
-        protocol: u8,
+        protocol: Ipv4PacketType,
         ttl: u8) -> Ipv4PacketHeader {
         Ipv4PacketHeader {
             version:  4,
@@ -70,27 +76,32 @@ impl Ipv4PacketHeader {
             protocol: protocol,
             src:      src,
             dst:      dst,
-            options:  Vec::new(),
-            length:   0
+            options:  Box::new([]),
+            length:   0,
         }
     }
 
     /// Serialize header in-place using a given writer.
-    fn serialize<W: Write>(&self, dlen: usize, w: &mut W) -> io::Result<()> {
-        let rh = RawIpv4PacketHeader::new(self, dlen);
-        try!(w.write_all(utils::as_bytes(&rh)));
-        w.write_all(utils::slice_as_bytes(&self.options))
+    fn serialize(&self, body: &Ipv4PacketBody, w: &mut Write) -> io::Result<()> {
+        let rh = RawIpv4PacketHeader::new(self, body.len(self));
+
+        w.write_all(utils::as_bytes(&rh))?;
+        w.write_all(utils::slice_as_bytes(self.options.as_ref()))?;
+
+        Ok(())
     }
 
     /// Read header from given raw representation.
     fn parse(data: &[u8]) -> Result<Ipv4PacketHeader> {
         let size = mem::size_of::<RawIpv4PacketHeader>();
+
         if data.len() < size {
             Err(PacketParseError::from("unable to parse IPv4 packet, not enough data"))
         } else {
             let ptr = data.as_ptr();
             let ptr = ptr as *const RawIpv4PacketHeader;
-            let rh  = unsafe {
+
+            let rh = unsafe {
                 &*ptr
             };
 
@@ -116,11 +127,11 @@ impl Ipv4PacketHeader {
                     flags:    (flags_foffset >> 13) as u8,
                     foffset:  flags_foffset & 0x1fff,
                     ttl:      rh.ttl,
-                    protocol: rh.protocol,
-                    src:      raw::utils::slice_to_ipv4addr(&rh.src),
-                    dst:      raw::utils::slice_to_ipv4addr(&rh.dst),
-                    options:  options,
-                    length:   u16::from_be(rh.length) as usize
+                    protocol: Ipv4PacketType::from(rh.protocol),
+                    src:      Ipv4Addr::from_slice(&rh.src),
+                    dst:      Ipv4Addr::from_slice(&rh.dst),
+                    options:  options.into_boxed_slice(),
+                    length:   u16::from_be(rh.length) as usize,
                 };
 
                 Ok(res)
@@ -132,7 +143,6 @@ impl Ipv4PacketHeader {
 /// Packed representation of the IPv4 packet header.
 #[repr(packed)]
 #[allow(dead_code)]
-#[derive(Debug, Copy, Clone)]
 struct RawIpv4PacketHeader {
     vihl:          u8,
     dscp_ecn:      u8,
@@ -160,7 +170,7 @@ impl RawIpv4PacketHeader {
             ident:         ip.ident.to_be(),
             flags_foffset: flags_foffset.to_be(),
             ttl:           ip.ttl,
-            protocol:      ip.protocol,
+            protocol:      ip.protocol.code(),
             checksum:      0,
             src:           ip.src.octets(),
             dst:           ip.dst.octets()
@@ -182,17 +192,17 @@ pub enum Ipv4PacketType {
     ICMP,
     TCP,
     UDP,
-    UNKNOWN
+    UNKNOWN(u8),
 }
 
 impl Ipv4PacketType {
     /// Get protocol code of this packet type.
     pub fn code(self) -> u8 {
         match self {
-            Ipv4PacketType::ICMP => IP_PROTO_ICMP,
-            Ipv4PacketType::TCP  => IP_PROTO_TCP,
-            Ipv4PacketType::UDP  => IP_PROTO_UDP,
-            _ => panic!("no protocol code for unknown IPv4 packet type")
+            Ipv4PacketType::ICMP        => IP_PROTO_ICMP,
+            Ipv4PacketType::TCP         => IP_PROTO_TCP,
+            Ipv4PacketType::UDP         => IP_PROTO_UDP,
+            Ipv4PacketType::UNKNOWN(pt) => pt,
         }
     }
 }
@@ -204,109 +214,114 @@ impl From<u8> for Ipv4PacketType {
             IP_PROTO_ICMP => Ipv4PacketType::ICMP,
             IP_PROTO_TCP  => Ipv4PacketType::TCP,
             IP_PROTO_UDP  => Ipv4PacketType::UDP,
-            _ => Ipv4PacketType::UNKNOWN
+            pt            => Ipv4PacketType::UNKNOWN(pt),
         }
     }
 }
 
 /// Common trait for IPv4 body implementations.
-pub trait Ipv4PacketBody : Sized {
-    /// Parse body from its raw representation.
-    fn parse(data: &[u8]) -> Result<Self>;
-
+pub trait Ipv4PacketBody : AsAny + Send {
     /// Serialize the packet body in-place using a given writer.
-    fn serialize<W: Write>(
-        &self,
-        iph: &Ipv4PacketHeader,
-        w: &mut W) -> io::Result<()>;
-
-    /// Get IPv4 packet type of this body.
-    fn packet_type(&self) -> Ipv4PacketType;
+    fn serialize(&self, iph: &Ipv4PacketHeader, w: &mut Write) -> io::Result<()>;
 
     /// Get body length.
-    fn len(&self) -> usize;
+    fn len(&self, iph: &Ipv4PacketHeader) -> usize;
 }
 
 impl Ipv4PacketBody for Vec<u8> {
-    fn parse(data: &[u8]) -> Result<Vec<u8>> {
-        Ok(data.to_vec())
-    }
-
-    fn serialize<W: Write>(
-        &self,
-        _: &Ipv4PacketHeader,
-        w: &mut W) -> io::Result<()> {
+    fn serialize(&self, _: &Ipv4PacketHeader, w: &mut Write) -> io::Result<()> {
         w.write_all(self)
     }
 
-    fn packet_type(&self) -> Ipv4PacketType {
-        Ipv4PacketType::UNKNOWN
-    }
-
-    fn len(&self) -> usize {
+    fn len(&self, _: &Ipv4PacketHeader) -> usize {
         Vec::<u8>::len(self)
     }
 }
 
 /// IPv4 packet.
-#[derive(Debug, Clone)]
-pub struct Ipv4Packet<B: Ipv4PacketBody> {
-    pub header: Ipv4PacketHeader,
-    pub body:   B,
+pub struct Ipv4Packet {
+    header: Ipv4PacketHeader,
+    body:   Box<Ipv4PacketBody>,
 }
 
-impl<B: Ipv4PacketBody> Ipv4Packet<B> {
+impl Ipv4Packet {
     /// Create a new IPv4 packet.
-    pub fn new(header: Ipv4PacketHeader, body: B) -> Ipv4Packet<B> {
+    pub fn new<B>(header: Ipv4PacketHeader, body: B) -> Ipv4Packet
+        where B: 'static + Ipv4PacketBody {
         Ipv4Packet {
             header: header,
-            body:   body
+            body:   Box::new(body),
         }
     }
 
-    /// Create a new IPv4 packet.
-    pub fn create(
+    /// Create a new IPv4 packet with ICMP packet payload.
+    pub fn icmp(
         saddr: Ipv4Addr,
         daddr: Ipv4Addr,
         ttl:   u8,
-        body:  B) -> Ipv4Packet<B> {
-        let pt     = body.packet_type();
-        let header = Ipv4PacketHeader::new(saddr, daddr, pt.code(), ttl);
-        Ipv4Packet::new(header, body)
+        body:  IcmpPacket) -> Ipv4Packet {
+        Ipv4Packet::new(
+            Ipv4PacketHeader::new(saddr, daddr, Ipv4PacketType::ICMP, ttl),
+            body)
     }
-}
 
-impl<B: Ipv4PacketBody> EtherPacketBody for Ipv4Packet<B> {
-    fn parse(data: &[u8]) -> Result<Ipv4Packet<B>> {
+    /// Create a new IPv4 packet with TCP packet payload.
+    pub fn tcp(
+        saddr: Ipv4Addr,
+        daddr: Ipv4Addr,
+        ttl:   u8,
+        body:  TcpPacket) -> Ipv4Packet {
+        Ipv4Packet::new(
+            Ipv4PacketHeader::new(saddr, daddr, Ipv4PacketType::TCP, ttl),
+            body)
+    }
+
+    /// Parse an IPv4 packet from given data.
+    pub fn parse(data: &[u8]) -> Result<Ipv4Packet> {
         let hsize = mem::size_of::<RawIpv4PacketHeader>();
+
         if data.len() < hsize {
             Err(PacketParseError::from("unable to parse IPv4 packet, not enough data"))
         } else {
-            let header = try!(Ipv4PacketHeader::parse(data));
+            let header = Ipv4PacketHeader::parse(data)?;
             let offset = hsize + (header.options.len() << 2);
-            let body   = try!(B::parse(&data[offset..]));
-            let btype  = body.packet_type();
-            if btype == Ipv4PacketType::UNKNOWN ||
-                btype == Ipv4PacketType::from(header.protocol) {
-                Ok(Ipv4Packet::new(header, body))
-            } else {
-                Err(PacketParseError::from("expected and actual IPv4 packet types do not match"))
-            }
+
+            let payload = &data[offset..];
+
+            let packet = match header.protocol {
+                Ipv4PacketType::ICMP => Ipv4Packet::new(header, IcmpPacket::parse(payload)?),
+                Ipv4PacketType::TCP  => Ipv4Packet::new(header, TcpPacket::parse(payload)?),
+                _                    => Ipv4Packet::new(header, payload.to_vec()),
+            };
+
+            Ok(packet)
         }
     }
 
-    fn serialize<W: Write>(
-        &self,
-        _: &EtherPacketHeader,
-        w: &mut W) -> io::Result<()> {
-        let dlen = self.body.len();
-        try!(self.header.serialize(dlen, w));
-        self.body.serialize(&self.header, w)
+    /// Get packet header.
+    pub fn header(&self) -> &Ipv4PacketHeader {
+        &self.header
     }
 
-    fn packet_type(&self) -> EtherPacketType {
-        EtherPacketType::IPv4
+    /// Get packet body.
+    pub fn body<B>(&self) -> Option<&B>
+        where B: 'static + Ipv4PacketBody {
+        self.body.as_ref()
+            .as_any()
+            .downcast_ref()
     }
+}
+
+impl Serialize for Ipv4Packet {
+    fn serialize(&self, w: &mut Write) -> io::Result<()> {
+        self.header.serialize(self.body.as_ref(), w)?;
+        self.body.serialize(&self.header, w)?;
+
+        Ok(())
+    }
+}
+
+impl EtherPacketBody for Ipv4Packet {
 }
 
 #[cfg(test)]
@@ -329,43 +344,50 @@ mod tests {
         let data = [1, 2, 3];
 
         let tcp = TcpPacket::new(10, 20, TCP_FLAG_FIN | TCP_FLAG_SYN, &data);
-        let ip  = Ipv4Packet::create(sip, dip, 64, tcp);
-        let pkt = EtherPacket::create(mac, mac, ip);
+        let ip  = Ipv4Packet::tcp(sip, dip, 64, tcp);
+        let pkt = EtherPacket::ipv4(mac, mac, ip);
 
         let mut buf = Vec::new();
 
         pkt.serialize(&mut buf)
             .unwrap();
 
-        let ep2 = EtherPacket::<Ipv4Packet<TcpPacket>>::parse(buf.as_ref())
+        let ep2 = EtherPacket::parse(buf.as_ref())
             .unwrap();
 
-        let iph  = &pkt.body.header;
-        let iph2 = &ep2.body.header;
+        let ipp1 = pkt.body::<Ipv4Packet>()
+            .unwrap();
+        let ipp2 = ep2.body::<Ipv4Packet>()
+            .unwrap();
 
-        assert_eq!(iph.version,  iph2.version);
-        assert_eq!(iph.dscp,     iph2.dscp);
-        assert_eq!(iph.ecn,      iph2.ecn);
-        assert_eq!(iph.ident,    iph2.ident);
-        assert_eq!(iph.flags,    iph2.flags);
-        assert_eq!(iph.foffset,  iph2.foffset);
-        assert_eq!(iph.ttl,      iph2.ttl);
-        assert_eq!(iph.protocol, iph2.protocol);
-        assert_eq!(iph.src,      iph2.src);
-        assert_eq!(iph.dst,      iph2.dst);
-        assert_eq!(iph.options,  iph2.options);
+        let ipp1h = ipp1.header();
+        let ipp2h = ipp2.header();
 
-        let tcp  = &pkt.body.body;
-        let tcp2 = &ep2.body.body;
+        assert_eq!(ipp1h.version,  ipp2h.version);
+        assert_eq!(ipp1h.dscp,     ipp2h.dscp);
+        assert_eq!(ipp1h.ecn,      ipp2h.ecn);
+        assert_eq!(ipp1h.ident,    ipp2h.ident);
+        assert_eq!(ipp1h.flags,    ipp2h.flags);
+        assert_eq!(ipp1h.foffset,  ipp2h.foffset);
+        assert_eq!(ipp1h.ttl,      ipp2h.ttl);
+        assert_eq!(ipp1h.protocol, ipp2h.protocol);
+        assert_eq!(ipp1h.src,      ipp2h.src);
+        assert_eq!(ipp1h.dst,      ipp2h.dst);
+        assert_eq!(ipp1h.options,  ipp2h.options);
 
-        assert_eq!(tcp.sport,   tcp2.sport);
-        assert_eq!(tcp.dport,   tcp2.dport);
-        assert_eq!(tcp.seq,     tcp2.seq);
-        assert_eq!(tcp.ack,     tcp2.ack);
-        assert_eq!(tcp.flags,   tcp2.flags);
-        assert_eq!(tcp.wsize,   tcp2.wsize);
-        assert_eq!(tcp.uptr,    tcp2.uptr);
-        assert_eq!(tcp.options, tcp2.options);
-        assert_eq!(tcp.data,    tcp2.data);
+        let tcpp1 = ipp1.body::<TcpPacket>()
+            .unwrap();
+        let tcpp2 = ipp2.body::<TcpPacket>()
+            .unwrap();
+
+        assert_eq!(tcpp1.sport,   tcpp2.sport);
+        assert_eq!(tcpp1.dport,   tcpp2.dport);
+        assert_eq!(tcpp1.seq,     tcpp2.seq);
+        assert_eq!(tcpp1.ack,     tcpp2.ack);
+        assert_eq!(tcpp1.flags,   tcpp2.flags);
+        assert_eq!(tcpp1.wsize,   tcpp2.wsize);
+        assert_eq!(tcpp1.uptr,    tcpp2.uptr);
+        assert_eq!(tcpp1.options, tcpp2.options);
+        assert_eq!(tcpp1.data,    tcpp2.data);
     }
 }

@@ -1,11 +1,11 @@
 // Copyright 2015 click2stream, Inc.
-// 
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// 
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -53,19 +53,23 @@ impl EthernetDevice {
     /// List all configured IPv4 network devices.
     pub fn list() -> Vec<EthernetDevice> {
         let mut result = Vec::new();
+
         unsafe {
-            let devices    = net_find_devices();
+            let devices = net_find_devices();
+
             let mut device = devices.clone();
+
             while !device.is_null() {
                 result.push(EthernetDevice::new(device));
                 device = net_get_next_device(device);
             }
+
             net_free_device_list(devices);
         }
-        
+
         result
     }
-    
+
     /// Create a new ethernet device instance from its raw counterpart.
     unsafe fn new(dev: net_device) -> EthernetDevice {
         EthernetDevice {
@@ -86,6 +90,7 @@ unsafe fn get_name(dev: net_device) -> String {
 unsafe fn get_mac_addr(dev: net_device) -> MacAddr {
     let addr  = net_get_mac_address(dev) as *const c_void;
     let bytes = ptr_to_bytes(addr, net_get_mac_addr_size() as usize);
+
     MacAddr::new(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
 }
 
@@ -93,6 +98,7 @@ unsafe fn get_mac_addr(dev: net_device) -> MacAddr {
 unsafe fn get_ipv4_addr(dev: net_device) -> Ipv4Addr {
     let addr  = net_get_ipv4_address(dev) as *const c_void;
     let bytes = ptr_to_bytes(addr, net_get_ipv4_addr_size() as usize);
+
     Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])
 }
 
@@ -100,6 +106,7 @@ unsafe fn get_ipv4_addr(dev: net_device) -> Ipv4Addr {
 unsafe fn get_ipv4_mask(dev: net_device) -> Ipv4Addr {
     let addr  = net_get_ipv4_netmask(dev) as *const c_void;
     let bytes = ptr_to_bytes(addr, net_get_ipv4_addr_size() as usize);
+
     Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])
 }
 

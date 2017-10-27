@@ -17,8 +17,6 @@
 use std::io;
 use std::mem;
 
-use utils;
-
 use std::io::Write;
 use std::net::Ipv4Addr;
 
@@ -26,10 +24,12 @@ use net::raw::ether::MacAddr;
 use net::raw::ether::packet::{
     Result,
     PacketParseError,
-    EtherPacketHeader,
     EtherPacketBody,
-    EtherPacketType
 };
+
+use net::raw::utils::Serialize;
+
+use utils;
 
 /// ARP packet.
 #[derive(Debug, Clone)]
@@ -39,25 +39,37 @@ pub struct ArpPacket {
     pub hlen:  u8,
     pub plen:  u8,
     pub oper:  ArpOperation,
-    pub sha:   Vec<u8>,
-    pub spa:   Vec<u8>,
-    pub tha:   Vec<u8>,
-    pub tpa:   Vec<u8>,
+    pub sha:   Box<[u8]>,
+    pub spa:   Box<[u8]>,
+    pub tha:   Box<[u8]>,
+    pub tpa:   Box<[u8]>,
 }
 
 /// ARP operation.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ArpOperation {
-    REQUEST = 1,
-    REPLY   = 2,
+    REQUEST,
+    REPLY,
+    UNKNOWN(u16)
+}
+
+impl ArpOperation {
+    /// Get ARP operation code.
+    pub fn code(self) -> u16 {
+        match self {
+            ArpOperation::REQUEST     => 1,
+            ArpOperation::REPLY       => 2,
+            ArpOperation::UNKNOWN(op) => op,
+        }
+    }
 }
 
 impl From<u16> for ArpOperation {
     fn from(v: u16) -> ArpOperation {
         match v {
-            1 => ArpOperation::REQUEST,
-            2 => ArpOperation::REPLY,
-            _ => panic!("illegal value passed as ARP operation")
+            1  => ArpOperation::REQUEST,
+            2  => ArpOperation::REPLY,
+            op => ArpOperation::UNKNOWN(op),
         }
     }
 }
@@ -79,23 +91,23 @@ impl ArpPacket {
             hlen:  6,
             plen:  4,
             oper:  oper,
-            sha:   sha.octets().to_vec(),
-            spa:   spa.octets().to_vec(),
-            tha:   tha.octets().to_vec(),
-            tpa:   tpa.octets().to_vec()
+            sha:   sha.octets().to_vec().into_boxed_slice(),
+            spa:   spa.octets().to_vec().into_boxed_slice(),
+            tha:   tha.octets().to_vec().into_boxed_slice(),
+            tpa:   tpa.octets().to_vec().into_boxed_slice(),
         }
     }
-}
 
-impl EtherPacketBody for ArpPacket {
-    fn parse(data: &[u8]) -> Result<ArpPacket> {
+    /// Parse given data.
+    pub fn parse(data: &[u8]) -> Result<ArpPacket> {
         let size = mem::size_of::<RawArpPacketHeader>();
         if data.len() < size {
             Err(PacketParseError::from("unable to parse ARP packet, not enough data"))
         } else {
             let ptr = data.as_ptr();
             let ptr = ptr as *const RawArpPacketHeader;
-            let rh  = unsafe {
+
+            let rh = unsafe {
                 &*ptr
             };
 
@@ -113,43 +125,49 @@ impl EtherPacketBody for ArpPacket {
                 let offset_3 = offset_2 + plen;
                 let offset_4 = offset_3 + hlen;
 
+                let sha = &data[offset_1..offset_1+hlen];
+                let spa = &data[offset_2..offset_2+plen];
+                let tha = &data[offset_3..offset_3+hlen];
+                let tpa = &data[offset_4..offset_4+plen];
+
                 let res = ArpPacket {
                     htype: u16::from_be(rh.htype),
                     ptype: u16::from_be(rh.ptype),
                     hlen:  rh.hlen,
                     plen:  rh.plen,
                     oper:  ArpOperation::from(u16::from_be(rh.oper)),
-                    sha:   data[offset_1..offset_1+hlen].to_vec(),
-                    spa:   data[offset_2..offset_2+plen].to_vec(),
-                    tha:   data[offset_3..offset_3+hlen].to_vec(),
-                    tpa:   data[offset_4..offset_4+plen].to_vec()
+                    sha:   sha.to_vec().into_boxed_slice(),
+                    spa:   spa.to_vec().into_boxed_slice(),
+                    tha:   tha.to_vec().into_boxed_slice(),
+                    tpa:   tpa.to_vec().into_boxed_slice(),
                 };
 
                 Ok(res)
             }
         }
     }
+}
 
-    fn serialize<W: Write>(
-        &self,
-        _: &EtherPacketHeader,
-        w: &mut W) -> io::Result<()> {
+impl Serialize for ArpPacket {
+    fn serialize(&self, w: &mut Write) -> io::Result<()> {
         let rh = RawArpPacketHeader::new(self);
-        try!(w.write_all(utils::as_bytes(&rh)));
-        try!(w.write_all(&self.sha));
-        try!(w.write_all(&self.spa));
-        try!(w.write_all(&self.tha));
-        w.write_all(&self.tpa)
-    }
 
-    fn packet_type(&self) -> EtherPacketType {
-        EtherPacketType::ARP
+        w.write_all(utils::as_bytes(&rh))?;
+
+        w.write_all(&self.sha)?;
+        w.write_all(&self.spa)?;
+        w.write_all(&self.tha)?;
+        w.write_all(&self.tpa)?;
+
+        Ok(())
     }
+}
+
+impl EtherPacketBody for ArpPacket {
 }
 
 /// Packed representation of ARP packet header.
 #[repr(packed)]
-#[derive(Debug, Copy, Clone)]
 struct RawArpPacketHeader {
     htype: u16,
     ptype: u16,
@@ -161,12 +179,14 @@ struct RawArpPacketHeader {
 impl RawArpPacketHeader {
     /// Create a new raw ARP packet header.
     fn new(arp: &ArpPacket) -> RawArpPacketHeader {
+        let operation = arp.oper.code();
+
         RawArpPacketHeader {
             htype: arp.htype.to_be(),
             ptype: arp.ptype.to_be(),
             hlen:  arp.hlen,
             plen:  arp.plen,
-            oper:  (arp.oper as u16).to_be()
+            oper:  operation.to_be(),
         }
     }
 }
@@ -174,7 +194,6 @@ impl RawArpPacketHeader {
 pub mod scanner {
     use super::*;
 
-    use net::raw;
     use net::raw::pcap;
 
     use std::net::Ipv4Addr;
@@ -184,6 +203,8 @@ pub mod scanner {
     use net::raw::ether::packet::EtherPacket;
     use net::raw::pcap::{Scanner, PacketGenerator, ThreadingContext};
     use net::raw::utils::Serialize;
+
+    use net::utils::Ipv4AddrEx;
 
     /// IPv4 ARP scanner.
     pub struct Ipv4ArpScanner {
@@ -211,17 +232,17 @@ pub mod scanner {
 
         /// Scan a given device and return list of all active hosts.
         fn scan(&mut self) -> pcap::Result<Vec<(MacAddr, Ipv4Addr)>> {
-            let mut gen    = Ipv4ArpScannerPacketGenerator::new(&self.device);
-            let filter     = format!("arp and ether dst {}",
-                                self.device.mac_addr);
-            let packets    = try!(self.scanner.sr(&filter,
-                                &mut gen, 1000000000));
-            let mut hosts  = Vec::new();
+            let mut gen = Ipv4ArpScannerPacketGenerator::new(&self.device);
+            let filter = format!("arp and ether dst {}", self.device.mac_addr);
+            let packets = self.scanner.sr(&filter, &mut gen, 1000000000)?;
 
-            for p in packets {
-                if let Ok(ep) = EtherPacket::<ArpPacket>::parse(&p) {
-                    let sha = MacAddr::from_slice(&ep.body.sha);
-                    let spa = raw::utils::slice_to_ipv4addr(&ep.body.spa);
+            let mut hosts = Vec::new();
+
+            for ep in packets {
+                if let Some(arp) = ep.body::<ArpPacket>() {
+                    let sha = MacAddr::from_slice(arp.sha.as_ref());
+                    let spa = Ipv4Addr::from_slice(arp.spa.as_ref());
+
                     hosts.push((sha, spa));
                 }
             }
@@ -245,8 +266,8 @@ pub mod scanner {
         fn new(device: &EthernetDevice) -> Ipv4ArpScannerPacketGenerator {
             let bcast       = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
             let hdst        = MacAddr::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
-            let mask: u32   = raw::utils::ipv4addr_to_u32(&device.netmask);
-            let addr: u32   = raw::utils::ipv4addr_to_u32(&device.ip_addr);
+            let mask        = device.netmask.as_u32();
+            let addr        = device.ip_addr.as_u32();
             let mut current = addr & mask;
             let last        = current | !mask;
 
@@ -270,7 +291,7 @@ pub mod scanner {
                 let arpp = ArpPacket::ipv4_over_ethernet(ArpOperation::REQUEST,
                     &self.device.mac_addr, &self.device.ip_addr,
                     &self.hdst, &pdst);
-                let pkt  = EtherPacket::create(
+                let pkt  = EtherPacket::arp(
                     self.device.mac_addr, self.bcast, arpp);
 
                 self.buffer.clear();
@@ -307,27 +328,29 @@ mod tests {
 
         let arp = ArpPacket::ipv4_over_ethernet(ArpOperation::REQUEST,
             &smac, &sip, &dmac, &dip);
-        let pkt = EtherPacket::create(smac, dmac, arp);
+        let pkt = EtherPacket::arp(smac, dmac, arp);
 
         let mut buf = Vec::new();
 
         pkt.serialize(&mut buf)
             .unwrap();
 
-        let ep2 = EtherPacket::<ArpPacket>::parse(buf.as_ref())
+        let ep2 = EtherPacket::parse(buf.as_ref())
             .unwrap();
 
-        let arp  = &pkt.body;
-        let arp2 = &ep2.body;
+        let arpp1 = pkt.body::<ArpPacket>()
+            .unwrap();
+        let arpp2 = ep2.body::<ArpPacket>()
+            .unwrap();
 
-        assert_eq!(arp.htype,        arp2.htype);
-        assert_eq!(arp.ptype,        arp2.ptype);
-        assert_eq!(arp.hlen,         arp2.hlen);
-        assert_eq!(arp.plen,         arp2.plen);
-        assert_eq!(arp.oper as i32,  arp2.oper as i32);
-        assert_eq!(arp.sha,          arp2.sha);
-        assert_eq!(arp.spa,          arp2.spa);
-        assert_eq!(arp.tha,          arp2.tha);
-        assert_eq!(arp.tpa,          arp2.tpa);
+        assert_eq!(arpp1.htype, arpp2.htype);
+        assert_eq!(arpp1.ptype, arpp2.ptype);
+        assert_eq!(arpp1.hlen,  arpp2.hlen);
+        assert_eq!(arpp1.plen,  arpp2.plen);
+        assert_eq!(arpp1.oper,  arpp2.oper);
+        assert_eq!(arpp1.sha,   arpp2.sha);
+        assert_eq!(arpp1.spa,   arpp2.spa);
+        assert_eq!(arpp1.tha,   arpp2.tha);
+        assert_eq!(arpp1.tpa,   arpp2.tpa);
     }
 }

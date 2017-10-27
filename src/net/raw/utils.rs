@@ -19,17 +19,16 @@ use std::mem;
 use std::slice;
 
 use std::io::Write;
-use std::net::Ipv4Addr;
 
 /// Common trait for serializable objects.
 pub trait Serialize {
     /// Serialize this object using a given writer.
-    fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()>;
+    fn serialize(&self, w: &mut Write) -> io::Result<()>;
 }
 
-impl Serialize for Vec<u8> {
-    fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()> {
-        w.write_all(self)
+impl Serialize for Box<[u8]> {
+    fn serialize(&self, w: &mut Write) -> io::Result<()> {
+        w.write_all(self.as_ref())
     }
 }
 
@@ -80,29 +79,9 @@ pub fn sum_to_checksum(sum: u32) -> u16 {
     !checksum as u16
 }
 
-/// Convert a given slice of bytes into IPv4 address.
-pub fn slice_to_ipv4addr(slice: &[u8]) -> Ipv4Addr {
-    if slice.len() < 4 {
-        panic!("slice is too short");
-    } else {
-        let ptr  = slice.as_ptr() as *const u32;
-        let addr = unsafe { u32::from_be(*ptr) };
-        Ipv4Addr::from(addr)
-    }
-}
-
-/// Convert a given IPv4 address into big endian 32-bit unsigned number.
-pub fn ipv4addr_to_u32(addr: &Ipv4Addr) -> u32 {
-    let octets  = addr.octets();
-    let nr: u32 = unsafe { mem::transmute(octets) };
-    nr.to_be()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::net::Ipv4Addr;
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     #[repr(packed)]
@@ -127,26 +106,5 @@ mod tests {
     #[test]
     fn test_sum_to_checksum() {
         assert_eq!(!0x00003333, sum_to_checksum(0x11112222));
-    }
-
-    #[test]
-    #[should_panic(expected = "slice is too short")]
-    fn test_slice_to_ipv4addr_1() {
-        let buffer = [0u8; 3];
-        slice_to_ipv4addr(&buffer);
-    }
-
-    #[test]
-    fn test_slice_to_ipv4addr_2() {
-        let buffer = [192, 168, 2, 3];
-        let addr   = slice_to_ipv4addr(&buffer);
-
-        assert_eq!(buffer, addr.octets());
-    }
-
-    #[test]
-    fn test_ipv4addr_to_u32() {
-        let addr = Ipv4Addr::new(192, 168, 2, 5);
-        assert_eq!(0xc0a80205, ipv4addr_to_u32(&addr));
     }
 }

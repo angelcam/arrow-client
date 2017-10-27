@@ -27,6 +27,8 @@ use std::ffi::CString;
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
 
+use net::raw::ether::packet::EtherPacket;
+
 use utils;
 
 use time;
@@ -358,7 +360,7 @@ impl Scanner {
         &mut self,
         filter: &str,
         gen: &mut G,
-        timeout: u64) -> Result<Vec<Vec<u8>>> {
+        timeout: u64) -> Result<Vec<EtherPacket>> {
         self.set_end_indicator(false);
 
         let thread = try!(self.start_listener(filter, timeout));
@@ -377,7 +379,7 @@ impl Scanner {
     fn start_listener(
         &mut self,
         filter: &str,
-        timeout: u64) -> Result<JoinHandle<Vec<Vec<u8>>>> {
+        timeout: u64) -> Result<JoinHandle<Vec<EtherPacket>>> {
         let ei = self.end_indicator.clone();
 
         let cap = try!(CaptureBuilder::new(self.pc.clone(), &self.device))
@@ -401,14 +403,16 @@ impl Scanner {
     fn packet_listener(
         mut cap: Capture,
         shared_end_indicator: Arc<Mutex<bool>>,
-        timeout: u64) -> Vec<Vec<u8>> {
+        timeout: u64) -> Vec<EtherPacket> {
         let mut vec = Vec::new();
         let mut t   = time::precise_time_ns();
         let mut end = false;
 
         while !end || time::precise_time_ns() < (t + timeout) {
             let callback = |data: &[u8]| {
-                vec.push(data.to_vec());
+                if let Ok(ep) = EtherPacket::parse(data) {
+                    vec.push(ep);
+                }
             };
 
             let res = match cap.dispatch(1, callback) {

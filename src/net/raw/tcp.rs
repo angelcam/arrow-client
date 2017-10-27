@@ -16,6 +16,7 @@
 
 use std::io;
 use std::mem;
+use std::slice;
 
 use utils;
 use net::raw;
@@ -23,7 +24,7 @@ use net::raw;
 use std::io::Write;
 
 use net::raw::ether::packet::{Result, PacketParseError};
-use net::raw::ip::{Ipv4PacketHeader, Ipv4PacketBody, Ipv4PacketType};
+use net::raw::ip::{Ipv4PacketHeader, Ipv4PacketBody};
 
 pub const TCP_FLAG_NS:  u16 = 1 << 8;
 pub const TCP_FLAG_CWR: u16 = 1 << 7;
@@ -36,7 +37,6 @@ pub const TCP_FLAG_SYN: u16 = 1 << 1;
 pub const TCP_FLAG_FIN: u16 = 1;
 
 /// TCP packet.
-#[derive(Clone, Debug)]
 pub struct TcpPacket {
     pub sport:   u16,
     pub dport:   u16,
@@ -45,13 +45,16 @@ pub struct TcpPacket {
     pub flags:   u16,
     pub wsize:   u16,
     pub uptr:    u16,
-    pub options: Vec<u32>,
-    pub data:    Vec<u8>,
+    pub options: Box<[u32]>,
+    pub data:    Box<[u8]>,
 }
 
 impl TcpPacket {
     /// Create a new TCP packet.
     pub fn new(sport: u16, dport: u16, flags: u16, data: &[u8]) -> TcpPacket {
+        let data = data.to_vec()
+            .into_boxed_slice();
+
         TcpPacket {
             sport:   sport,
             dport:   dport,
@@ -60,21 +63,22 @@ impl TcpPacket {
             flags:   flags,
             wsize:   8192,
             uptr:    0,
-            options: Vec::new(),
-            data:    data.to_vec()
+            options: Box::new([]),
+            data:    data,
         }
     }
-}
 
-impl Ipv4PacketBody for TcpPacket {
-    fn parse(data: &[u8]) -> Result<TcpPacket> {
+    /// Parse a TCP packet from given data.
+    pub fn parse(data: &[u8]) -> Result<TcpPacket> {
         let size = mem::size_of::<RawTcpPacketHeader>();
+
         if data.len() < size {
             Err(PacketParseError::from("unable to parse TCP packet, not enough data"))
         } else {
             let ptr = data.as_ptr();
             let ptr = ptr as *const RawTcpPacketHeader;
-            let rh  = unsafe {
+
+            let rh = unsafe {
                 &*ptr
             };
 
@@ -89,10 +93,12 @@ impl Ipv4PacketBody for TcpPacket {
                 Err(PacketParseError::from("unable to parse TCP packet, not enough data"))
             } else {
                 let options = unsafe {
-                    utils::vec_from_raw_parts(
+                    slice::from_raw_parts(
                         ptr.offset(offset_1 as isize) as *const u32,
                         options_len)
                 };
+
+                let payload = &data[offset_2..];
 
                 let res = TcpPacket {
                     sport:   u16::from_be(rh.sport),
@@ -102,32 +108,31 @@ impl Ipv4PacketBody for TcpPacket {
                     flags:   doffset_flags & 0x01ff,
                     wsize:   u16::from_be(rh.wsize),
                     uptr:    u16::from_be(rh.uptr),
-                    options: options,
-                    data:    data[offset_2..].to_vec()
+                    options: options.to_vec().into_boxed_slice(),
+                    data:    payload.to_vec().into_boxed_slice(),
                 };
 
                 Ok(res)
             }
         }
     }
+}
 
-    fn serialize<W: Write>(
-        &self,
-        iph: &Ipv4PacketHeader,
-        w: &mut W) -> io::Result<()> {
+impl Ipv4PacketBody for TcpPacket {
+    fn serialize(&self, iph: &Ipv4PacketHeader, w: &mut Write) -> io::Result<()> {
         let rh = RawTcpPacketHeader::new(iph, self);
-        try!(w.write_all(utils::as_bytes(&rh)));
-        try!(w.write_all(utils::slice_as_bytes(&self.options)));
-        w.write_all(&self.data)
+
+        w.write_all(utils::as_bytes(&rh))?;
+        w.write_all(utils::slice_as_bytes(&self.options))?;
+        w.write_all(&self.data)?;
+
+        Ok(())
     }
 
-    fn packet_type(&self) -> Ipv4PacketType {
-        Ipv4PacketType::TCP
-    }
-
-    fn len(&self) -> usize {
+    fn len(&self, _: &Ipv4PacketHeader) -> usize {
         let header_size = mem::size_of::<RawTcpPacketHeader>();
         let option_size = mem::size_of::<u32>();
+
         header_size
             + option_size * self.options.len()
             + self.data.len()
@@ -136,7 +141,6 @@ impl Ipv4PacketBody for TcpPacket {
 
 /// Packed representation of the TCP packet header.
 #[repr(packed)]
-#[derive(Debug, Copy, Clone)]
 struct RawTcpPacketHeader {
     sport:         u16,
     dport:         u16,
@@ -183,7 +187,6 @@ impl RawTcpPacketHeader {
 /// Pseudo IPv4 packet header for TCP checksum computation.
 #[repr(packed)]
 #[allow(dead_code)]
-#[derive(Debug, Copy, Clone)]
 struct PseudoIpv4PacketHeader {
     src:      [u8; 4],
     dst:      [u8; 4],
@@ -199,7 +202,7 @@ impl PseudoIpv4PacketHeader {
             src:      iph.src.octets(),
             dst:      iph.dst.octets(),
             res:      0,
-            protocol: iph.protocol,
+            protocol: iph.protocol.code(),
             tcp_len:  0
         }
     }
@@ -381,14 +384,18 @@ pub mod scanner {
 
             let mut services = Vec::new();
 
-            for p in packets {
-                if let Ok(ep) =
-                    EtherPacket::<Ipv4Packet<TcpPacket>>::parse(&p) {
-                    let ipp  = &ep.body;
-                    let tcpp = &ipp.body;
-                    let hsrc = ep.header.src;
-                    let psrc = ipp.header.src;
-                    services.push((hsrc, psrc, tcpp.sport));
+            for ep in packets {
+                let eh = ep.header();
+
+                if let Some(ip) = ep.body::<Ipv4Packet>() {
+                    let iph = ip.header();
+
+                    if let Some(tcp) = ip.body::<TcpPacket>() {
+                        let hsrc = eh.src;
+                        let psrc = iph.src;
+
+                        services.push((hsrc, psrc, tcp.sport))
+                    }
                 }
             }
 
@@ -435,9 +442,9 @@ pub mod scanner {
                 if let Some(port) = self.ports.next() {
                     let tcpp = TcpPacket::new(
                         self.sport, port, TCP_FLAG_SYN, &[]);
-                    let ipp  = Ipv4Packet::create(
+                    let ipp  = Ipv4Packet::tcp(
                         self.device.ip_addr, pdst, 64, tcpp);
-                    let pkt  = EtherPacket::create(
+                    let pkt  = EtherPacket::ipv4(
                         self.device.mac_addr, hdst, ipp);
 
                     self.buffer.clear();
@@ -497,28 +504,35 @@ mod tests {
         let data = [1, 2, 3];
 
         let tcp = TcpPacket::new(10, 20, TCP_FLAG_FIN | TCP_FLAG_SYN, &data);
-        let ip  = Ipv4Packet::create(sip, dip, 64, tcp);
-        let pkt = EtherPacket::create(mac, mac, ip);
+        let ip  = Ipv4Packet::tcp(sip, dip, 64, tcp);
+        let pkt = EtherPacket::ipv4(mac, mac, ip);
 
         let mut buf = Vec::new();
 
         pkt.serialize(&mut buf)
             .unwrap();
 
-        let ep2 = EtherPacket::<Ipv4Packet<TcpPacket>>::parse(buf.as_ref())
+        let ep2 = EtherPacket::parse(buf.as_ref())
             .unwrap();
 
-        let p1 = &pkt.body.body;
-        let p2 = &ep2.body.body;
+        let ipp1 = pkt.body::<Ipv4Packet>()
+            .unwrap();
+        let ipp2 = ep2.body::<Ipv4Packet>()
+            .unwrap();
 
-        assert_eq!(p1.sport,   p2.sport);
-        assert_eq!(p1.dport,   p2.dport);
-        assert_eq!(p1.seq,     p2.seq);
-        assert_eq!(p1.ack,     p2.ack);
-        assert_eq!(p1.flags,   p2.flags);
-        assert_eq!(p1.wsize,   p2.wsize);
-        assert_eq!(p1.uptr,    p2.uptr);
-        assert_eq!(p1.options, p2.options);
-        assert_eq!(p1.data,    p2.data);
+        let tcpp1 = ipp1.body::<TcpPacket>()
+            .unwrap();
+        let tcpp2 = ipp2.body::<TcpPacket>()
+            .unwrap();
+
+        assert_eq!(tcpp1.sport,   tcpp2.sport);
+        assert_eq!(tcpp1.dport,   tcpp2.dport);
+        assert_eq!(tcpp1.seq,     tcpp2.seq);
+        assert_eq!(tcpp1.ack,     tcpp2.ack);
+        assert_eq!(tcpp1.flags,   tcpp2.flags);
+        assert_eq!(tcpp1.wsize,   tcpp2.wsize);
+        assert_eq!(tcpp1.uptr,    tcpp2.uptr);
+        assert_eq!(tcpp1.options, tcpp2.options);
+        assert_eq!(tcpp1.data,    tcpp2.data);
     }
 }

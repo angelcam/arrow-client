@@ -17,14 +17,18 @@ use std::mem;
 use std::fmt;
 use std::result;
 
-use utils;
-
 use std::io::Write;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+use net::raw::arp::ArpPacket;
 use net::raw::ether::MacAddr;
+use net::raw::ip::Ipv4Packet;
 use net::raw::utils::Serialize;
+
+use utils;
+
+use utils::AsAny;
 
 /// Packet parser error.
 #[derive(Debug, Clone)]
@@ -66,11 +70,11 @@ pub struct EtherPacketHeader {
 
 impl EtherPacketHeader {
     /// Create a new ethernet packet header.
-    pub fn new(src: MacAddr, dst: MacAddr, etype: u16) -> EtherPacketHeader {
+    pub fn new(src: MacAddr, dst: MacAddr, etype: EtherPacketType) -> EtherPacketHeader {
         EtherPacketHeader {
             src:   src,
             dst:   dst,
-            etype: etype
+            etype: etype.code(),
         }
     }
 
@@ -91,9 +95,11 @@ impl EtherPacketHeader {
     /// Read header from a given raw representation.
     fn parse(data: &[u8]) -> EtherPacketHeader {
         assert_eq!(data.len(), mem::size_of::<RawEtherPacketHeader>());
+
         let ptr = data.as_ptr();
         let ptr = ptr as *const RawEtherPacketHeader;
-        let rh  = unsafe {
+
+        let rh = unsafe {
             &*ptr
         };
 
@@ -106,14 +112,13 @@ impl EtherPacketHeader {
 }
 
 impl Serialize for EtherPacketHeader {
-    fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()> {
+    fn serialize(&self, w: &mut Write) -> io::Result<()> {
         w.write_all(utils::as_bytes(&self.raw_header()))
     }
 }
 
 /// Packed representation of the Ethernet packet header.
 #[repr(packed)]
-#[derive(Debug, Copy, Clone)]
 struct RawEtherPacketHeader {
     dst:   [u8; 6],
     src:   [u8; 6],
@@ -125,16 +130,16 @@ struct RawEtherPacketHeader {
 pub enum EtherPacketType {
     ARP,
     IPv4,
-    UNKNOWN
+    UNKNOWN(u16),
 }
 
 impl EtherPacketType {
     /// Get system code of this packet type.
     pub fn code(self) -> u16 {
         match self {
-            EtherPacketType::ARP  => ETYPE_ARP,
-            EtherPacketType::IPv4 => ETYPE_IPV4,
-            _ => panic!("no etype code for unknown packet type")
+            EtherPacketType::ARP         => ETYPE_ARP,
+            EtherPacketType::IPv4        => ETYPE_IPV4,
+            EtherPacketType::UNKNOWN(pt) => pt,
         }
     }
 }
@@ -145,92 +150,89 @@ impl From<u16> for EtherPacketType {
         match code {
             ETYPE_ARP  => EtherPacketType::ARP,
             ETYPE_IPV4 => EtherPacketType::IPv4,
-            _ => EtherPacketType::UNKNOWN
+            pt         => EtherPacketType::UNKNOWN(pt),
         }
     }
 }
 
 /// Common trait for ethernet packet body implementations.
-pub trait EtherPacketBody : Sized {
-    /// Parse body from its raw representation.
-    fn parse(data: &[u8]) -> Result<Self>;
-
-    /// Serialize the packet body in-place using a given writer.
-    fn serialize<W: Write>(
-        &self,
-        eh: &EtherPacketHeader,
-        w: &mut W) -> io::Result<()>;
-
-    /// Get type of this body.
-    fn packet_type(&self) -> EtherPacketType;
+pub trait EtherPacketBody : AsAny + Send + Serialize {
 }
 
-impl EtherPacketBody for Vec<u8> {
-    fn parse(data: &[u8]) -> Result<Vec<u8>> {
-        Ok(data.to_vec())
-    }
-
-    fn serialize<W: Write>(
-        &self,
-        _: &EtherPacketHeader,
-        w: &mut W) -> io::Result<()> {
-        w.write_all(self)
-    }
-
-    fn packet_type(&self) -> EtherPacketType {
-        EtherPacketType::UNKNOWN
-    }
+impl EtherPacketBody for Box<[u8]> {
 }
 
 /// Ethernet packet.
-#[derive(Debug, Clone)]
-pub struct EtherPacket<B: EtherPacketBody> {
-    pub header: EtherPacketHeader,
-    pub body:   B,
+pub struct EtherPacket {
+    header: EtherPacketHeader,
+    body:   Box<EtherPacketBody>,
 }
 
-impl<B: EtherPacketBody> EtherPacket<B> {
+impl EtherPacket {
     /// Create a new ethernet packet.
-    pub fn new(header: EtherPacketHeader, body: B) -> EtherPacket<B> {
+    pub fn new<B>(header: EtherPacketHeader, body: B) -> EtherPacket
+        where B: 'static + EtherPacketBody {
         EtherPacket {
             header: header,
-            body:   body
+            body:   Box::new(body),
         }
     }
 
-    /// Create a new ethernet packet.
-    pub fn create(
-        src: MacAddr,
-        dst: MacAddr,
-        body: B) -> EtherPacket<B> {
-        let pt     = body.packet_type();
-        let header = EtherPacketHeader::new(src, dst, pt.code());
-        EtherPacket::new(header, body)
+    /// Create a new ethernet packet with a given ARP packet payload.
+    pub fn arp(src: MacAddr, dst: MacAddr, body: ArpPacket) -> EtherPacket {
+        EtherPacket::new(
+            EtherPacketHeader::new(src, dst, EtherPacketType::ARP),
+            body)
+    }
+
+    /// Create a new ethernet packet with a given IPv4 packet payload.
+    pub fn ipv4(src: MacAddr, dst: MacAddr, body: Ipv4Packet) -> EtherPacket {
+        EtherPacket::new(
+            EtherPacketHeader::new(src, dst, EtherPacketType::IPv4),
+            body)
     }
 
     /// Parse a given ethernet packet.
-    pub fn parse(data: &[u8]) -> Result<EtherPacket<B>> {
+    pub fn parse(data: &[u8]) -> Result<EtherPacket> {
         let hsize = mem::size_of::<RawEtherPacketHeader>();
+
         if data.len() < hsize {
             Err(PacketParseError::from("unable to parse ethernet packet, not enough data"))
         } else {
             let header = EtherPacketHeader::parse(&data[..hsize]);
-            let body   = try!(B::parse(&data[hsize..]));
-            let btype  = body.packet_type();
-            if btype == EtherPacketType::UNKNOWN ||
-                btype == EtherPacketType::from(header.etype) {
-                Ok(EtherPacket::new(header, body))
-            } else {
-                Err(PacketParseError::from("expect and actual ethernet packet types do not match"))
-            }
+
+            let payload = &data[hsize..];
+
+            let packet = match header.packet_type() {
+                EtherPacketType::ARP  => EtherPacket::new(header, ArpPacket::parse(payload)?),
+                EtherPacketType::IPv4 => EtherPacket::new(header, Ipv4Packet::parse(payload)?),
+                _                     => EtherPacket::new(header, payload.to_vec().into_boxed_slice()),
+            };
+
+            Ok(packet)
         }
+    }
+
+    /// Get packet header.
+    pub fn header(&self) -> &EtherPacketHeader {
+        &self.header
+    }
+
+    /// Get packet body.
+    pub fn body<B>(&self) -> Option<&B>
+        where B: 'static + EtherPacketBody {
+        self.body.as_ref()
+            .as_any()
+            .downcast_ref()
     }
 }
 
-impl<B: EtherPacketBody> Serialize for EtherPacket<B> {
-    fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()> {
-        try!(self.header.serialize(w));
-        self.body.serialize(&self.header, w)
+impl Serialize for EtherPacket {
+    fn serialize(&self, w: &mut Write) -> io::Result<()> {
+        self.header.serialize(w)?;
+        self.body.serialize(w)?;
+
+        Ok(())
     }
 }
 
@@ -263,18 +265,21 @@ mod tests {
         let dip = Ipv4Addr::new(192, 168, 8, 1);
         let arp = ArpPacket::ipv4_over_ethernet(ArpOperation::REQUEST,
             &src, &sip, &dst, &dip);
-        let pkt = EtherPacket::create(src, dst, arp);
+        let pkt = EtherPacket::arp(src, dst, arp);
 
         let mut buf = Vec::new();
 
         pkt.serialize(&mut buf)
             .unwrap();
 
-        let ep2 = EtherPacket::<ArpPacket>::parse(buf.as_ref())
+        let ep2 = EtherPacket::parse(buf.as_ref())
             .unwrap();
 
-        assert_eq!(pkt.header.src.octets(), ep2.header.src.octets());
-        assert_eq!(pkt.header.dst.octets(), ep2.header.dst.octets());
-        assert_eq!(pkt.header.etype,        ep2.header.etype);
+        let pkth = pkt.header();
+        let ep2h = ep2.header();
+
+        assert_eq!(pkth.src.octets(), ep2h.src.octets());
+        assert_eq!(pkth.dst.octets(), ep2h.dst.octets());
+        assert_eq!(pkth.etype,        ep2h.etype);
     }
 }

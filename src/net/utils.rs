@@ -14,6 +14,8 @@
 
 //! Common networking utils.
 
+use std::mem;
+
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
 use utils::RuntimeError;
@@ -37,6 +39,34 @@ pub fn get_socket_address<T>(s: T) -> Result<SocketAddr, RuntimeError>
         .ok_or(RuntimeError::from("unable get socket address"))?
         .next()
         .ok_or(RuntimeError::from("unable get socket address"))
+}
+
+/// Ipv4Addr extension.
+pub trait Ipv4AddrEx {
+    /// Crete address from slice.
+    fn from_slice(bytes: &[u8]) -> Ipv4Addr;
+
+    /// Convert a given IPv4 address into big endian 32-bit unsigned number.
+    fn as_u32(&self) -> u32;
+}
+
+impl Ipv4AddrEx for Ipv4Addr {
+    fn from_slice(bytes: &[u8]) -> Ipv4Addr {
+        assert_eq!(bytes.len(), 4);
+
+        let ptr  = bytes.as_ptr() as *const u32;
+        let addr = unsafe { u32::from_be(*ptr) };
+
+        Ipv4Addr::from(addr)
+    }
+
+    fn as_u32(&self) -> u32 {
+        let octets = self.octets();
+
+        let nr: u32 = unsafe { mem::transmute(octets) };
+
+        nr.to_be()
+    }
 }
 
 /// IpAddr extension.
@@ -98,5 +128,31 @@ impl IpAddrEx for Ipv6Addr {
 
     fn version(&self) -> u8 {
         6
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn test_slice_to_ipv4addr_1() {
+        let buffer = [0u8; 3];
+        Ipv4Addr::from_slice(&buffer);
+    }
+
+    #[test]
+    fn test_slice_to_ipv4addr_2() {
+        let buffer = [192, 168, 2, 3];
+        let addr   = Ipv4Addr::from_slice(&buffer);
+
+        assert_eq!(buffer, addr.octets());
+    }
+
+    #[test]
+    fn test_ipv4addr_to_u32() {
+        let addr = Ipv4Addr::new(192, 168, 2, 5);
+        assert_eq!(0xc0a80205, addr.as_u32());
     }
 }

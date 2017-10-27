@@ -18,15 +18,13 @@ use std::io;
 use std::mem;
 
 use std::io::Write;
-use std::borrow::Borrow;
-
-use utils;
 
 use net::raw;
 
 use net::raw::ether::packet::{PacketParseError, Result};
-use net::raw::ip::{Ipv4PacketHeader, Ipv4PacketType, Ipv4PacketBody};
-use net::raw::utils::Serialize;
+use net::raw::ip::{Ipv4PacketHeader, Ipv4PacketBody};
+
+use utils;
 
 const ICMP_TYPE_ECHO_REPLY: u8 = 0x00;
 const ICMP_TYPE_ECHO:       u8 = 0x08;
@@ -36,17 +34,16 @@ const ICMP_TYPE_ECHO:       u8 = 0x08;
 pub enum IcmpPacketType {
     Echo,
     EchoReply,
-    Unknown
+    Unknown(u8),
 }
 
 impl IcmpPacketType {
     /// Get ICMP packet type code.
     fn code(&self) -> u8 {
         match self {
-            &IcmpPacketType::Echo      => ICMP_TYPE_ECHO,
-            &IcmpPacketType::EchoReply => ICMP_TYPE_ECHO_REPLY,
-            &IcmpPacketType::Unknown =>
-                panic!("no etype code for unknown packet type")
+            &IcmpPacketType::Echo        => ICMP_TYPE_ECHO,
+            &IcmpPacketType::EchoReply   => ICMP_TYPE_ECHO_REPLY,
+            &IcmpPacketType::Unknown(pt) => pt,
         }
     }
 }
@@ -56,39 +53,62 @@ impl From<u8> for IcmpPacketType {
         match code {
             ICMP_TYPE_ECHO       => IcmpPacketType::Echo,
             ICMP_TYPE_ECHO_REPLY => IcmpPacketType::EchoReply,
-            _ => IcmpPacketType::Unknown
+            pt                   => IcmpPacketType::Unknown(pt),
         }
     }
 }
 
 /// ICMP packet.
-#[derive(Debug, Clone)]
-pub struct IcmpPacket<B> {
-    pub icmp_type: IcmpPacketType,
-    pub code:      u8,
-    rest:          u32,
-    body:          B
+pub struct IcmpPacket {
+    icmp_type: IcmpPacketType,
+    code:      u8,
+    rest:      u32,
+    body:      Box<[u8]>,
 }
 
-impl IcmpPacket<EmptyPayload> {
-    /// Create a new echo request without payload.
-    pub fn new_empty_echo_request(
-        id: u16,
-        seq: u16) -> IcmpPacket<EmptyPayload> {
-        IcmpPacket::new_echo_request(id, seq, EmptyPayload)
-    }
-}
-
-impl<B: Borrow<[u8]>> IcmpPacket<B> {
+impl IcmpPacket {
     /// Create a new echo request.
-    pub fn new_echo_request(id: u16, seq: u16, payload: B) -> IcmpPacket<B> {
+    pub fn echo_request(id: u16, seq: u16, payload: &[u8]) -> IcmpPacket {
         let id  = id as u32;
         let seq = seq as u32;
+
         IcmpPacket {
             icmp_type: IcmpPacketType::Echo,
             code:      0,
             rest:      (id << 16) | seq,
-            body:      payload
+            body:      payload.to_vec().into_boxed_slice(),
+        }
+    }
+
+    /// Create a new echo request without payload.
+    pub fn empty_echo_request(id: u16, seq: u16) -> IcmpPacket {
+        IcmpPacket::echo_request(id, seq, &[])
+    }
+
+    /// Parse an ICMP packet from given data.
+    pub fn parse(data: &[u8]) -> Result<IcmpPacket> {
+        let size = mem::size_of::<RawIcmpPacketHeader>();
+
+        if data.len() < size {
+            Err(PacketParseError::from("unable to parse ICMP packet, not enough data"))
+        } else {
+            let ptr = data.as_ptr();
+            let ptr = ptr as *const RawIcmpPacketHeader;
+
+            let rh = unsafe {
+                &*ptr
+            };
+
+            let body = &data[size..];
+
+            let res = IcmpPacket {
+                icmp_type: IcmpPacketType::from(rh.icmp_type),
+                code:      rh.code,
+                rest:      u32::from_be(rh.rest),
+                body:      body.to_vec().into_boxed_slice(),
+            };
+
+            Ok(res)
         }
     }
 
@@ -109,65 +129,40 @@ impl<B: Borrow<[u8]>> IcmpPacket<B> {
         let icmp_type = self.icmp_type.code() as u16;
         let icmp_code = self.code as u16;
 
-        let body_bytes: &[u8] = self.body.borrow();
+        let payload = self.body.as_ref();
 
         let mut sum = ((icmp_type << 8) | icmp_code) as u32;
 
         sum = sum.wrapping_add(self.rest >> 16);
         sum = sum.wrapping_add(self.rest & 0xff);
-        sum = sum.wrapping_add(raw::utils::sum_slice(body_bytes));
+        sum = sum.wrapping_add(raw::utils::sum_slice(payload));
 
         raw::utils::sum_to_checksum(sum)
     }
 }
 
-impl<B: IcmpPacketBody> Ipv4PacketBody for IcmpPacket<B> {
-    fn parse(data: &[u8]) -> Result<IcmpPacket<B>> {
-        let size = mem::size_of::<RawIcmpPacketHeader>();
-        if data.len() < size {
-            Err(PacketParseError::from("unable to parse ICMP packet, not enough data"))
-        } else {
-            let ptr = data.as_ptr();
-            let ptr = ptr as *const RawIcmpPacketHeader;
-            let rh  = unsafe {
-                &*ptr
-            };
+impl Ipv4PacketBody for IcmpPacket {
+    fn serialize(&self, _: &Ipv4PacketHeader, w: &mut Write) -> io::Result<()> {
+        let raw_header = self.raw_header();
 
-            let body = try!(B::parse(&data[size..]));
+        let payload = self.body.as_ref();
 
-            let res = IcmpPacket {
-                icmp_type: IcmpPacketType::from(rh.icmp_type),
-                code:      rh.code,
-                rest:      u32::from_be(rh.rest),
-                body:      body
-            };
+        w.write_all(utils::as_bytes(&raw_header))?;
+        w.write_all(payload)?;
 
-            Ok(res)
-        }
+        Ok(())
     }
 
-    fn serialize<W: Write>(
-        &self,
-        _: &Ipv4PacketHeader,
-        w: &mut W) -> io::Result<()> {
-        let rh       = self.raw_header();
-        let rh_bytes = utils::as_bytes(&rh);
-        try!(w.write_all(rh_bytes));
-        self.body.serialize(w)
-    }
+    fn len(&self, _: &Ipv4PacketHeader) -> usize {
+        let payload = self.body.as_ref();
 
-    fn packet_type(&self) -> Ipv4PacketType {
-        Ipv4PacketType::ICMP
-    }
-
-    fn len(&self) -> usize {
-        mem::size_of::<RawIcmpPacketHeader>() + self.body.len()
+        mem::size_of::<RawIcmpPacketHeader>() + payload.len()
     }
 }
 
 /// Raw ICMP packet header.
 #[repr(packed)]
-#[derive(Debug, Copy, Clone)]
+#[allow(dead_code)]
 struct RawIcmpPacketHeader {
     icmp_type: u8,
     code:      u8,
@@ -175,15 +170,7 @@ struct RawIcmpPacketHeader {
     rest:      u32
 }
 
-pub trait IcmpPacketBody : Serialize + Sized + Borrow<[u8]> {
-    /// Parse ICMP packet body.
-    fn parse(data: &[u8]) -> Result<Self>;
-
-    /// Get body length.
-    fn len(&self) -> usize;
-}
-
-pub trait IcmpEchoPacket<P> {
+pub trait IcmpEchoPacket {
     /// Get ICMP echo identifier.
     fn identifier(&self) -> u16;
 
@@ -191,10 +178,10 @@ pub trait IcmpEchoPacket<P> {
     fn seq_number(&self) -> u16;
 
     /// Get ICMP echo payload.
-    fn payload(&self) -> &P;
+    fn payload(&self) -> &[u8];
 }
 
-impl<P> IcmpEchoPacket<P> for IcmpPacket<P> {
+impl IcmpEchoPacket for IcmpPacket {
     fn identifier(&self) -> u16 {
         (self.rest >> 16) as u16
     }
@@ -203,55 +190,14 @@ impl<P> IcmpEchoPacket<P> for IcmpPacket<P> {
         (self.rest & 0xff) as u16
     }
 
-    fn payload(&self) -> &P {
-        &self.body
-    }
-}
-
-/// Empty payload to be used in combination with ICMP packets.
-#[derive(Debug, Copy, Clone)]
-pub struct EmptyPayload;
-
-impl Borrow<[u8]> for EmptyPayload {
-    fn borrow(&self) -> &[u8] {
-        &[]
-    }
-}
-
-impl Serialize for EmptyPayload {
-    fn serialize<W: Write>(&self, _: &mut W) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl IcmpPacketBody for EmptyPayload {
-    fn parse(data: &[u8]) -> Result<EmptyPayload> {
-        if data.is_empty() {
-            Ok(EmptyPayload)
-        } else {
-            Err(PacketParseError::from("empty ICMP payload expected"))
-        }
-    }
-
-    fn len(&self) -> usize {
-        0
-    }
-}
-
-impl IcmpPacketBody for Vec<u8> {
-    fn parse(data: &[u8]) -> Result<Vec<u8>> {
-        Ok(data.to_vec())
-    }
-
-    fn len(&self) -> usize {
-        Vec::<u8>::len(self)
+    fn payload(&self) -> &[u8] {
+        self.body.as_ref()
     }
 }
 
 pub mod scanner {
     use super::*;
 
-    use net::raw;
     use net::raw::pcap;
 
     use std::net::Ipv4Addr;
@@ -263,8 +209,7 @@ pub mod scanner {
     use net::raw::pcap::{Scanner, PacketGenerator, ThreadingContext};
     use net::raw::utils::Serialize;
 
-    /// Type alias for the expected packet type.
-    type ParsePacketType = EtherPacket<Ipv4Packet<IcmpPacket<Vec<u8>>>>;
+    use net::utils::Ipv4AddrEx;
 
     /// ICMP scanner.
     pub struct IcmpScanner {
@@ -286,8 +231,8 @@ pub mod scanner {
         fn new(
             tc: ThreadingContext,
             device: &EthernetDevice) -> IcmpScanner {
-            let mask    = raw::utils::ipv4addr_to_u32(&device.netmask);
-            let addr    = raw::utils::ipv4addr_to_u32(&device.ip_addr);
+            let mask    = device.netmask.as_u32();
+            let addr    = device.ip_addr.as_u32();
             let network = addr & mask;
 
             IcmpScanner {
@@ -307,13 +252,17 @@ pub mod scanner {
 
             let mut hosts = Vec::new();
 
-            for p in packets {
-                if let Ok(ep) = ParsePacketType::parse(&p) {
-                    let iph = &ep.body.header;
-                    let sha = ep.header.src;
+            for ep in packets {
+                let eh = ep.header();
+
+                if let Some(ip) = ep.body::<Ipv4Packet>() {
+                    let iph = ip.header();
+
+                    let sha = eh.src;
                     let spa = iph.src;
-                    let nwa = raw::utils::ipv4addr_to_u32(&spa) & self.mask;
-                    // check if the received packet is from the same subnet
+
+                    let nwa = spa.as_u32() & self.mask;
+
                     if nwa == self.network {
                         hosts.push((sha, spa));
                     }
@@ -337,8 +286,8 @@ pub mod scanner {
         /// Create a new packet generator.
         fn new(device: &EthernetDevice) -> IcmpPacketGenerator {
             let bcast       = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
-            let mask: u32   = raw::utils::ipv4addr_to_u32(&device.netmask);
-            let addr: u32   = raw::utils::ipv4addr_to_u32(&device.ip_addr);
+            let mask        = device.netmask.as_u32();
+            let addr        = device.ip_addr.as_u32();
             let mut current = addr & mask;
             let last        = current | !mask;
 
@@ -362,11 +311,11 @@ pub mod scanner {
 
                 let pdst = Ipv4Addr::from(self.current);
 
-                let icmpp = IcmpPacket::new_empty_echo_request(
+                let icmpp = IcmpPacket::empty_echo_request(
                     icmp_id, icmp_seq);
-                let ipp   = Ipv4Packet::create(
+                let ipp   = Ipv4Packet::icmp(
                     self.device.ip_addr, pdst, 64, icmpp);
-                let pkt   = EtherPacket::create(
+                let pkt   = EtherPacket::ipv4(
                     self.device.mac_addr, self.bcast, ipp);
 
                 self.buffer.clear();
