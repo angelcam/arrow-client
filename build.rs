@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate gcc;
+extern crate cc;
 
-use gcc::Build;
+use cc::Build;
 
 fn main() {
     Build::new()
