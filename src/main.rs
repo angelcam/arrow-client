@@ -99,7 +99,8 @@ fn arrow_thread(mut app_context: ApplicationContext, cmd_channel: CommandChannel
 
     let t = time::precise_time_s();
 
-    let mut pairing_mode_timeout = t + 1200.0;
+    let pairing_mode_timeout = t + PAIRING_MODE_TIMEOUT;
+
     let mut cur_addr = addr.clone();
     let mut last_attempt;
 
@@ -114,11 +115,6 @@ fn arrow_thread(mut app_context: ApplicationContext, cmd_channel: CommandChannel
             app_context.clone(),
             cmd_channel.clone(),
             &cur_addr);
-
-        pairing_mode_timeout = get_pairing_mode_timeout(
-            &res,
-            last_attempt,
-            pairing_mode_timeout);
 
         if diagnostic_mode {
             diagnose_connection_result(&res);
@@ -136,15 +132,12 @@ fn arrow_thread(mut app_context: ApplicationContext, cmd_channel: CommandChannel
 
                 app_context.set_connection_state(cstate);
 
-                let t = get_next_retry_timeout(
+                let retry = process_connection_error(
                     err,
                     last_attempt,
                     pairing_mode_timeout);
 
-                if t > 0.5 {
-                    log_info!(logger, "retrying in {:.3} seconds", t);
-                    thread::sleep(Duration::from_millis((t * 1000.0) as u64));
-                }
+                wait_for_retry(&mut logger, retry);
 
                 cur_addr = addr.to_string();
             }
@@ -152,35 +145,38 @@ fn arrow_thread(mut app_context: ApplicationContext, cmd_channel: CommandChannel
     }
 }
 
-/// Get new timeout for the pairing mode.
-fn get_pairing_mode_timeout(
-    connection_result: &Result<String, ArrowError>,
-    last_connection_attempt: f64,
-    current_timeout: f64) -> f64 {
-    let t = time::precise_time_s();
+/// Connection retry variants. There are only two options - the connection can
+/// be either retried after a specified timeout or there should be no more
+/// connection attempts because of a specified reason.
+#[derive(Debug, Copy, Clone)]
+enum ConnectionRetry {
+    Timeout(f64),
+    Suspend(SuspendReason),
+}
 
-    match connection_result {
-        // We know the client is authorized, we can update the timeout.
-        &Ok(_)        => t + PAIRING_MODE_TIMEOUT,
-        &Err(ref err) => match err.kind() {
-            // We don't update the timeout in case the client is unauthorized.
-            ErrorKind::Unauthorized => current_timeout,
-            // We don't know if the client is authorized but we assume it is
-            // if the last connection was longer than RETRY_TIMEOUT seconds.
-            _ => if (last_connection_attempt + RETRY_TIMEOUT) < t {
-                t + PAIRING_MODE_TIMEOUT
-            } else {
-                current_timeout
-            }
+/// Reason for suspending the Arrow connection thread.
+#[derive(Debug, Copy, Clone)]
+enum SuspendReason {
+    NotInPairingMode,
+    UnsupportedProtocolVersion,
+}
+
+impl SuspendReason {
+    fn to_string(&self) -> &str {
+        match *self {
+            SuspendReason::NotInPairingMode =>
+                "pairing window timeout",
+            SuspendReason::UnsupportedProtocolVersion =>
+                "unsupported protocol version",
         }
     }
 }
 
-/// Get next reconnect timeout for the Arrow Client thread.
-fn get_next_retry_timeout(
+/// Process a given connection error and return a ConnectionRetry instance.
+fn process_connection_error(
     connection_error: ArrowError,
-    last_connection_attempt: f64,
-    pairing_mode_timeout: f64) -> f64 {
+    last_attempt: f64,
+    pairing_mode_timeout: f64) -> ConnectionRetry {
     let t = time::precise_time_s();
 
     match connection_error.kind() {
@@ -189,19 +185,40 @@ fn get_next_retry_timeout(
         ErrorKind::Unauthorized => match pairing_mode_timeout {
             // retry every 10 seconds in the first 10 minutes since the first
             // "unauthorized" response
-            timeout if t < (timeout - 600.0) => 10.0,
+            timeout if t < (timeout - 600.0) => ConnectionRetry::Timeout(10.0),
             // retry every 30 seconds after the first 10 minutes since the
             // first "unauthorized" response
-            timeout if t < timeout => 30.0,
-            // retry in 10 hours after the first 20 minutes since the first
-            // "unauthorized" response
-            _ => 36000.0
+            timeout if t < timeout => ConnectionRetry::Timeout(30.0),
+            // suspend the thread after the first 20 minutes since the client
+            // thread start
+            _ => ConnectionRetry::Suspend(SuspendReason::NotInPairingMode),
         },
-        // set a very long retry timeout if the version of the Arrow Protocol
-        // is not supported by either side
-        ErrorKind::UnsupportedProtocolVersion => 36000.0,
+        // suspend the thread if the version of the Arrow Protocol is not
+        // supported by either side
+        ErrorKind::UnsupportedProtocolVersion =>
+            ConnectionRetry::Suspend(SuspendReason::UnsupportedProtocolVersion),
         // in all other cases
-        _ => RETRY_TIMEOUT + last_connection_attempt - time::precise_time_s()
+        _ => ConnectionRetry::Timeout(RETRY_TIMEOUT + last_attempt - t),
+    }
+}
+
+/// Process a given connection retry object.
+fn wait_for_retry(logger: &mut Logger, connection_retry: ConnectionRetry) {
+    match connection_retry {
+        ConnectionRetry::Timeout(t) if t > 0.5 => {
+            log_info!(logger, "retrying in {:.3} seconds", t);
+
+            thread::sleep(Duration::from_millis((t * 1000.0) as u64));
+        },
+        ConnectionRetry::Timeout(_) => (),
+        ConnectionRetry::Suspend(reason) => {
+            log_info!(logger, "{}", reason.to_string());
+            log_info!(logger, "suspending the connection thread");
+
+            loop {
+                thread::sleep(Duration::from_millis(60000));
+            }
+        },
     }
 }
 
