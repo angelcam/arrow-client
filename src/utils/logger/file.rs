@@ -45,10 +45,10 @@ impl InternalFileLogger {
     /// Write given data into the underlaying file and rotate as necessary.
     fn write(&mut self, data: &[u8]) -> io::Result<()> {
         if (self.written + data.len()) > self.limit {
-            try!(self.rotate());
+            self.rotate()?;
         }
 
-        try!(self.file.write_all(data));
+        self.file.write_all(data)?;
 
         self.written += data.len();
 
@@ -62,15 +62,15 @@ impl InternalFileLogger {
             let to   = format!("{}.{}", &self.path, self.rotations - i);
 
             if Path::new(&from).exists() {
-                try!(fs::rename(&from, &to));
+                fs::rename(&from, &to)?;
             }
         }
 
         if self.rotations > 0 {
-            try!(fs::rename(&self.path, &format!("{}.1", &self.path)));
+            fs::rename(&self.path, &format!("{}.1", &self.path))?;
         }
 
-        self.file = try!(File::create(&self.path));
+        self.file = File::create(&self.path)?;
 
         self.written = 0;
 
@@ -123,12 +123,12 @@ pub fn new(path: &str, limit: usize, rotations: usize) -> io::Result<FileLogger>
         .create(true)
         .write(true)
         .append(true)
-        .open(path);
+        .open(path)?;
 
     let logger = InternalFileLogger {
         level:     Severity::INFO,
         path:      path.to_string(),
-        file:      try!(file),
+        file:      file,
         written:   written as usize,
         limit:     limit,
         rotations: rotations

@@ -128,11 +128,14 @@ impl Request {
 
 impl Display for Request {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
-        try!(f.write_str(&format!("{} {} HTTP/1.0\r\n",
-            self.method.name(), &self.path)));
+        f.write_str(
+            &format!("{} {} HTTP/1.0\r\n", self.method.name(), &self.path)
+        )?;
+
         for &(ref name, ref val) in &self.headers {
-            try!(f.write_str(&format!("{}: {}\r\n", name, val)));
+            f.write_str(&format!("{}: {}\r\n", name, val))?;
         }
+
         f.write_str("\r\n")
     }
 }
@@ -157,7 +160,7 @@ impl Response {
 impl Display for Response {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
         let body = String::from_utf8_lossy(&self.body);
-        try!(Display::fmt(&self.header, f));
+        Display::fmt(&self.header, f)?;
         f.write_str(&body)
     }
 }
@@ -216,10 +219,12 @@ impl ResponseHeader {
 
 impl Display for ResponseHeader {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
-        try!(f.write_str(&format!("HTTP/{} {} {}\r\n",
-            &self.version, self.code, &self.line)));
+        f.write_str(
+            &format!("HTTP/{} {} {}\r\n", &self.version, self.code, &self.line)
+        )?;
+
         for &(ref name, ref value) in &self.headers {
-            try!(f.write_str(&format!("{}: {}\r\n", name, value)));
+            f.write_str(&format!("{}: {}\r\n", name, value))?;
         }
 
         f.write_str("\r\n")
@@ -255,9 +260,9 @@ impl ResponseHeaderParser {
         if self.lines >= self.max_lines {
             return Err(ParseError::from("maximum number of HTTP header lines exceeded"));
         } else if self.lines > 0 {
-            try!(self.parse_header_line(line));
+            self.parse_header_line(line)?;
         } else {
-            try!(self.parse_status_line(line));
+            self.parse_status_line(line)?;
         }
 
         self.lines += 1;
@@ -452,9 +457,9 @@ impl<'a, H> ResponseParser<'a, H> where H: 'static + ResponseHandler {
                     return Ok(false);
                 }
             } else {
-                pos += try!(self.line_reader.add(&chunk[pos..]));
+                pos += self.line_reader.add(&chunk[pos..])?;
                 if self.line_reader.is_complete() {
-                    if try!(self.process_header_line()) {
+                    if self.process_header_line()? {
                         self.line_reader.clear();
                     } else {
                         return Ok(false);
@@ -470,9 +475,9 @@ impl<'a, H> ResponseParser<'a, H> where H: 'static + ResponseHandler {
     fn process_header_line(&mut self) -> ParsingResult<bool> {
         {
             let line = self.line_reader.line();
-            let line = try!(str::from_utf8(line));
+            let line = str::from_utf8(line)?;
 
-            try!(self.header_parser.add(line));
+            self.header_parser.add(line)?;
         }
 
         if self.header_parser.is_complete() {
@@ -484,7 +489,7 @@ impl<'a, H> ResponseParser<'a, H> where H: 'static + ResponseHandler {
 
     /// Process the current header.
     fn process_header(&mut self) -> ParsingResult<bool> {
-        let header = try!(self.header_parser.header());
+        let header = self.header_parser.header()?;
 
         Ok(self.response_handler.header(header))
     }
@@ -645,8 +650,8 @@ pub struct Client {
 impl Client {
     /// Create a new HTTP/1.0 client for a given remote service.
     pub fn new(host: &str, port: u16) -> Result<Client> {
-        let address        = try!(utils::get_socket_address((host, port)));
-        let stream         = try!(TcpStream::connect(&address));
+        let address        = utils::get_socket_address((host, port))?;
+        let stream         = TcpStream::connect(&address)?;
         let client = Client {
             stream: stream,
             host:   host.to_string()
@@ -658,8 +663,8 @@ impl Client {
     /// Set timeout for read and write operations.
     pub fn set_timeout(&mut self, ms: Option<u64>) -> Result<()> {
         let duration = ms.map(|ms| Duration::from_millis(ms));
-        try!(self.stream.set_read_timeout(duration));
-        try!(self.stream.set_write_timeout(duration));
+        self.stream.set_read_timeout(duration)?;
+        self.stream.set_write_timeout(duration)?;
         Ok(())
     }
 
@@ -670,9 +675,9 @@ impl Client {
 
         let mut rbuilder = ResponseHeaderBuilder::new();
 
-        try!(self.perform_request(&request, &mut rbuilder));
+        self.perform_request(&request, &mut rbuilder)?;
 
-        Ok(try!(rbuilder.header()))
+        Ok(rbuilder.header()?)
     }
 
     /// Send a given GET request.
@@ -683,9 +688,9 @@ impl Client {
         }
         let mut rbuilder = ResponseBuilder::new();
 
-        try!(self.perform_request(&request, &mut rbuilder));
+        self.perform_request(&request, &mut rbuilder)?;
 
-        Ok(try!(rbuilder.response()))
+        Ok(rbuilder.response()?)
     }
 
     /// Send a given GET request, wait for the response header and terminate
@@ -696,9 +701,9 @@ impl Client {
 
         let mut rbuilder = ResponseHeaderBuilder::new();
 
-        try!(self.perform_request(&request, &mut rbuilder));
+        self.perform_request(&request, &mut rbuilder)?;
 
-        Ok(try!(rbuilder.header()))
+        Ok(rbuilder.header()?)
     }
 
     /// Create a HTTP request for a given method and path.
@@ -719,17 +724,17 @@ impl Client {
         let request = format!("{}", request)
             .into_bytes();
 
-        try!(self.stream.write_all(&request));
+        self.stream.write_all(&request)?;
 
         {
             let mut parser = ResponseParser::new(rhandler, 4096, 256);
             let mut buffer = [0u8; 4096];
 
-            let mut length = try!(self.stream.read(&mut buffer));
+            let mut length = self.stream.read(&mut buffer)?;
 
             while length > 0 {
-                if try!(parser.add(&buffer[..length])) {
-                    length = try!(self.stream.read(&mut buffer));
+                if parser.add(&buffer[..length])? {
+                    length = self.stream.read(&mut buffer)?;
                 } else {
                     break;
                 }

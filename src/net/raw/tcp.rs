@@ -372,15 +372,14 @@ pub mod scanner {
             &mut self,
             hosts: HI,
             endpoints: &PortCollection) -> pcap::Result<Vec<Service>> {
-            let sport     = 61234;
-            let mut gen   = TcpPortScannerPacketGenerator::new(
+            let sport   = 61234;
+            let mut gen = TcpPortScannerPacketGenerator::new(
                                 &self.device, hosts, sport, endpoints);
-            let filter    = format!("tcp and dst host {} and dst port {} and \
+            let filter  = format!("tcp and dst host {} and dst port {} and \
                                 tcp[tcpflags] & tcp-syn != 0 and \
                                 tcp[tcpflags] & tcp-ack != 0",
                                 self.device.ip_addr, sport);
-            let packets   = try!(self.scanner.sr(&filter,
-                                &mut gen, 1000000000));
+            let packets = self.scanner.sr(&filter, &mut gen, 1000000000)?;
 
             let mut services = Vec::new();
 

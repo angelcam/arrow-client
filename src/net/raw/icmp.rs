@@ -248,7 +248,7 @@ pub mod scanner {
             let mut gen = IcmpPacketGenerator::new(&self.device);
             let filter  = format!("icmp and icmp[icmptype] = icmp-echoreply \
                                     and ip dst {}", self.device.ip_addr);
-            let packets = try!(self.scanner.sr(&filter, &mut gen, 1000000000));
+            let packets = self.scanner.sr(&filter, &mut gen, 1000000000)?;
 
             let mut hosts = Vec::new();
 

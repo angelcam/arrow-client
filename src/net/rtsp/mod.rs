@@ -136,11 +136,14 @@ impl Request {
 
 impl Display for Request {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
-        try!(f.write_str(&format!("{} {} RTSP/1.0\r\n",
-            self.method.name(), &self.endpoint)));
+        f.write_str(
+            &format!("{} {} RTSP/1.0\r\n", self.method.name(), &self.endpoint)
+        )?;
+
         for &(ref name, ref val) in &self.headers {
-            try!(f.write_str(&format!("{}: {}\r\n", name, val)));
+            f.write_str(&format!("{}: {}\r\n", name, val))?;
         }
+
         f.write_str("\r\n")
     }
 }
@@ -165,7 +168,7 @@ impl Response {
 impl Display for Response {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
         let body = String::from_utf8_lossy(&self.body);
-        try!(Display::fmt(&self.header, f));
+        Display::fmt(&self.header, f)?;
         f.write_str(&body)
     }
 }
@@ -227,10 +230,12 @@ impl ResponseHeader {
 
 impl Display for ResponseHeader {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
-        try!(f.write_str(&format!("RTSP/1.0 {} {}\r\n",
-            self.code, &self.line)));
+        f.write_str(
+            &format!("RTSP/1.0 {} {}\r\n", self.code, &self.line)
+        )?;
+
         for &(ref name, ref value) in &self.headers {
-            try!(f.write_str(&format!("{}: {}\r\n", name, value)));
+            f.write_str(&format!("{}: {}\r\n", name, value))?;
         }
 
         f.write_str("\r\n")
@@ -270,9 +275,9 @@ impl ResponseHeaderParser {
         if self.lines >= self.max_lines {
             return Err(ParseError::from("maximum number of RTSP header lines exceeded"));
         } else if self.lines > 0 {
-            try!(self.parse_header_line(line));
+            self.parse_header_line(line)?;
         } else {
-            try!(self.parse_status_line(line));
+            self.parse_status_line(line)?;
         }
 
         self.lines += 1;
@@ -409,7 +414,7 @@ impl ResponseParser {
 
         while pos < chunk.len() && !self.is_complete() {
             if self.header.is_none() {
-                pos += try!(self.process_header_data(&chunk[pos..]));
+                pos += self.process_header_data(&chunk[pos..])?;
             } else {
                 pos += self.process_body_data(&chunk[pos..])
             }
@@ -423,16 +428,17 @@ impl ResponseParser {
         let mut pos = 0;
 
         while pos < data.len() && self.header.is_none() {
-            pos += try!(self.line_reader.add(&data[pos..]));
+            pos += self.line_reader.add(&data[pos..])?;
             if self.line_reader.is_complete() {
                 {
                     let line = self.line_reader.line();
-                    let line = try!(str::from_utf8(line));
-                    try!(self.header_parser.add(line));
+                    let line = str::from_utf8(line)?;
+
+                    self.header_parser.add(line)?;
                 }
 
                 if self.header_parser.is_complete() {
-                    let header = try!(self.header_parser.header());
+                    let header = self.header_parser.header()?;
 
                     self.expected = header.get("content-length")
                         .unwrap_or(0);
@@ -482,8 +488,9 @@ pub struct Client {
 impl Client {
     /// Create a new RTSP client for a given remote service.
     pub fn new(host: &str, port: u16) -> Result<Client> {
-        let address        = try!(utils::get_socket_address((host, port)));
-        let stream         = try!(TcpStream::connect(&address));
+        let address = utils::get_socket_address((host, port))?;
+        let stream  = TcpStream::connect(&address)?;
+
         let client = Client {
             parser: ResponseParser::new(4096, 256),
             stream: stream,
@@ -499,8 +506,8 @@ impl Client {
     /// Set timeout for read and write operations.
     pub fn set_timeout(&mut self, ms: Option<u64>) -> Result<()> {
         let duration = ms.map(|ms| Duration::from_millis(ms));
-        try!(self.stream.set_read_timeout(duration));
-        try!(self.stream.set_write_timeout(duration));
+        self.stream.set_read_timeout(duration)?;
+        self.stream.set_write_timeout(duration)?;
         Ok(())
     }
 
@@ -539,12 +546,12 @@ impl Client {
         let request = format!("{}", request)
             .into_bytes();
 
-        try!(self.stream.write_all(&request));
+        self.stream.write_all(&request)?;
 
         // process buffered data
         while self.offset < self.buffer.len() && !self.parser.is_complete() {
             let data = &self.buffer[self.offset..];
-            self.offset += try!(self.parser.add(data));
+            self.offset += self.parser.add(data)?;
         }
 
         // reset the buffer if it's empty
@@ -556,7 +563,7 @@ impl Client {
         let mut buffer = [0u8; 4096];
 
         while !self.parser.is_complete() {
-            let length = try!(self.stream.read(&mut buffer));
+            let length = self.stream.read(&mut buffer)?;
 
             if length == 0 {
                 break;
@@ -565,7 +572,7 @@ impl Client {
             let mut offset = 0;
 
             while offset < length && !self.parser.is_complete() {
-                offset += try!(self.parser.add(&buffer[offset..length]));
+                offset += self.parser.add(&buffer[offset..length])?;
             }
 
             // put all possible leftovers into the internal buffer
@@ -574,7 +581,7 @@ impl Client {
             }
         }
 
-        let response = try!(self.parser.response());
+        let response = self.parser.response()?;
 
         self.parser.clear();
 

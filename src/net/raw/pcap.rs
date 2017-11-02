@@ -260,8 +260,9 @@ impl Capture {
     /// Set packet filter.
     pub fn filter(&mut self, f: &str) -> Result<()> {
         unsafe {
-            let mut prog = try!(self.compile_filter(f));
-            let ret      = pcap_setfilter(self.h, &mut prog);
+            let mut prog = self.compile_filter(f)?;
+
+            let ret = pcap_setfilter(self.h, &mut prog);
 
             pcap_freecode(&mut prog);
 
@@ -363,9 +364,9 @@ impl Scanner {
         timeout: u64) -> Result<Vec<EtherPacket>> {
         self.set_end_indicator(false);
 
-        let thread = try!(self.start_listener(filter, timeout));
+        let thread = self.start_listener(filter, timeout)?;
 
-        try!(self.send_requests(gen));
+        self.send_requests(gen)?;
 
         self.set_end_indicator(true);
 
@@ -382,15 +383,14 @@ impl Scanner {
         timeout: u64) -> Result<JoinHandle<Vec<EtherPacket>>> {
         let ei = self.end_indicator.clone();
 
-        let cap = try!(CaptureBuilder::new(self.pc.clone(), &self.device))
+        let cap = CaptureBuilder::new(self.pc.clone(), &self.device)?
             .timeout((timeout / 1000000) as i32)
             .promisc(true);
 
-        let mut cap = try!(cap.activate());
+        let mut cap = cap.activate()?;
 
-        try!(cap.filter(filter));
-
-        try!(cap.set_non_blocking(true));
+        cap.filter(filter)?;
+        cap.set_non_blocking(true)?;
 
         let handle = thread::spawn(move || {
             Self::packet_listener(cap, ei, timeout)
@@ -439,11 +439,11 @@ impl Scanner {
     fn send_requests<G: PacketGenerator>(
         &mut self,
         gen: &mut G) -> Result<()> {
-        let cap     = try!(CaptureBuilder::new(self.pc.clone(), &self.device));
-        let mut cap = try!(cap.activate());
+        let mut cap = CaptureBuilder::new(self.pc.clone(), &self.device)?
+            .activate()?;
 
         while let Some(pkt) = gen.next() {
-            try!(cap.inject(pkt));
+            cap.inject(pkt)?;
         }
 
         Ok(())

@@ -541,7 +541,7 @@ impl Stream for ArrowClientContext {
             return Ok(Async::Ready(None))
         } else if let Some(msg) = self.messages.pop_front() {
             return Ok(Async::Ready(Some(msg)))
-        } else if let Async::Ready(msg) = try!(self.sessions.poll()) {
+        } else if let Async::Ready(msg) = self.sessions.poll()? {
             if msg.is_none() {
                 panic!("session manager returned end of stream")
             } else {

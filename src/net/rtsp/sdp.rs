@@ -387,7 +387,7 @@ impl<'a> LineIterator<'a> {
         let mut offset = self.offset;
 
         while !self.reader.is_complete() && offset < content.len() {
-            offset += try!(self.reader.append(&content[offset..]));
+            offset += self.reader.append(&content[offset..])?;
         }
 
         self.offset = offset;
@@ -414,7 +414,7 @@ impl SessionDescriptionParser {
         let reader    = LineReader::new(4096);
         let mut lines = LineIterator::new(reader, sdp);
 
-        try!(parser.process_lines(&mut lines));
+        parser.process_lines(&mut lines)?;
 
         Ok(parser.sdp)
     }
@@ -423,8 +423,8 @@ impl SessionDescriptionParser {
     fn process_lines<'a>(
         &mut self,
         lines: &mut LineIterator<'a>) -> Result<()> {
-        while let Some(line) = try!(lines.next()) {
-            try!(self.process_line(&line, lines));
+        while let Some(line) = lines.next()? {
+            self.process_line(&line, lines)?;
         }
 
         Ok(())
@@ -483,11 +483,11 @@ impl SessionDescriptionParser {
     fn process_time_description<'a>(
         &mut self, _: &[u8],
         lines: &mut LineIterator<'a>) -> Result<()> {
-        while let Some(ref line) = try!(lines.next()) {
+        while let Some(ref line) = lines.next()? {
             if let Some(first) = trim_left(line).first() {
                 match *first as char {
                     'r' => (),
-                    _   => try!(self.process_line(line, lines))
+                    _   => self.process_line(line, lines)?
                 }
             }
         }
@@ -516,15 +516,15 @@ impl SessionDescriptionParser {
 
         self.sdp.media_descriptions.push(md);
 
-        while let Some(ref line) = try!(lines.next()) {
+        while let Some(ref line) = lines.next()? {
             if let Some(first) = trim_left(line).first() {
                 match *first as char {
                     'i' => (),
                     'c' => (),
                     'b' => (),
                     'k' => (),
-                    'a' => try!(self.process_media_attribute(line)),
-                    _   => try!(self.process_line(line, lines))
+                    'a' => self.process_media_attribute(line)?,
+                    _   => self.process_line(line, lines)?
                 }
             }
         }

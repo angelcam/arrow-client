@@ -132,26 +132,26 @@ pub fn scan_network(
     let port_candidates = PortCollection::new()
         .add_all(port_set);
 
-    let mut report = try!(find_all_open_ports(&port_candidates));
+    let mut report = find_all_open_ports(&port_candidates)?;
 
     // note: we permit only one RTSP service per host (some stupid RTSP servers
     // are accessible from more than one port and they tend to crash when they
     // are accessed from the "incorrect" one)
-    let rtsp_ports = try!(find_rtsp_ports(&report, RTSP_PORT_CANDIDATES));
+    let rtsp_ports = find_rtsp_ports(&report, RTSP_PORT_CANDIDATES)?;
     let rtsp_port_priorities = get_port_priorities(RTSP_PORT_CANDIDATES);
     let rtsp_ports = filter_duplicit_services(
         &rtsp_ports,
         &rtsp_port_priorities);
 
     // note: we permit only one HTTP service per host
-    let http_ports = try!(find_http_ports(&report, HTTP_PORT_CANDIDATES));
+    let http_ports = find_http_ports(&report, HTTP_PORT_CANDIDATES)?;
     let http_port_priorities = get_port_priorities(HTTP_PORT_CANDIDATES);
     let http_ports = filter_duplicit_services(
         &http_ports,
         &http_port_priorities);
 
-    let rtsp_services  = try!(find_rtsp_services(rtsp_paths_file, &rtsp_ports));
-    let mjpeg_services = try!(find_mjpeg_services(mjpeg_paths_file, &http_ports));
+    let rtsp_services  = find_rtsp_services(rtsp_paths_file, &rtsp_ports)?;
+    let mjpeg_services = find_mjpeg_services(mjpeg_paths_file, &http_ports)?;
 
     let mut hosts = Vec::new();
 
@@ -177,12 +177,12 @@ pub fn scan_network(
 
 /// Load all path variants from a given file.
 fn load_paths(file: &str) -> Result<Vec<String>> {
-    let file      = try!(File::open(file));
+    let file      = File::open(file)?;
     let breader   = BufReader::new(file);
     let mut paths = Vec::new();
 
     for line in breader.lines() {
-        let path = try!(line);
+        let path = line?;
         if !path.starts_with('#') {
             paths.push(path);
         }
@@ -198,7 +198,7 @@ fn is_rtsp_service(addr: SocketAddr) -> Result<bool> {
 
     // treat connection errors as error responses
     if let Ok(mut client) = RtspClient::new(&host, port) {
-        try!(client.set_timeout(Some(1000)));
+        client.set_timeout(Some(1000))?;
         let response = client.options();
         Ok(response.is_ok())
     } else {
@@ -257,7 +257,7 @@ fn get_rtsp_describe_status(
         Ok(c)  => client = c
     }
 
-    try!(client.set_timeout(Some(1000)));
+    client.set_timeout(Some(1000))?;
 
     if let Ok(response) = client.describe(path) {
         let header = response.header;
@@ -291,7 +291,7 @@ fn is_http_service(addr: SocketAddr) -> Result<bool> {
 
     // treat connection errors as error responses
     if let Ok(mut client) = HttpClient::new(&host, port) {
-        try!(client.set_timeout(Some(1000)));
+        client.set_timeout(Some(1000))?;
         let response = client.get_header("/");
         Ok(response.is_ok())
     } else {
@@ -309,7 +309,7 @@ fn get_http_response_header(
 
     // ignore connection errors
     if let Ok(mut client) = HttpClient::new(&host, port) {
-        try!(client.set_timeout(Some(1000)));
+        client.set_timeout(Some(1000))?;
         if let Ok(header) = client.get_header(path) {
             Ok(Some(header))
         } else {
@@ -342,7 +342,7 @@ fn find_all_open_ports(ports: &PortCollection) -> Result<ScanResult> {
 
     for handle in threads {
         if let Ok(res) = handle.join() {
-            report.merge(try!(res));
+            report.merge(res?);
         } else {
             return Err(DiscoveryError::from("port scanner thread panicked"));
         }
@@ -359,11 +359,11 @@ fn find_open_ports_in_network(
     ports: &PortCollection) -> Result<ScanResult> {
     let mut report = ScanResult::new();
 
-    for (mac, ip) in try!(Ipv4ArpScanner::scan_device(pc.clone(), device)) {
+    for (mac, ip) in Ipv4ArpScanner::scan_device(pc.clone(), device)? {
         report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ARP);
     }
 
-    for (mac, ip) in try!(IcmpScanner::scan_device(pc.clone(), device)) {
+    for (mac, ip) in IcmpScanner::scan_device(pc.clone(), device)? {
         report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ICMP);
     }
 
@@ -371,7 +371,7 @@ fn find_open_ports_in_network(
         let hosts = report.hosts()
             .map(|host| (host.mac, host.ip));
 
-        try!(find_open_ports(pc, device, hosts, ports))
+        find_open_ports(pc, device, hosts, ports)?
     };
 
     for (mac, addr) in open_ports {
@@ -393,7 +393,7 @@ fn find_open_ports<H: IntoIterator<Item=(MacAddr, IpAddr)>>(
             _              => None
         });
 
-    let res = try!(TcpPortScanner::scan_ipv4_hosts(pc, device, hosts, ports))
+    let res = TcpPortScanner::scan_ipv4_hosts(pc, device, hosts, ports)?
         .into_iter()
         .map(|(mac, ip, p)| (mac, SocketAddr::V4(SocketAddrV4::new(ip, p))))
         .collect::<Vec<_>>();
@@ -422,7 +422,7 @@ fn find_rtsp_ports(
 
     for handle in threads {
         if let Ok((mac, addr, rtsp)) = handle.join() {
-            if try!(rtsp) {
+            if rtsp? {
                 res.push((mac, addr));
             }
         } else {
@@ -441,7 +441,7 @@ fn find_rtsp_path(
     let mut service = Service::unknown_rtsp(mac, addr);
 
     for path in paths {
-        let status = try!(get_rtsp_describe_status(addr, path));
+        let status = get_rtsp_describe_status(addr, path)?;
         if status == DescribeStatus::Ok {
             service = Service::rtsp(mac, addr, path.to_string());
         } else if status == DescribeStatus::Unsupported {
@@ -464,7 +464,7 @@ fn find_rtsp_path(
 fn find_rtsp_services(
     rtsp_paths_file: &str,
     rtsp_ports: &[(MacAddr, SocketAddr)]) -> Result<Vec<Service>> {
-    let paths = Arc::new(try!(load_paths(rtsp_paths_file)));
+    let paths = Arc::new(load_paths(rtsp_paths_file)?);
 
     let mut threads = Vec::new();
     let mut res     = Vec::new();
@@ -483,7 +483,7 @@ fn find_rtsp_services(
         match handle.join() {
             Err(_) => return Err(DiscoveryError::from(
                 "RTSP path testing thread panicked")),
-            Ok(svc) => res.push(try!(svc))
+            Ok(svc) => res.push(svc?)
         }
     }
 
@@ -511,7 +511,7 @@ fn find_http_ports(
 
     for handle in threads {
         if let Ok((mac, addr, http)) = handle.join() {
-            if try!(http) {
+            if http? {
                 res.push((mac, addr));
             }
         } else {
@@ -528,7 +528,7 @@ fn find_mjpeg_path(
     addr: SocketAddr,
     paths: &[String]) -> Result<Option<Service>> {
     for path in paths {
-        if let Some(header) = try!(get_http_response_header(addr, path)) {
+        if let Some(header) = get_http_response_header(addr, path)? {
             if header.code == 200 {
                 let ctype = header.get_str("content-type")
                     .unwrap_or("")
@@ -551,7 +551,7 @@ fn find_mjpeg_path(
 fn find_mjpeg_services(
     mjpeg_paths_file: &str,
     mjpeg_ports: &[(MacAddr, SocketAddr)]) -> Result<Vec<Service>> {
-    let paths = Arc::new(try!(load_paths(mjpeg_paths_file)));
+    let paths = Arc::new(load_paths(mjpeg_paths_file)?);
 
     let mut threads = Vec::new();
     let mut res     = Vec::new();
@@ -570,7 +570,7 @@ fn find_mjpeg_services(
         match handle.join() {
             Err(_) => return Err(DiscoveryError::from(
                 "MJPEG path testing thread panicked")),
-            Ok(svc) => if let Some(svc) = try!(svc) {
+            Ok(svc) => if let Some(svc) = svc? {
                 res.push(svc)
             }
         }

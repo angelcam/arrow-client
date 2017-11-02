@@ -94,12 +94,12 @@ impl FromStr for MacAddr {
             .collect::<Vec<_>>();
         if octets.len() == 6 {
             Ok(MacAddr::new(
-                try!(octets[0].clone()),
-                try!(octets[1].clone()),
-                try!(octets[2].clone()),
-                try!(octets[3].clone()),
-                try!(octets[4].clone()),
-                try!(octets[5].clone())))
+                octets[0].clone()?,
+                octets[1].clone()?,
+                octets[2].clone()?,
+                octets[3].clone()?,
+                octets[4].clone()?,
+                octets[5].clone()?))
         } else {
             Err(AddrParseError::from("unable to parse a MAC address, invalid number of octets"))
         }
