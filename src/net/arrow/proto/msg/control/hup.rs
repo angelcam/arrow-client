@@ -49,7 +49,7 @@ impl Encode for HupMessage {
             error_code: self.error_code.to_be(),
         };
 
-        buf.extend(utils::as_bytes(&be_msg))
+        buf.extend_from_slice(utils::as_bytes(&be_msg))
     }
 }
 

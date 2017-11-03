@@ -52,7 +52,7 @@ impl RegisterMessageHeader {
 
 impl Encode for RegisterMessageHeader {
     fn encode(&self, buf: &mut BytesMut) {
-        buf.extend(utils::as_bytes(self))
+        buf.extend_from_slice(utils::as_bytes(self))
     }
 }
 

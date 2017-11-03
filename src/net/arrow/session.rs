@@ -99,7 +99,7 @@ impl SessionContext {
             // we cannot backpressure here, so we'll set an error state
             self.set_error(ConnectionError::from("output buffer limit exceeded"));
         } else {
-            self.output.extend(data);
+            self.output.extend_from_slice(data);
 
             // we MUST notify any possible task consuming the output buffer that
             // there is some data available again
@@ -165,7 +165,7 @@ impl SessionContext {
             take = INPUT_BUFFER_LIMIT - self.input.len();
         }
 
-        self.input.extend(msg.split_to(take));
+        self.input.extend_from_slice(&msg.split_to(take));
 
         // we MUST notify any possible task consuming the input buffer that
         // there is some data available again

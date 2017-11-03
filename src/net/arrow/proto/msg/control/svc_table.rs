@@ -75,7 +75,7 @@ impl Encode for ElementHeader {
             port:       self.port.to_be(),
         };
 
-        buf.extend(utils::as_bytes(&be_header))
+        buf.extend_from_slice(utils::as_bytes(&be_header))
     }
 }
 
@@ -104,8 +104,8 @@ impl Encode for Element {
         let path = self.service.path()
             .unwrap_or("");
 
-        buf.extend(path.as_bytes());
-        buf.extend(&[0]);
+        buf.extend_from_slice(path.as_bytes());
+        buf.extend_from_slice(&[0]);
     }
 }
 

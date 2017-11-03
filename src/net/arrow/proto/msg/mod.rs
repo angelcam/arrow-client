@@ -77,7 +77,7 @@ impl Encode for ArrowMessageHeader {
             size:    self.size.to_be()
         };
 
-        buf.extend(utils::as_bytes(&be_header))
+        buf.extend_from_slice(utils::as_bytes(&be_header))
     }
 }
 
@@ -158,7 +158,7 @@ impl Encode for ArrowMessage {
 
         header.encode(buf);
 
-        buf.extend(self.payload.as_ref())
+        buf.extend_from_slice(self.payload.as_ref())
     }
 }
 

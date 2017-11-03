@@ -58,7 +58,7 @@ impl Encode for ElementHeader {
             port_count: self.port_count.to_be(),
         };
 
-        buf.extend(utils::as_bytes(&be_header))
+        buf.extend_from_slice(utils::as_bytes(&be_header))
     }
 }
 
@@ -82,7 +82,7 @@ impl Encode for Element {
             .encode(buf);
 
         for port in self.host.ports() {
-            buf.extend(utils::as_bytes(&port.to_be()));
+            buf.extend_from_slice(utils::as_bytes(&port.to_be()));
         }
     }
 }
@@ -116,7 +116,7 @@ impl Encode for HostTableHeader {
             count: self.count.to_be(),
         };
 
-        buf.extend(utils::as_bytes(&be_header))
+        buf.extend_from_slice(utils::as_bytes(&be_header))
     }
 }
 

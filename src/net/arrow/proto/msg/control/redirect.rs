@@ -28,8 +28,8 @@ pub struct RedirectMessage {
 
 impl Encode for RedirectMessage {
     fn encode(&self, buf: &mut BytesMut) {
-        buf.extend(self.target.as_bytes());
-        buf.extend(&[0]);
+        buf.extend_from_slice(self.target.as_bytes());
+        buf.extend_from_slice(&[0]);
     }
 }
 

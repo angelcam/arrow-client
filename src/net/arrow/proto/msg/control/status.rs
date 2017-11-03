@@ -56,7 +56,7 @@ impl Encode for StatusMessage {
             active_sessions: self.active_sessions.to_be()
         };
 
-        buf.extend(utils::as_bytes(&be_msg))
+        buf.extend_from_slice(utils::as_bytes(&be_msg))
     }
 }
 

@@ -51,7 +51,7 @@ impl Encode for ScanReportMessageHeader {
             request_id: self.request_id.to_be(),
         };
 
-        buf.extend(utils::as_bytes(&be_header))
+        buf.extend_from_slice(utils::as_bytes(&be_header))
     }
 }
 

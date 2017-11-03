@@ -170,7 +170,7 @@ impl Encode for ControlMessageHeader {
             msg_type: self.msg_type.to_be()
         };
 
-        buf.extend(utils::as_bytes(&be_header))
+        buf.extend_from_slice(utils::as_bytes(&be_header))
     }
 }
 

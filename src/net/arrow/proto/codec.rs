@@ -28,7 +28,7 @@ pub trait Encode {
 
 impl<T: AsRef<[u8]>> Encode for T {
     fn encode(&self, buf: &mut BytesMut) {
-        buf.extend(self.as_ref())
+        buf.extend_from_slice(self.as_ref())
     }
 }
 
@@ -91,7 +91,7 @@ impl Encoder for RawCodec {
     type Error = ConnectionError;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.extend(item);
+        dst.extend_from_slice(&item);
         Ok(())
     }
 }
