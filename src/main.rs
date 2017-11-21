@@ -14,6 +14,7 @@
 
 //! Arrow Client definitions.
 
+extern crate farmhash;
 extern crate libc;
 extern crate native_tls;
 extern crate openssl;

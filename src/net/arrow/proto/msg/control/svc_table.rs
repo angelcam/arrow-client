@@ -14,6 +14,7 @@
 
 use std::mem;
 
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use bytes::BytesMut;
@@ -123,20 +124,22 @@ impl MessageBody for Element {
 /// Simple service table implementation.
 #[derive(Clone)]
 pub struct SimpleServiceTable {
-    elements: Vec<Element>,
+    map: HashMap<u16, Element>,
 }
 
 impl<I> From<I> for SimpleServiceTable
     where I: IntoIterator<Item=(u16, Service)> {
     fn from(services: I) -> SimpleServiceTable {
-        let mut elements = Vec::new();
+        let mut map = HashMap::new();
 
         for (id, service) in services {
-            elements.push(Element::new(id, service));
+            map.insert(
+                id,
+                Element::new(id, service));
         }
 
         SimpleServiceTable {
-            elements: elements,
+            map: map,
         }
     }
 }
@@ -147,13 +150,11 @@ impl ServiceTable for SimpleServiceTable {
             return Some(Service::control())
         }
 
-        for element in &self.elements {
-            if id == element.id {
-                return Some(element.service.clone())
-            }
+        if let Some(elem) = self.map.get(&id) {
+            Some(elem.service.clone())
+        } else {
+            None
         }
-
-        None
     }
 
     fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16> {
@@ -161,9 +162,9 @@ impl ServiceTable for SimpleServiceTable {
             return Some(0);
         }
 
-        for element in &self.elements {
-            if *identifier == element.service.to_service_identifier() {
-                return Some(element.id);
+        for elem in self.map.values() {
+            if *identifier == elem.service.to_service_identifier() {
+                return Some(elem.id);
             }
         }
 
@@ -177,8 +178,8 @@ impl ServiceTable for SimpleServiceTable {
 
 impl Encode for SimpleServiceTable {
     fn encode(&self, buf: &mut BytesMut) {
-        for element in &self.elements {
-            element.encode(buf);
+        for elem in self.map.values() {
+            elem.encode(buf);
         }
 
         Element::new(0, Service::control())
@@ -190,8 +191,8 @@ impl MessageBody for SimpleServiceTable {
     fn len(&self) -> usize {
         let mut len = 0;
 
-        for element in &self.elements {
-            len += element.len();
+        for elem in self.map.values() {
+            len += elem.len();
         }
 
         let control = Element::new(0, Service::control());

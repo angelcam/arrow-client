@@ -11,6 +11,7 @@ discovery = []
 
 [dependencies]
 bytes        = "0.4.5"
+farmhash     = "1.1.5"
 futures      = "0.1.16"
 json         = "0.11.9"
 libc         = "0.2.31"

@@ -19,8 +19,11 @@ use std::fmt;
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, Mutex};
+
+use farmhash;
 
 use json::JsonValue;
 
@@ -47,6 +50,40 @@ pub use self::service::{
 };
 
 const ACTIVE_THRESHOLD: i64 = 1200;
+
+/// Stable implementation of the Hasher trait.
+struct StableHasher {
+    data: Vec<u8>,
+}
+
+impl StableHasher {
+    /// Create a new instance of StableHasher with a given capacity of the
+    /// internal data buffer.
+    fn new(capacity: usize) -> StableHasher {
+        StableHasher {
+            data: Vec::with_capacity(capacity),
+        }
+    }
+}
+
+impl Hasher for StableHasher {
+    fn finish(&self) -> u64 {
+        farmhash::fingerprint64(&self.data)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        self.data.extend_from_slice(bytes)
+    }
+}
+
+/// Compute an u64 hash for a given hashable object using a stable hasher.
+fn stable_hash<T: Hash>(val: &T) -> u64 {
+    let mut hasher = StableHasher::new(512);
+
+    val.hash(&mut hasher);
+
+    hasher.finish()
+}
 
 /// Get current UNIX timestamp in UTC.
 fn get_utc_timestamp() -> i64 {
@@ -89,6 +126,8 @@ impl ServiceTable for Box<ServiceTable> {
 /// Service table element.
 #[derive(Clone)]
 struct ServiceTableElement {
+    /// Service ID.
+    id:             u16,
     /// Service.
     service:        Service,
     /// Flag indicating a manually added service.
@@ -102,9 +141,19 @@ struct ServiceTableElement {
 }
 
 impl ServiceTableElement {
+    /// Create a new Control Protocol service table element.
+    fn control() -> ServiceTableElement {
+        ServiceTableElement::new(
+            0,
+            Service::control(),
+            true,
+            true)
+    }
+
     /// Create a new service table element.
-    fn new(svc: Service, static_svc: bool, enabled: bool) -> ServiceTableElement {
+    fn new(id: u16, svc: Service, static_svc: bool, enabled: bool) -> ServiceTableElement {
         ServiceTableElement {
+            id:             id,
             service:        svc,
             static_service: static_svc,
             enabled:        enabled,
@@ -158,6 +207,7 @@ impl ToJson for ServiceTableElement {
             .unwrap_or("");
 
         object!{
+            "id" => self.id,
             "svc_type" => svc_type.code(),
             "mac" => format!("{}", mac),
             "address" => format!("{}", address),
@@ -248,6 +298,9 @@ impl FromJson for ServiceTableElement {
             _ => Err(ParseError::from("unknown service type"))
         };
 
+        let id = service.get("id")
+            .and_then(|v| v.as_u16())
+            .unwrap_or(0);
         let static_svc = service.get("static_svc")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
@@ -259,6 +312,7 @@ impl FromJson for ServiceTableElement {
             .unwrap_or(true);
 
         let elem = ServiceTableElement {
+            id:             id,
             service:        svc?,
             static_service: static_svc,
             last_seen:      last_seen,
@@ -273,18 +327,31 @@ impl FromJson for ServiceTableElement {
 /// Service table internal data.
 #[derive(Clone)]
 struct ServiceTableData {
-    map:      HashMap<ServiceIdentifier, usize>,
-    services: Vec<ServiceTableElement>,
-    version:  usize,
+    identifier_map: HashMap<ServiceIdentifier, u16>,
+    service_map:    HashMap<u16, ServiceTableElement>,
+    version:        usize,
 }
 
 impl ServiceTableData {
     /// Create a new instance of ServiceTableData.
     fn new() -> ServiceTableData {
+        let elem = ServiceTableElement::control();
+
+        let mut identifier_map = HashMap::new();
+        let mut service_map = HashMap::new();
+
+        identifier_map.insert(
+            elem.service.to_service_identifier(),
+            elem.id);
+
+        service_map.insert(
+            elem.id,
+            elem);
+
         ServiceTableData {
-            map:      HashMap::new(),
-            services: Vec::new(),
-            version:  0,
+            identifier_map: identifier_map,
+            service_map:    service_map,
+            version:        0,
         }
     }
 
@@ -295,10 +362,8 @@ impl ServiceTableData {
 
     /// Get visible service for a given ID.
     fn get(&self, id: u16) -> Option<Service> {
-        if id == 0 {
-            Some(Service::control())
-        } else if let Some(ref elem) = self.services.get((id - 1) as usize) {
-            if elem.is_visible() {
+        if let Some(ref elem) = self.service_map.get(&id) {
+            if elem.is_visible() || elem.service.is_control() {
                 Some(elem.to_service())
             } else {
                 None
@@ -311,14 +376,12 @@ impl ServiceTableData {
     /// Get service ID for a given ServiceIdentifier or None if there is no such service or
     /// the given service is invisible.
     fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16> {
-        if identifier.is_control() {
-            Some(0)
-        } else if let Some(index) = self.map.get(identifier) {
-            let elem = self.services.get(*index)
+        if let Some(id) = self.identifier_map.get(identifier) {
+            let elem = self.service_map.get(id)
                 .expect("broken service table");
 
-            if elem.is_visible() {
-                Some((index + 1) as u16)
+            if elem.is_visible() || elem.service.is_control() {
+                Some(*id)
             } else {
                 None
             }
@@ -329,16 +392,54 @@ impl ServiceTableData {
 
     /// Get visible services.
     fn visible(&self) -> ServiceTableIterator {
-        let visible = self.services.iter()
-            .enumerate()
-            .filter(|&(_, elem)| elem.is_visible());
+        let visible = self.service_map.values()
+            .filter(|elem| elem.is_visible() && !elem.service.is_control());
 
         ServiceTableIterator::new(visible)
     }
 
+    /// Insert a new element into the table and return its ID.
+    fn add_service(&mut self, svc: Service, static_svc: bool, enabled: bool) -> u16 {
+        let key = svc.to_service_identifier();
+        let id = stable_hash(&key) as u16;
+
+        assert!(!self.identifier_map.contains_key(&key));
+
+        let elem = ServiceTableElement::new(id, svc, static_svc, enabled);
+
+        if elem.is_visible() {
+            self.version += 1;
+        }
+
+        self.add_element(elem)
+    }
+
+    /// Add a given service table element into the table and return its ID.
+    fn add_element(&mut self, mut elem: ServiceTableElement) -> u16 {
+        let mut current_id = elem.id;
+
+        while self.service_map.contains_key(&current_id) {
+            current_id = current_id.wrapping_add(1);
+
+            if current_id == elem.id {
+                panic!("service table is full");
+            }
+        }
+
+        elem.id = current_id;
+
+        self.identifier_map.insert(
+            elem.service.to_service_identifier(),
+            current_id);
+
+        self.service_map.insert(current_id, elem);
+
+        current_id
+    }
+
     /// Update a given table element and return its ID.
-    fn update_element(&mut self, index: usize, svc: Service, enabled: bool) -> u16 {
-        let elem = self.services.get_mut(index)
+    fn update_element(&mut self, id: u16, svc: Service, enabled: bool) -> u16 {
+        let elem = self.service_map.get_mut(&id)
             .expect("broken service table");
 
         let svc_change  = elem.service != svc;
@@ -352,26 +453,6 @@ impl ServiceTableData {
             self.version += 1;
         }
 
-        (index + 1) as u16
-    }
-
-    /// Insert a new element into the table and return its ID.
-    fn insert_element(&mut self, svc: Service, static_svc: bool, enabled: bool) -> u16 {
-        let id = self.services.len() as u16 + 1;
-
-        let key = svc.to_service_identifier();
-
-        assert!(!self.map.contains_key(&key));
-
-        let elem = ServiceTableElement::new(svc, static_svc, enabled);
-
-        if elem.is_visible() {
-            self.version += 1;
-        }
-
-        self.map.insert(key, self.services.len());
-        self.services.push(elem);
-
         id
     }
 
@@ -379,15 +460,13 @@ impl ServiceTableData {
     fn update(&mut self, svc: Service, static_svc: bool, enabled: bool) -> u16 {
         let key = svc.to_service_identifier();
 
-        let index = self.map.get(&key)
-            .map(|index| *index);
+        let id = self.identifier_map.get(&key)
+            .map(|id| *id);
 
-        if svc.is_control() {
-            0
-        } else if let Some(index) = index {
-            self.update_element(index, svc, enabled)
+        if let Some(id) = id {
+            self.update_element(id, svc, enabled)
         } else {
-            self.insert_element(svc, static_svc, enabled)
+            self.add_service(svc, static_svc, enabled)
         }
     }
 
@@ -395,7 +474,7 @@ impl ServiceTableData {
     fn update_active_services(&mut self) {
         let timestamp = get_utc_timestamp();
 
-        for elem in &mut self.services {
+        for elem in self.service_map.values_mut() {
             let visible = elem.is_visible();
             elem.update_active_flag(timestamp);
             if visible != elem.is_visible() {
@@ -407,7 +486,8 @@ impl ServiceTableData {
 
 impl ToJson for ServiceTableData {
     fn to_json(&self) -> JsonValue {
-        let services = self.services.iter()
+        let services = self.service_map.values()
+            .filter(|elem| !elem.service.is_control())
             .map(|elem| elem.to_json())
             .collect::<Vec<_>>();
 
@@ -419,11 +499,7 @@ impl ToJson for ServiceTableData {
 
 impl FromJson for ServiceTableData {
     fn from_json(value: JsonValue) -> Result<Self, ParseError> {
-        let mut res = ServiceTableData {
-            services: Vec::new(),
-            map:      HashMap::new(),
-            version:  0,
-        };
+        let mut res = ServiceTableData::new();
 
         let mut table;
 
@@ -434,23 +510,26 @@ impl FromJson for ServiceTableData {
         }
 
         let tmp = table.remove("services")
-            .ok_or(ParseError::from("missing field \"mac\""))?;
+            .ok_or(ParseError::from("missing field \"services\""))?;
 
         let services;
 
         if let JsonValue::Array(svcs) = tmp {
-            services = svcs;
+            services = svcs.into_iter();
         } else {
             return Err(ParseError::from("JSON array expected"));
         }
 
-        for service in services {
-            let index = res.services.len();
-            let elem = ServiceTableElement::from_json(service)?;
-            let key = elem.service.to_service_identifier();
+        for (index, service) in services.enumerate() {
+            let use_array_index = !service.has_key("id");
 
-            res.services.push(elem);
-            res.map.insert(key, index);
+            let mut elem = ServiceTableElement::from_json(service)?;
+
+            if use_array_index {
+                elem.id = (index + 1) as u16;
+            }
+
+            res.add_element(elem);
         }
 
         Ok(res)
@@ -471,10 +550,10 @@ pub struct ServiceTableIterator {
 impl ServiceTableIterator {
     /// Create a new service table iterator.
     fn new<'a, I>(elements: I) -> ServiceTableIterator
-        where I: IntoIterator<Item=(usize, &'a ServiceTableElement)> {
+        where I: IntoIterator<Item=&'a ServiceTableElement> {
         let elements = elements.into_iter()
-            .map(|(index, elem)| {
-                (index as u16 + 1, elem.to_service())
+            .map(|elem| {
+                (elem.id, elem.to_service())
             })
             .collect::<Vec<_>>();
 
@@ -672,11 +751,210 @@ fn test_visible_services_iterator() {
     table.update(svc_2.clone(), true, false);
     table.update(svc_3.clone(), true, true);
 
-    let visible = table.visible()
+    let mut visible = table.visible()
         .collect::<Vec<_>>();
 
+    visible.sort_by_key(|&(id, _)| id);
+
+    let mut expected = vec![
+        (41839, svc_1),
+        (26230, svc_3),
+    ];
+
+    expected.sort_by_key(|&(id, _)| id);
+
+    assert_eq!(visible, expected);
+}
+
+#[cfg(test)]
+#[test]
+fn test_deserialization_and_initialization() {
+    let json = object!{
+        "services" => array![
+            object!{
+                "svc_type" => 1,
+                "mac" => "00:00:00:00:00:00",
+                "address" => "0.0.0.0:0",
+                "path" => "/1",
+                "static_svc" => true,
+                "last_seen" => 123,
+                "active" => true
+            },
+            object!{
+                "svc_type" => 1,
+                "mac" => "00:00:00:00:00:00",
+                "address" => "0.0.0.0:0",
+                "path" => "/2",
+                "static_svc" => true,
+                "last_seen" => 123,
+                "active" => true
+            },
+            object!{
+                "svc_type" => 1,
+                "mac" => "00:00:00:00:00:00",
+                "address" => "0.0.0.0:0",
+                "path" => "/3",
+                "static_svc" => false,
+                "last_seen" => 123,
+                "active" => true
+            },
+            object!{
+                "id" => 10000,
+                "svc_type" => 1,
+                "mac" => "00:00:00:00:00:00",
+                "address" => "0.0.0.0:0",
+                "path" => "/4",
+                "static_svc" => false,
+                "last_seen" => 123,
+                "active" => true
+            }
+        ]
+    };
+
+    let mut table = SharedServiceTable::from_json(json)
+        .expect("expected valid service table JSON");
+
+    assert_eq!(table.version(), 0);
+
+    let mac = MacAddr::zero();
+    let ip = Ipv4Addr::new(0, 0, 0, 0);
+    let addr = SocketAddr::V4(SocketAddrV4::new(ip, 0));
+
+    let svc_1 = Service::rtsp(mac, addr, "/1".to_string());
+    let svc_2 = Service::rtsp(mac, addr, "/2".to_string());
+    let svc_3 = Service::rtsp(mac, addr, "/3".to_string());
+    let svc_4 = Service::rtsp(mac, addr, "/4".to_string());
+    let svc_5 = Service::rtsp(mac, addr, "/5".to_string());
+
+    let mut visible = table.get_ref()
+        .visible()
+        .collect::<Vec<_>>();
+
+    visible.sort_by_key(|&(id, _)| id);
+
     assert_eq!(visible, vec![
-        (1, svc_1),
-        (3, svc_3),
+        (3,     svc_3.clone()),
+        (10000, svc_4.clone()),
     ]);
+
+    // add the first static service
+    table.add_static(svc_1.clone());
+
+    let mut visible = table.get_ref()
+        .visible()
+        .collect::<Vec<_>>();
+
+    visible.sort_by_key(|&(id, _)| id);
+
+    assert_eq!(visible, vec![
+        (1,     svc_1.clone()),
+        (3,     svc_3.clone()),
+        (10000, svc_4.clone()),
+    ]);
+
+    assert_eq!(table.version(), 1);
+
+    // add the first static service again
+    table.add_static(svc_1.clone());
+
+    let mut visible = table.get_ref()
+        .visible()
+        .collect::<Vec<_>>();
+
+    visible.sort_by_key(|&(id, _)| id);
+
+    assert_eq!(visible, vec![
+        (1,     svc_1.clone()),
+        (3,     svc_3.clone()),
+        (10000, svc_4.clone()),
+    ]);
+
+    assert_eq!(table.version(), 1);
+
+    // add the second static service
+    table.add_static(svc_2.clone());
+
+    let mut visible = table.get_ref()
+        .visible()
+        .collect::<Vec<_>>();
+
+    visible.sort_by_key(|&(id, _)| id);
+
+    assert_eq!(visible, vec![
+        (1,     svc_1.clone()),
+        (2,     svc_2.clone()),
+        (3,     svc_3.clone()),
+        (10000, svc_4.clone()),
+    ]);
+
+    assert_eq!(table.version(), 2);
+
+    // add a new service
+    table.add(svc_5.clone());
+
+    let mut visible = table.get_ref()
+        .visible()
+        .collect::<Vec<_>>();
+
+    visible.sort_by_key(|&(id, _)| id);
+
+    assert_eq!(visible, vec![
+        (1,     svc_1.clone()),
+        (2,     svc_2.clone()),
+        (3,     svc_3.clone()),
+        (10000, svc_4.clone()),
+        (33402, svc_5.clone()),
+    ]);
+
+    assert_eq!(table.version(), 3);
+
+    // some additional consistency checks
+    let mut internal = table.data.lock()
+        .unwrap();
+
+    let control = Service::control();
+    let key = control.to_service_identifier();
+
+    assert_eq!(internal.get(0), Some(control.clone()));
+    assert_eq!(internal.get_id(&key), Some(0));
+    assert_eq!(internal.service_map.len(), 6);
+    assert_eq!(internal.identifier_map.len(), 6);
+
+    internal.update(control.clone(), true, true);
+
+    assert_eq!(internal.get(0), Some(control.clone()));
+    assert_eq!(internal.get_id(&key), Some(0));
+    assert_eq!(internal.service_map.len(), 6);
+    assert_eq!(internal.identifier_map.len(), 6);
+
+    let mut visible = internal.visible()
+        .collect::<Vec<_>>();
+
+    visible.sort_by_key(|&(id, _)| id);
+
+    assert_eq!(visible, vec![
+        (1,     svc_1.clone()),
+        (2,     svc_2.clone()),
+        (3,     svc_3.clone()),
+        (10000, svc_4.clone()),
+        (33402, svc_5.clone()),
+    ]);
+
+    assert_eq!(internal.version(), 3);
+
+    // update the list of active services
+    internal.update_active_services();
+
+    let mut visible = internal.visible()
+        .collect::<Vec<_>>();
+
+    visible.sort_by_key(|&(id, _)| id);
+
+    assert_eq!(visible, vec![
+        (1,     svc_1.clone()),
+        (2,     svc_2.clone()),
+        (33402, svc_5.clone()),
+    ]);
+
+    assert_eq!(internal.version(), 5);
 }
