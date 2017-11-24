@@ -19,6 +19,7 @@ pub mod rtsp;
 pub mod http;
 
 pub mod nhttp;
+pub mod nrtsp;
 
 pub mod raw;
 pub mod arrow;

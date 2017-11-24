@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod generic;
+pub mod sdp;
 
 use std::io;
 use std::fmt;
@@ -23,13 +23,15 @@ use std::str::FromStr;
 
 use net;
 
-use net::url::Url;
+use net::nhttp::generic;
 
-use self::generic::HeaderField;
-use self::generic::ClientCodec as GenericClientCodec;
-use self::generic::Request as GenericRequest;
-use self::generic::Response as GenericResponse;
-use self::generic::RequestBuilder as GenericRequestBuilder;
+use net::nhttp::generic::HeaderField;
+use net::nhttp::generic::ClientCodec as GenericClientCodec;
+use net::nhttp::generic::Request as GenericRequest;
+use net::nhttp::generic::Response as GenericResponse;
+use net::nhttp::generic::RequestBuilder as GenericRequestBuilder;
+
+use net::url::Url;
 
 use bytes::BytesMut;
 
@@ -41,7 +43,7 @@ use tokio_core::reactor::Handle as TokioHandle;
 use tokio_io::AsyncRead;
 use tokio_io::codec::{Decoder, Encoder};
 
-/// HTTP codec error.
+/// RTSP codec error.
 #[derive(Debug, Clone)]
 pub struct Error {
     msg: String,
@@ -83,31 +85,38 @@ impl From<generic::Error> for Error {
     }
 }
 
-/// HTTP method.
+/// RTSP method.
+#[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Method {
     OPTIONS,
-    HEAD,
-    GET,
-    POST,
-    PUT,
-    DELETE,
-    TRACE,
-    CONNECT,
+    DESCRIBE,
+    ANNOUNCE,
+    SETUP,
+    PLAY,
+    PAUSE,
+    TEARDOWN,
+    GET_PARAMETER,
+    SET_PARAMETER,
+    REDIRECT,
+    RECORD,
 }
 
 impl Method {
     /// Get method name.
     fn name(self) -> &'static str {
         match self {
-            Method::OPTIONS => "OPTIONS",
-            Method::HEAD    => "HEAD",
-            Method::GET     => "GET",
-            Method::POST    => "POST",
-            Method::PUT     => "PUT",
-            Method::DELETE  => "DELETE",
-            Method::TRACE   => "TRACE",
-            Method::CONNECT => "CONNECT",
+            Method::OPTIONS       => "OPTIONS",
+            Method::DESCRIBE      => "DESCRIBE",
+            Method::ANNOUNCE      => "ANNOUNCE",
+            Method::SETUP         => "SETUP",
+            Method::PLAY          => "PLAY",
+            Method::PAUSE         => "PAUSE",
+            Method::TEARDOWN      => "TEARDOWN",
+            Method::GET_PARAMETER => "GET_PARAMETER",
+            Method::SET_PARAMETER => "SET_PARAMETER",
+            Method::REDIRECT      => "REDIRECT",
+            Method::RECORD        => "RECORD",
         }
     }
 }
@@ -115,16 +124,14 @@ impl Method {
 /// Valid URL schemes.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Scheme {
-    HTTP,
-    HTTPS,
+    RTSP,
 }
 
 impl Scheme {
     /// Get default port for this URL scheme.
     fn default_port(self) -> u16 {
         match self {
-            Scheme::HTTP  => 80,
-            Scheme::HTTPS => 443,
+            Scheme::RTSP  => 554,
         }
     }
 }
@@ -134,14 +141,13 @@ impl FromStr for Scheme {
 
     fn from_str(method: &str) -> Result<Scheme, Error> {
         match &method.to_lowercase() as &str {
-            "http"  => Ok(Scheme::HTTP),
-            "https" => Ok(Scheme::HTTPS),
+            "rtsp"  => Ok(Scheme::RTSP),
             _ => Err(Error::from("invalid URL scheme")),
         }
     }
 }
 
-/// HTTP request.
+/// RTSP request.
 #[derive(Clone)]
 pub struct Request {
     scheme:           Scheme,
@@ -155,8 +161,6 @@ pub struct Request {
 impl Request {
     /// Send the request and return a future response
     pub fn send(self, handle: &TokioHandle) -> Result<FutureResponse, Error> {
-        // TODO: add TLS layer in case of HTTPS scheme
-
         let addr = net::utils::get_socket_address((self.host.as_ref(), self.port))
             .map_err(|_| Error::from("unable to resolve a given socket address"))?;
 
@@ -184,7 +188,7 @@ impl Request {
     }
 }
 
-/// HTTP request builder.
+/// RTSP request builder.
 pub struct RequestBuilder {
     scheme:           Scheme,
     host:             String,
@@ -195,7 +199,7 @@ pub struct RequestBuilder {
 }
 
 impl RequestBuilder {
-    /// Create a new HTTP request builder.
+    /// Create a new RTSP request builder.
     pub fn new(method: Method, url: &str) -> Result<RequestBuilder, Error> {
         let url = Url::from_str(url)
             .map_err(|_| Error::from("malformed URL"))?;
@@ -206,18 +210,11 @@ impl RequestBuilder {
         let port = url.port()
             .unwrap_or(scheme.default_port());
 
-        let mut path = url.path()
-            .to_string();
-
-        if let Some(query) = url.query() {
-            path += query;
-        }
-
         let inner = GenericRequestBuilder::new(
-            "HTTP",
+            "RTSP",
             "1.0",
             method.name(),
-            &path);
+            url.as_ref());
 
         let builder = RequestBuilder {
             scheme:           scheme,
@@ -231,15 +228,14 @@ impl RequestBuilder {
         Ok(builder)
     }
 
-    /// Create a new GET request.
-    pub fn get(url: &str) -> Result<RequestBuilder, Error> {
-        RequestBuilder::new(Method::GET, url)
+    /// Create a new OPTIONS request.
+    pub fn options(url: &str) -> Result<RequestBuilder, Error> {
+        RequestBuilder::new(Method::OPTIONS, url)
     }
 
-    /// Set protocol version.
-    pub fn set_version(mut self, version: &str) -> RequestBuilder {
-        self.inner = self.inner.set_version(version);
-        self
+    /// Create a new DESCRIBE request.
+    pub fn describe(url: &str) -> Result<RequestBuilder, Error> {
+        RequestBuilder::new(Method::DESCRIBE, url)
     }
 
     /// Add a given header field.
@@ -273,25 +269,25 @@ impl RequestBuilder {
     }
 }
 
-/// HTTP response.
+/// RTSP response.
 pub struct Response {
     inner: GenericResponse,
 }
 
 impl Response {
-    /// Create a new HTTP response from a given generic response.
+    /// Create a new RTSP response from a given generic response.
     fn new(response: GenericResponse) -> Result<Response, Error> {
         {
             let header = response.header();
             let protocol = header.protocol();
             let version = header.version();
 
-            if protocol != "HTTP" {
+            if protocol != "RTSP" {
                 return Err(Error::from("invalid protocol"));
             }
 
-            if version != "1.0" && version != "1.1" {
-                return Err(Error::from("unsupported HTTP version"));
+            if version != "1.0" {
+                return Err(Error::from("unsupported RTSP version"));
             }
         }
 
@@ -300,12 +296,6 @@ impl Response {
         };
 
         Ok(response)
-    }
-
-    /// Get protocol version.
-    pub fn version(&self) -> &str {
-        self.inner.header()
-            .version()
     }
 
     /// Get status code.
@@ -362,7 +352,7 @@ impl Future for FutureResponse {
     }
 }
 
-/// HTTP client codec.
+/// RTSP client codec.
 struct ClientCodec {
     inner: GenericClientCodec,
 }
