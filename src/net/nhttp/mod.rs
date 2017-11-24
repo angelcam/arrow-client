@@ -20,10 +20,13 @@ use std::fmt;
 use std::error::Error as ErrorTrait;
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
+use std::time::Duration;
 
 use net;
 
 use net::url::Url;
+
+use timer::DEFAULT_TIMER;
 
 use self::generic::HeaderField;
 use self::generic::ClientCodec as GenericClientCodec;
@@ -40,6 +43,8 @@ use tokio_core::reactor::Handle as TokioHandle;
 
 use tokio_io::AsyncRead;
 use tokio_io::codec::{Decoder, Encoder};
+
+use tokio_timer::TimeoutError;
 
 /// HTTP codec error.
 #[derive(Debug, Clone)]
@@ -80,6 +85,12 @@ impl From<io::Error> for Error {
 impl From<generic::Error> for Error {
     fn from(err: generic::Error) -> Error {
         Error::from(err.description())
+    }
+}
+
+impl<T> From<TimeoutError<T>> for Error {
+    fn from(err: TimeoutError<T>) -> Error {
+        Error::from(format!("request timeout: {}", err))
     }
 }
 
@@ -148,6 +159,7 @@ pub struct Request {
     host:             String,
     port:             u16,
     inner:            GenericRequest,
+    timeout:          Option<Duration>,
     max_line_length:  usize,
     max_header_lines: usize,
 }
@@ -159,6 +171,8 @@ impl Request {
 
         let addr = net::utils::get_socket_address((self.host.as_ref(), self.port))
             .map_err(|_| Error::from("unable to resolve a given socket address"))?;
+
+        let timeout = self.timeout.clone();
 
         // single request-response cycle
         let response = TcpStream::connect(&addr, &handle)
@@ -176,11 +190,14 @@ impl Request {
                     })
             });
 
-        // TODO: add timeout
+        if let Some(timeout) = timeout {
+            let response = DEFAULT_TIMER
+                .timeout(response, timeout);
 
-        let response = FutureResponse::new(response);
-
-        Ok(response)
+            Ok(FutureResponse::new(response))
+        } else {
+            Ok(FutureResponse::new(response))
+        }
     }
 }
 
@@ -190,6 +207,7 @@ pub struct RequestBuilder {
     host:             String,
     port:             u16,
     inner:            GenericRequestBuilder,
+    timeout:          Option<Duration>,
     max_line_length:  usize,
     max_header_lines: usize,
 }
@@ -224,6 +242,7 @@ impl RequestBuilder {
             host:             host.to_string(),
             port:             port,
             inner:            inner,
+            timeout:          Some(Duration::from_secs(20)),
             max_line_length:  4096,
             max_header_lines: 1024,
         };
@@ -248,6 +267,12 @@ impl RequestBuilder {
         self
     }
 
+    /// Set request timeout.
+    pub fn set_request_timeout(mut self, timeout: Option<Duration>) -> RequestBuilder {
+        self.timeout = timeout;
+        self
+    }
+
     /// Set maximum length of a single line accepted by the response parser.
     pub fn set_max_line_length(mut self, max_length: usize) -> RequestBuilder {
         self.max_line_length = max_length;
@@ -267,6 +292,7 @@ impl RequestBuilder {
             host:             self.host,
             port:             self.port,
             inner:            self.inner.build(),
+            timeout:          self.timeout,
             max_line_length:  self.max_line_length,
             max_header_lines: self.max_header_lines,
         }
