@@ -28,8 +28,6 @@ use net::raw::ether::MacAddr;
 
 use scanner::ScanResult;
 
-use timer::Timer;
-
 use utils;
 
 use utils::RuntimeError;
@@ -68,7 +66,6 @@ impl Display for ConnectionState {
 /// Internal data of the application context.
 struct ApplicationContextData {
     logger:      BoxLogger,
-    timer:       Timer,
     config:      ApplicationConfig,
     scanning:    bool,
     scan_result: ScanResult,
@@ -78,11 +75,8 @@ struct ApplicationContextData {
 impl ApplicationContextData {
     /// Take a given application config and create application context data.
     fn new(config: ApplicationConfig) -> ApplicationContextData {
-        let timer = Timer::new(config.get_logger());
-
         ApplicationContextData {
             logger:      config.get_logger(),
-            timer:       timer,
             config:      config,
             scanning:    false,
             scan_result: ScanResult::new(),
@@ -103,11 +97,6 @@ impl ApplicationContextData {
     /// Get application logger.
     fn get_logger(&self) -> BoxLogger {
         self.logger.clone()
-    }
-
-    /// Get application-wide instance of the Timer.
-    fn get_timer(&self) -> Timer {
-        self.timer.clone()
     }
 
     /// Set the state of the network scanner thread.
@@ -239,13 +228,6 @@ impl ApplicationContext {
         self.data.lock()
             .unwrap()
             .get_logger()
-    }
-
-    /// Get application-wide instance of the Timer.
-    pub fn get_timer(&self) -> Timer {
-        self.data.lock()
-            .unwrap()
-            .get_timer()
     }
 
     /// Get TLS connector for a given server hostname.

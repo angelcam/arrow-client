@@ -48,7 +48,7 @@ use net::arrow::proto::msg::control::{
     ControlMessageFactory,
 };
 
-use timer::Timer;
+use timer::DEFAULT_TIMER;
 
 use utils::logger::{Logger, BoxLogger};
 
@@ -349,7 +349,6 @@ impl SessionErrorHandler {
 /// Arrow session manager.
 pub struct SessionManager {
     logger:       BoxLogger,
-    timer:        Timer,
     tc_handle:    TokioCoreHandle,
     svc_table:    BoxServiceTable,
     cmsg_factory: ControlMessageFactory,
@@ -369,7 +368,6 @@ impl SessionManager {
 
         SessionManager {
             logger:       app_context.get_logger(),
-            timer:        app_context.get_timer(),
             tc_handle:    tc_handle,
             svc_table:    svc_table.boxed(),
             cmsg_factory: cmsg_factory,
@@ -463,10 +461,11 @@ impl SessionManager {
 
         let connection = TcpStream::connect(&addr, &self.tc_handle);
 
-        let client = self.timer
+        let client = DEFAULT_TIMER
             .timeout(
                 connection.map_err(|err| ConnectionError::from(err)),
-                Duration::from_secs(CONNECTION_TIMEOUT))
+                Duration::from_secs(CONNECTION_TIMEOUT)
+            )
             .and_then(|stream| {
                 let framed = stream.framed(RawCodec);
                 let (sink, stream) = framed.split();

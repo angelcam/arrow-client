@@ -36,13 +36,13 @@ impl Future for PeriodicTask {
 }
 
 struct TimerContext {
-    logger: BoxLogger,
+    logger: Option<BoxLogger>,
     timer:  TokioTimer,
 }
 
 impl TimerContext {
     /// Create a new timer context.
-    fn new(logger: BoxLogger) -> TimerContext {
+    fn new(logger: Option<BoxLogger>) -> TimerContext {
         let timer = TokioTimer::default();
 
         TimerContext {
@@ -61,15 +61,19 @@ impl TimerContext {
     /// Create a new periodic task.
     fn create_periodic_task<F>(&self, interval: Duration, f: F) -> PeriodicTask
         where F: 'static + Fn() -> () {
-        let mut logger = self.logger.clone();
+        let logger = self.logger.clone();
 
         let task = self.timer.interval(interval)
             .for_each(move |_| {
                 f();
+
                 Ok(())
             })
             .or_else(move |err| {
-                log_error!(logger, "timer error: {}", err);
+                if let Some(mut logger) = logger {
+                    log_error!(logger, "timer error: {}", err);
+                }
+
                 Ok(())
             });
 
@@ -86,7 +90,7 @@ pub struct Timer {
 
 impl Timer {
     /// Create a new timer context.
-    pub fn new(logger: BoxLogger) -> Timer {
+    pub fn new(logger: Option<BoxLogger>) -> Timer {
         Timer {
             context: Arc::new(Mutex::new(TimerContext::new(logger))),
         }
@@ -108,4 +112,8 @@ impl Timer {
             .unwrap()
             .create_periodic_task(interval, f)
     }
+}
+
+lazy_static! {
+    pub static ref DEFAULT_TIMER: Timer = Timer::new(None);
 }

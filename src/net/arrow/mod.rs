@@ -74,6 +74,8 @@ use net::utils::get_hostname;
 
 use svc_table::SharedServiceTableRef;
 
+use timer::DEFAULT_TIMER;
+
 use utils::logger::{Logger, BoxLogger};
 
 pub use self::error::{
@@ -574,7 +576,7 @@ impl ArrowClient {
 
         let event_handler = context.clone();
 
-        let events = app_context.get_timer()
+        let events = DEFAULT_TIMER
             .create_periodic_task(
                 Duration::from_millis(1000),
                 move || {
@@ -661,7 +663,7 @@ pub fn connect(
                 .map_err(|err| ConnectionError::from(err))
         });
 
-    let client = app_context.get_timer()
+    let client = DEFAULT_TIMER
         .timeout(connection, Duration::from_secs(CONNECTION_TIMEOUT))
         .map_err(|err| ArrowError::connection_error(
             format!("unable to connect to remote Arrow Service {} ({})", addr, err.description())

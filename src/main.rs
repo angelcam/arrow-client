@@ -14,6 +14,7 @@
 
 //! Arrow Client definitions.
 
+extern crate bytes;
 extern crate farmhash;
 extern crate libc;
 extern crate native_tls;
@@ -24,7 +25,8 @@ extern crate uuid;
 #[macro_use]
 extern crate json;
 
-extern crate bytes;
+#[macro_use]
+extern crate lazy_static;
 
 #[macro_use]
 extern crate futures;
@@ -67,6 +69,8 @@ use cmd_handler::{Command, CommandChannel};
 use net::arrow;
 
 use net::arrow::{ArrowError, ErrorKind};
+
+use timer::DEFAULT_TIMER;
 
 use utils::logger::Logger;
 
@@ -261,7 +265,7 @@ fn main() {
     let cmd_channel = tx.clone();
 
     // schedule periodic network scan
-    let periodic_network_scan = context.get_timer()
+    let periodic_network_scan = DEFAULT_TIMER
         .create_periodic_task(
             Duration::from_secs(1),
             move || {
