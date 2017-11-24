@@ -22,7 +22,6 @@ mod svc_table;
 mod update;
 
 use std::mem;
-use std::str;
 
 use std::rc::Rc;
 use std::cell::Cell;
