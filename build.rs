@@ -14,10 +14,28 @@
 
 extern crate cc;
 
+use std::env;
+
 use cc::Build;
 
 fn main() {
     Build::new()
         .file("src/net/raw/devices.c")
         .compile("net_devices");
+
+    link("pcap");
+}
+
+fn link(lib: &str) {
+    println!("cargo:rustc-link-lib={}={}", lib_mode(lib), lib);
+}
+
+fn lib_mode(lib: &str) -> &'static str {
+    let kind = env::var(&format!("LIB{}_STATIC", lib.to_uppercase()));
+
+    match kind.ok().as_ref().map(|v| v.as_str()) {
+        Some("0") => "dylib",
+        Some(_)   => "static",
+        None      => "dylib",
+   }
 }

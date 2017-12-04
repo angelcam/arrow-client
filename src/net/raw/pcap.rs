@@ -117,7 +117,6 @@ impl bpf_program {
     }
 }
 
-#[link(name = "pcap")]
 extern "C" {
     fn pcap_create(source: *const c_char, errbuf: *mut c_char) -> pcap_t;
     fn pcap_activate(p: pcap_t) -> c_int;
