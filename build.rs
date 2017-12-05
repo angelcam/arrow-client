@@ -23,7 +23,9 @@ fn main() {
         .file("src/net/raw/devices.c")
         .compile("net_devices");
 
-    link("pcap");
+    if cfg!(feature = "discovery") {
+        link("pcap");
+    }
 }
 
 fn link(lib: &str) {
