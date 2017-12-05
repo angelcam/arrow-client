@@ -102,7 +102,10 @@ apply-patches musl-${MUSL_VERSION}
 export CROSS_COMPILE=$TOOLCHAIN_PREFIX
 
 if [ ! -f config.mak ]; then
-  ./configure --target=$RUST_TARGET --prefix=$MUSL_DIR --disable-shared
+  ./configure \
+    --target=$RUST_TARGET \
+    --prefix=$MUSL_DIR \
+    --disable-shared
 fi
 
 make
@@ -136,7 +139,17 @@ export CC=musl-gcc
 export RANLIB=${TOOLCHAIN_PREFIX}ranlib
 
 if [ ! -f .configured ]; then
-  ./Configure $OPENSSL_TARGET no-filenames no-shared no-async no-comp no-deprecated no-dso no-ec no-ec2m no-engine no-hw-padlock no-ssl3-method no-bf no-blake2 no-camellia no-cast no-chacha no-cmac no-des no-dsa no-ecdsa no-idea no-md4 no-mdc2 no-ocb no-poly1305 no-rc2 no-rc4 no-rmd160 no-scrypt no-seed no-whirlpool no-threads --prefix=$MUSL_DIR
+  ./Configure $OPENSSL_TARGET \
+    no-shared \
+    no-filenames no-async no-comp no-dgram no-ui \
+    no-deprecated \
+    no-dso no-ec no-ec2m no-engine no-gost no-nextprotoneg no-psk no-srp \
+    no-hw-padlock \
+    no-ssl3-method no-tls1-method no-tls1_1-method no-dtls1-method no-dtls1_2-method \
+    no-bf no-blake2 no-camellia no-cast no-chacha no-cmac no-des no-dsa no-ecdsa no-idea no-md4 no-mdc2 no-ocb no-poly1305 no-rc2 no-rc4 no-rmd160 no-scrypt no-seed no-whirlpool \
+    no-threads \
+    --prefix=$MUSL_DIR \
+    -ffunction-sections -fdata-sections
   touch .configured
 fi
 
@@ -186,7 +199,13 @@ if [ $FEATURE_DISCOVERY -eq 1 ]; then
 
   if [ ! -f Makefile ]; then
     ./configure --prefix=$MUSL_DIR --target=$RUST_TARGET --host=$BUILD_HOST \
+      --without-septel \
+      --without-dag \
+      --without-libnl \
+      --without-snf \
       --disable-shared \
+      --disable-can \
+      --disable-canusb \
       --disable-usb \
       --disable-bluetooth \
       --disable-dbus \
