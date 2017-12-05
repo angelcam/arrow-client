@@ -3,6 +3,11 @@ rust:
   - stable
   - beta
   - nightly
+addons:
+  apt:
+    packages:
+      - libpcap0.8
+      - libpcap-dev
 matrix:
   allow_failures:
     - rust: nightly
