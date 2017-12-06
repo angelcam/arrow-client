@@ -127,7 +127,6 @@ impl Method {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Scheme {
     HTTP,
-    HTTPS,
 }
 
 impl Scheme {
@@ -135,7 +134,6 @@ impl Scheme {
     fn default_port(self) -> u16 {
         match self {
             Scheme::HTTP  => 80,
-            Scheme::HTTPS => 443,
         }
     }
 }
@@ -146,7 +144,6 @@ impl FromStr for Scheme {
     fn from_str(method: &str) -> Result<Scheme, Error> {
         match &method.to_lowercase() as &str {
             "http"  => Ok(Scheme::HTTP),
-            "https" => Ok(Scheme::HTTPS),
             _ => Err(Error::from("invalid URL scheme")),
         }
     }
@@ -237,8 +234,6 @@ impl Request {
 
     /// Send the request and return a future response
     pub fn send(self, handle: &TokioHandle) -> Result<FutureResponse, Error> {
-        // TODO: add TLS layer in case of HTTPS scheme
-
         let addr = net::utils::get_socket_address((self.host.as_ref(), self.port))
             .map_err(|_| Error::from("unable to resolve a given socket address"))?;
 
