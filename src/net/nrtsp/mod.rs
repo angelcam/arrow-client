@@ -161,16 +161,78 @@ impl FromStr for Scheme {
 /// RTSP request.
 #[derive(Clone)]
 pub struct Request {
-    scheme:           Scheme,
     host:             String,
     port:             u16,
-    inner:            GenericRequest,
+    inner:            GenericRequestBuilder,
     timeout:          Option<Duration>,
     max_line_length:  usize,
     max_header_lines: usize,
 }
 
 impl Request {
+    /// Create a new RTSP request.
+    pub fn new(method: Method, url: &str) -> Result<Request, Error> {
+        let url = Url::from_str(url)
+            .map_err(|_| Error::from("malformed URL"))?;
+
+        let scheme = Scheme::from_str(url.scheme())?;
+
+        let host = url.host();
+        let port = url.port()
+            .unwrap_or(scheme.default_port());
+
+        let inner = GenericRequestBuilder::new(
+            "RTSP",
+            "1.0",
+            method.name(),
+            url.as_ref());
+
+        let builder = Request {
+            host:             host.to_string(),
+            port:             port,
+            inner:            inner,
+            timeout:          Some(Duration::from_secs(20)),
+            max_line_length:  4096,
+            max_header_lines: 1024,
+        };
+
+        Ok(builder)
+    }
+
+    /// Create a new OPTIONS request.
+    pub fn options(url: &str) -> Result<Request, Error> {
+        Request::new(Method::OPTIONS, url)
+    }
+
+    /// Create a new DESCRIBE request.
+    pub fn describe(url: &str) -> Result<Request, Error> {
+        Request::new(Method::DESCRIBE, url)
+    }
+
+    /// Add a given header field.
+    pub fn add_header_field(mut self, field: HeaderField) -> Request {
+        self.inner = self.inner.add_header_field(field);
+        self
+    }
+
+    /// Set request timeout.
+    pub fn set_request_timeout(mut self, timeout: Option<Duration>) -> Request {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Set maximum length of a single line accepted by the response parser.
+    pub fn set_max_line_length(mut self, max_length: usize) -> Request {
+        self.max_line_length = max_length;
+        self
+    }
+
+    /// Set maximum number of header lines accepted by the response parser.
+    pub fn set_max_header_lines(mut self, max_lines: usize) -> Request {
+        self.max_header_lines = max_lines;
+        self
+    }
+
     /// Send the request and return a future response
     pub fn send(self, handle: &TokioHandle) -> Result<FutureResponse, Error> {
         let addr = net::utils::get_socket_address((self.host.as_ref(), self.port))
@@ -181,9 +243,9 @@ impl Request {
         // single request-response cycle
         let response = TcpStream::connect(&addr, &handle)
             .map_err(|err| Error::from(err))
-            .and_then(|stream| {
+            .and_then(move |stream| {
                 stream.framed(ClientCodec::new(self.max_line_length, self.max_header_lines))
-                    .send(self)
+                    .send(self.inner.build())
                     .map_err(|err| Error::from(err))
                     .and_then(|stream| {
                         stream.into_future()
@@ -201,96 +263,6 @@ impl Request {
             Ok(FutureResponse::new(response))
         } else {
             Ok(FutureResponse::new(response))
-        }
-    }
-}
-
-/// RTSP request builder.
-pub struct RequestBuilder {
-    scheme:           Scheme,
-    host:             String,
-    port:             u16,
-    inner:            GenericRequestBuilder,
-    timeout:          Option<Duration>,
-    max_line_length:  usize,
-    max_header_lines: usize,
-}
-
-impl RequestBuilder {
-    /// Create a new RTSP request builder.
-    pub fn new(method: Method, url: &str) -> Result<RequestBuilder, Error> {
-        let url = Url::from_str(url)
-            .map_err(|_| Error::from("malformed URL"))?;
-
-        let scheme = Scheme::from_str(url.scheme())?;
-
-        let host = url.host();
-        let port = url.port()
-            .unwrap_or(scheme.default_port());
-
-        let inner = GenericRequestBuilder::new(
-            "RTSP",
-            "1.0",
-            method.name(),
-            url.as_ref());
-
-        let builder = RequestBuilder {
-            scheme:           scheme,
-            host:             host.to_string(),
-            port:             port,
-            inner:            inner,
-            timeout:          Some(Duration::from_secs(20)),
-            max_line_length:  4096,
-            max_header_lines: 1024,
-        };
-
-        Ok(builder)
-    }
-
-    /// Create a new OPTIONS request.
-    pub fn options(url: &str) -> Result<RequestBuilder, Error> {
-        RequestBuilder::new(Method::OPTIONS, url)
-    }
-
-    /// Create a new DESCRIBE request.
-    pub fn describe(url: &str) -> Result<RequestBuilder, Error> {
-        RequestBuilder::new(Method::DESCRIBE, url)
-    }
-
-    /// Add a given header field.
-    pub fn add_header_field(mut self, field: HeaderField) -> RequestBuilder {
-        self.inner = self.inner.add_header_field(field);
-        self
-    }
-
-    /// Set request timeout.
-    pub fn set_request_timeout(mut self, timeout: Option<Duration>) -> RequestBuilder {
-        self.timeout = timeout;
-        self
-    }
-
-    /// Set maximum length of a single line accepted by the response parser.
-    pub fn set_max_line_length(mut self, max_length: usize) -> RequestBuilder {
-        self.max_line_length = max_length;
-        self
-    }
-
-    /// Set maximum number of header lines accepted by the response parser.
-    pub fn set_max_header_lines(mut self, max_lines: usize) -> RequestBuilder {
-        self.max_header_lines = max_lines;
-        self
-    }
-
-    /// Build request.
-    pub fn build(self) -> Request {
-        Request {
-            scheme:           self.scheme,
-            host:             self.host,
-            port:             self.port,
-            inner:            self.inner.build(),
-            timeout:          self.timeout,
-            max_line_length:  self.max_line_length,
-            max_header_lines: self.max_header_lines,
         }
     }
 }
@@ -409,10 +381,10 @@ impl Decoder for ClientCodec {
 }
 
 impl Encoder for ClientCodec {
-    type Item = Request;
+    type Item = GenericRequest;
     type Error = io::Error;
 
-    fn encode(&mut self, message: Request, buffer: &mut BytesMut) -> Result<(), io::Error> {
-        self.inner.encode(message.inner, buffer)
+    fn encode(&mut self, message: GenericRequest, buffer: &mut BytesMut) -> Result<(), io::Error> {
+        self.inner.encode(message, buffer)
     }
 }

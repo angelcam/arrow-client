@@ -293,6 +293,7 @@ impl Request {
 }
 
 /// Request builder.
+#[derive(Clone)]
 pub struct RequestBuilder {
     request: Request,
 }
