@@ -60,71 +60,15 @@ network interfaces. Alternatively, you can use the NET\_CAP\_RAW capability.
 
 This application requires the following native libraries:
 
-- OpenSSL
-- libpcap (this dependency is optional, it is required only when the network 
-    scanning feature is enabled)
+- OpenSSL 1.0.x or 1.1.x
+- libpcap 1.6.x or later (optional)
 
 ## Compilation
 
-Arrow Client compilation is currently supported for x86, x86\_64 and ARM 
-platforms based on GNU libc. Compilation for x86 and x86\_64 can be done
-directly on a particular machine. ARM binaries can be compiled using a
-cross-compiler or directly in the target or in a virtualized environment
-(e.g. QEMU).
+See the following guides for more info:
 
-### Direct compilation on x86, x86\_64 or ARM
-
-- Download and install Rust build environment (in case you do not already 
-  have one) from https://www.rust-lang.org/install.html. 
-- Use the following commands to build the Arrow Client binary:
-   
-```bash
-# to build Arrow Client:
-cargo build --release
-# to build Arrow Client with network scanning feature:
-cargo build --release --features "discovery"
-```
-
-- You will find the binary in the `target/release/` subdir.
-- Run the application without any arguments to see its usage.
-
-### Cross-compilation
-
-First of all, you will need a linker for the target architecture. In case of
-`arm-unknown-linux-gnueabihf`, you can download it from
-https://github.com/raspberrypi/tools. You will also have to add some essential
-libraries for the target architecture (e.g. OpenSSL). You can get these
-libraries from the repositories of your favourite distribution or you can
-build them on your own.
-
-Add the linker into the PATH env. variable, e.g.:
-
-```bash
-export PATH=~/pi-tools/arm-bcm2708/gcc-linaro-arm-linux-gnueabihf-raspbian-x64/bin:$PATH
-```
-
-Download and install Rust standard library for the target architecture, e.g.:
-
-```bash
-rustup target add arm-unknown-linux-gnueabihf
-```
-
-Modify your cargo configuration in order to tell the Rust compiler the name of
-your linker for the target architecture. For `arm-unknown-linux-gnueabihf`
-target and pi-tools, insert the following configuration into your
-`~/.cargo/config`:
-
-```toml
-[target.arm-unknown-linux-gnueabihf]
-ar     = "arm-linux-gnueabihf-ar"
-linker = "arm-linux-gnueabihf-gcc"
-```
-
-Now, you are ready to build the Arrow Client for the target architecture, e.g.:
-
-```bash
-# to build Arrow Client:
-cargo build --target=arm-unknown-linux-gnueabihf --release
-# to build Arrow Client with network scanning feature:
-cargo build --target=arm-unknown-linux-gnueabihf --release --features "discovery"
-```
+* [Quick Start](https://github.com/angelcam/arrow-client/wiki/Quick-Start)
+* [Compilation](https://github.com/angelcam/arrow-client/wiki/Compilation)
+* [Compilation for OpenWrt and LEDE](https://github.com/angelcam/arrow-client/wiki/Compilation-for-OpenWrt-and-LEDE)
+* [Optimizations](https://github.com/angelcam/arrow-client/wiki/Optimizations)
+* [Integration best practices](https://github.com/angelcam/arrow-client/wiki/Integration-best-practices)
