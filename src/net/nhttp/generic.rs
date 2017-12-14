@@ -27,7 +27,7 @@ use utils::string::reader::Reader as StringReader;
 
 use bytes::BytesMut;
 
-use tokio_io::codec::{Decoder, Encoder};
+use tokio_io::codec::Decoder;
 
 /// Codec error.
 #[derive(Debug, Clone)]
@@ -74,6 +74,7 @@ impl From<FromUtf8Error> for Error {
 /// HTTP-like Header field.
 #[derive(Clone)]
 pub struct HeaderField {
+    nname: String,
     name:  String,
     value: Option<String>,
 }
@@ -91,6 +92,7 @@ impl HeaderField {
         };
 
         HeaderField {
+            nname: name.to_lowercase(),
             name:  name,
             value: value,
         }
@@ -99,6 +101,11 @@ impl HeaderField {
     /// Get name of the field.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Get lowercase name of the field.
+    pub fn lowercase_name(&self) -> &str {
+        &self.nname
     }
 
     /// Get value of the field.
@@ -120,6 +127,25 @@ impl Display for HeaderField {
         }
 
         Ok(())
+    }
+}
+
+impl<N> From<(N,)> for HeaderField
+    where N: ToString {
+    fn from(tuple: (N,)) -> HeaderField {
+        match tuple {
+            (name,) => HeaderField::new(name, None as Option<String>)
+        }
+    }
+}
+
+impl<N, V> From<(N, V)> for HeaderField
+    where N: ToString,
+          V: ToString {
+    fn from(tuple: (N, V)) -> HeaderField {
+        match tuple {
+            (name, value) => HeaderField::new(name, Some(value))
+        }
     }
 }
 
@@ -165,13 +191,40 @@ impl HeaderFields {
 
     /// Add a given header field into the collection.
     pub fn add(&mut self, field: HeaderField) {
-        let name = field.name()
-            .to_lowercase();
+        let name = field.lowercase_name()
+            .to_string();
 
         self.fields.push(field.clone());
 
         let mut fields = self.map.remove(&name)
-            .unwrap_or(Vec::new());
+            .unwrap_or(Vec::with_capacity(1));
+
+        fields.push(field);
+
+        self.map.insert(name, fields);
+    }
+
+    /// Replace the current list of header fields having the same name (if any)
+    /// with the given one.
+    pub fn set(&mut self, field: HeaderField) {
+        let current_length = self.fields.len();
+
+        let fields = mem::replace(
+            &mut self.fields,
+            Vec::with_capacity(current_length));
+
+        let name = field.lowercase_name()
+            .to_string();
+
+        for f in fields {
+            if name != f.lowercase_name() {
+                self.fields.push(f)
+            }
+        }
+
+        self.fields.push(field.clone());
+
+        let mut fields = Vec::with_capacity(1);
 
         fields.push(field);
 
@@ -282,12 +335,12 @@ impl Request {
     }
 
     /// Get request header.
-    fn header(&self) -> &RequestHeader {
+    pub fn header(&self) -> &RequestHeader {
         &self.header
     }
 
     /// Get request body.
-    fn body(&self) -> &[u8] {
+    pub fn body(&self) -> &[u8] {
         &self.body
     }
 }
@@ -314,9 +367,18 @@ impl RequestBuilder {
         self
     }
 
+    /// Replace the current list of header fields having the same name (if any)
+    /// with the given one.
+    pub fn set_header_field<T>(mut self, field: T) -> RequestBuilder
+        where HeaderField: From<T> {
+        self.request.header.header_fields.set(HeaderField::from(field));
+        self
+    }
+
     /// Add a given header field.
-    pub fn add_header_field(mut self, field: HeaderField) -> RequestBuilder {
-        self.request.header.header_fields.add(field);
+    pub fn add_header_field<T>(mut self, field: T) -> RequestBuilder
+        where HeaderField: From<T> {
+        self.request.header.header_fields.add(HeaderField::from(field));
         self
     }
 
@@ -379,6 +441,19 @@ impl ResponseHeader {
         self.header_fields.get(name)
             .last()
     }
+
+    /// Get value of the last header field with a given name.
+    pub fn get_header_field_value(&self, name: &str) -> Option<&str> {
+        let value = self.header_fields.get(name)
+            .last()
+            .map(|field| field.value());
+
+        match value {
+            Some(Some(v)) => Some(v),
+            Some(None)    => None,
+            None          => None,
+        }
+    }
 }
 
 impl FromStr for ResponseHeader {
@@ -422,7 +497,7 @@ pub struct Response {
 
 impl Response {
     /// Create a new HTTP-like response.
-    fn new(header: ResponseHeader, body: MessageBody) -> Response {
+    pub fn new(header: ResponseHeader, body: MessageBody) -> Response {
         Response {
             header: header,
             body:   body,
@@ -498,9 +573,9 @@ impl Decoder for LineDecoder {
 
         let search_end;
 
-        if new_buffer_length > separator_length {
-            search_end = new_buffer_length - separator_length;
-        } else {
+        if new_buffer_length >= separator_length {
+            search_end = new_buffer_length - separator_length + 1;
+        } else  {
             search_end = 0;
         }
 
@@ -681,7 +756,7 @@ impl FixedSizeBodyDecoder {
     /// Create a new fixed-size decoder expecting a given number of bytes.
     pub fn new(expected: usize) -> FixedSizeBodyDecoder {
         FixedSizeBodyDecoder {
-            body:     Some(Vec::new()),
+            body:     Some(Vec::with_capacity(expected)),
             expected: expected,
         }
     }
@@ -872,116 +947,5 @@ impl Decoder for ChunkedBodyDecoder {
 
             Ok(Some(body.into_boxed_slice()))
         }
-    }
-}
-
-/// HTTP-like client codec.
-pub struct ClientCodec {
-    hdecoder:        ResponseHeaderDecoder,
-    bdecoder:        Option<Box<MessageBodyDecoder>>,
-    header:          Option<ResponseHeader>,
-    max_line_length: usize,
-}
-
-impl ClientCodec {
-    /// Create a new HTTP-like client codec.
-    pub fn new(max_line_length: usize, max_header_lines: usize) -> ClientCodec {
-        let hdecoder = ResponseHeaderDecoder::new(
-            max_line_length,
-            max_header_lines);
-
-        ClientCodec {
-            hdecoder:        hdecoder,
-            bdecoder:        None,
-            header:          None,
-            max_line_length: max_line_length,
-        }
-    }
-}
-
-impl Decoder for ClientCodec {
-    type Item = Response;
-    type Error = Error;
-
-    fn decode(&mut self, data: &mut BytesMut) -> Result<Option<Response>, Error> {
-        if let Some(mut bdecoder) = self.bdecoder.take() {
-            if let Some(body) = bdecoder.decode(data)? {
-                let header = self.header.take()
-                    .expect("header is missing");
-
-                let response = Response::new(header, body);
-
-                return Ok(Some(response));
-            }
-
-            self.bdecoder = Some(bdecoder);
-        } else if let Some(header) = self.hdecoder.decode(data)? {
-            let bdecoder: Box<MessageBodyDecoder>;
-
-            if let Some(clength) = header.get_header_field("content-length") {
-                let clength = clength.value()
-                    .ok_or(Error::from("missing Content-Length value"))?;
-                let clength = usize::from_str(clength)
-                    .map_err(|_| Error::from("unable to decode Content-Length"))?;
-
-                bdecoder = Box::new(FixedSizeBodyDecoder::new(clength));
-            } else if let Some(tenc) = header.get_header_field("transfer-encoding") {
-                let tenc = tenc.value()
-                    .unwrap_or("")
-                    .to_lowercase();
-
-                bdecoder = match tenc.as_ref() {
-                    "chunked" => Box::new(ChunkedBodyDecoder::new(self.max_line_length)),
-                    _         => Box::new(SimpleBodyDecoder::new()),
-                };
-            } else {
-                bdecoder = Box::new(SimpleBodyDecoder::new());
-            }
-
-            self.bdecoder = Some(bdecoder);
-            self.header = Some(header);
-        }
-
-        Ok(None)
-    }
-
-    fn decode_eof(&mut self, data: &mut BytesMut) -> Result<Option<Response>, Error> {
-        while !data.is_empty() {
-            let res = self.decode(data)?;
-
-            if res.is_some() {
-                return Ok(res);
-            }
-        }
-
-        if let Some(mut bdecoder) = self.bdecoder.take() {
-            if let Some(body) = bdecoder.decode_eof(data)? {
-                let header = self.header.take()
-                    .expect("header is missing");
-
-                let response = Response::new(header, body);
-
-                return Ok(Some(response));
-            }
-
-            self.bdecoder = Some(bdecoder);
-        }
-
-        Ok(None)
-    }
-}
-
-impl Encoder for ClientCodec {
-    type Item = Request;
-    type Error = io::Error;
-
-    fn encode(&mut self, message: Request, buffer: &mut BytesMut) -> Result<(), io::Error> {
-        let header = format!("{}", message.header());
-        let body = message.body();
-
-        buffer.extend_from_slice(header.as_bytes());
-        buffer.extend_from_slice(body);
-
-        Ok(())
     }
 }

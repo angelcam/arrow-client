@@ -26,10 +26,12 @@ use net;
 
 use net::nhttp::generic;
 
+use net::nhttp::generic::FixedSizeBodyDecoder;
 use net::nhttp::generic::HeaderField;
-use net::nhttp::generic::ClientCodec as GenericClientCodec;
-use net::nhttp::generic::Request as GenericRequest;
 use net::nhttp::generic::Response as GenericResponse;
+use net::nhttp::generic::ResponseHeader as GenericResponseHeader;
+use net::nhttp::generic::ResponseHeaderDecoder as GenericResponseHeaderDecoder;
+use net::nhttp::generic::Request as GenericRequest;
 use net::nhttp::generic::RequestBuilder as GenericRequestBuilder;
 
 use net::url::Url;
@@ -38,7 +40,7 @@ use timer::DEFAULT_TIMER;
 
 use bytes::BytesMut;
 
-use futures::{Future, Poll, Sink, Stream};
+use futures::{Future, IntoFuture, Poll, Sink, Stream};
 
 use tokio_core::net::TcpStream;
 use tokio_core::reactor::Handle as TokioHandle;
@@ -181,11 +183,17 @@ impl Request {
         let port = url.port()
             .unwrap_or(scheme.default_port());
 
+        let app_version = env!("CARGO_PKG_VERSION");
+
+        let uagent = format!("ArrowClient/{}", app_version);
+
         let inner = GenericRequestBuilder::new(
-            "RTSP",
-            "1.0",
-            method.name(),
-            url.as_ref());
+                "RTSP",
+                "1.0",
+                method.name(),
+                url.as_ref())
+            .set_header_field(("CSeq", 1))
+            .set_header_field(("User-Agent", uagent));
 
         let builder = Request {
             host:             host.to_string(),
@@ -206,12 +214,16 @@ impl Request {
 
     /// Create a new DESCRIBE request.
     pub fn describe(url: &str) -> Result<Request, Error> {
-        Request::new(Method::DESCRIBE, url)
+        let request = Request::new(Method::DESCRIBE, url)?
+            .set_header_field(("Accept", "application/sdp"));
+
+        Ok(request)
     }
 
-    /// Add a given header field.
-    pub fn add_header_field(mut self, field: HeaderField) -> Request {
-        self.inner = self.inner.add_header_field(field);
+    /// Set a given header field.
+    pub fn set_header_field<T>(mut self, field: T) -> Request
+        where HeaderField: From<T> {
+        self.inner = self.inner.set_header_field(field);
         self
     }
 
@@ -234,14 +246,18 @@ impl Request {
     }
 
     /// Send the request and return a future response
-    pub fn send(self, handle: &TokioHandle) -> Result<FutureResponse, Error> {
+    pub fn send(self, handle: &TokioHandle) -> FutureResponse {
         let addr = net::utils::get_socket_address((self.host.as_ref(), self.port))
-            .map_err(|_| Error::from("unable to resolve a given socket address"))?;
+            .map_err(|_| Error::from("unable to resolve a given socket address"));
+
+        if let Err(err) = addr {
+            return FutureResponse::new(Err(err));
+        }
 
         let timeout = self.timeout.clone();
 
         // single request-response cycle
-        let response = TcpStream::connect(&addr, &handle)
+        let response = TcpStream::connect(&addr.unwrap(), &handle)
             .map_err(|err| Error::from(err))
             .and_then(move |stream| {
                 stream.framed(ClientCodec::new(self.max_line_length, self.max_header_lines))
@@ -260,9 +276,9 @@ impl Request {
             let response = DEFAULT_TIMER
                 .timeout(response, timeout);
 
-            Ok(FutureResponse::new(response))
+            FutureResponse::new(response)
         } else {
-            Ok(FutureResponse::new(response))
+            FutureResponse::new(response)
         }
     }
 }
@@ -324,6 +340,12 @@ impl Response {
         self.inner.header()
             .get_header_field(name)
     }
+
+    /// Get value of the last header field with a given name.
+    pub fn get_header_field_value(&self, name: &str) -> Option<&str> {
+        self.inner.header()
+            .get_header_field_value(name)
+    }
 }
 
 /// Future response. This struct implements the Futere trait yielding Response.
@@ -334,9 +356,9 @@ pub struct FutureResponse {
 impl FutureResponse {
     /// Create a new future response.
     fn new<F>(future: F) -> FutureResponse
-        where F: 'static + Future<Item=Response, Error=Error> {
+        where F: 'static + IntoFuture<Item=Response, Error=Error> {
         FutureResponse {
-            inner: Box::new(future),
+            inner: Box::new(future.into_future()),
         }
     }
 }
@@ -352,14 +374,22 @@ impl Future for FutureResponse {
 
 /// RTSP client codec.
 struct ClientCodec {
-    inner: GenericClientCodec,
+    hdecoder:        GenericResponseHeaderDecoder,
+    bdecoder:        Option<FixedSizeBodyDecoder>,
+    header:          Option<GenericResponseHeader>,
 }
 
 impl ClientCodec {
-    /// Create a new codec instance.
+    /// Create a new RTSP client codec.
     fn new(max_line_length: usize, max_header_lines: usize) -> ClientCodec {
+        let hdecoder = GenericResponseHeaderDecoder::new(
+            max_line_length,
+            max_header_lines);
+
         ClientCodec {
-            inner: GenericClientCodec::new(max_line_length, max_header_lines),
+            hdecoder:        hdecoder,
+            bdecoder:        None,
+            header:          None,
         }
     }
 }
@@ -369,14 +399,67 @@ impl Decoder for ClientCodec {
     type Error = Error;
 
     fn decode(&mut self, data: &mut BytesMut) -> Result<Option<Response>, Error> {
-        if let Some(response) = self.inner.decode(data)? {
-            // try to parse a given generic response
-            let response = Response::new(response)?;
+        if self.header.is_none() {
+            if let Some(header) = self.hdecoder.decode(data)? {
+                let bdecoder;
 
-            Ok(Some(response))
-        } else {
-            Ok(None)
+                if let Some(clength) = header.get_header_field("content-length") {
+                    let clength = clength.value()
+                        .ok_or(Error::from("missing Content-Length value"))?;
+                    let clength = usize::from_str(clength)
+                        .map_err(|_| Error::from("unable to decode Content-Length"))?;
+
+                    bdecoder = FixedSizeBodyDecoder::new(clength);
+                } else {
+                    bdecoder = FixedSizeBodyDecoder::new(0);
+                }
+
+                self.bdecoder = Some(bdecoder);
+                self.header = Some(header);
+            }
         }
+
+        if let Some(mut bdecoder) = self.bdecoder.take() {
+            if let Some(body) = bdecoder.decode(data)? {
+                let header = self.header.take()
+                    .expect("header is missing");
+
+                let response = GenericResponse::new(header, body);
+                let response = Response::new(response)?;
+
+                return Ok(Some(response));
+            }
+
+            self.bdecoder = Some(bdecoder);
+        }
+
+        Ok(None)
+    }
+
+    fn decode_eof(&mut self, data: &mut BytesMut) -> Result<Option<Response>, Error> {
+        while !data.is_empty() {
+            let res = self.decode(data)?;
+
+            if res.is_some() {
+                return Ok(res);
+            }
+        }
+
+        if let Some(mut bdecoder) = self.bdecoder.take() {
+            if let Some(body) = bdecoder.decode_eof(data)? {
+                let header = self.header.take()
+                    .expect("header is missing");
+
+                let response = GenericResponse::new(header, body);
+                let response = Response::new(response)?;
+
+                return Ok(Some(response));
+            }
+
+            self.bdecoder = Some(bdecoder);
+        }
+
+        Ok(None)
     }
 }
 
@@ -385,6 +468,12 @@ impl Encoder for ClientCodec {
     type Error = io::Error;
 
     fn encode(&mut self, message: GenericRequest, buffer: &mut BytesMut) -> Result<(), io::Error> {
-        self.inner.encode(message, buffer)
+        let header = format!("{}", message.header());
+        let body = message.body();
+
+        buffer.extend_from_slice(header.as_bytes());
+        buffer.extend_from_slice(body);
+
+        Ok(())
     }
 }
