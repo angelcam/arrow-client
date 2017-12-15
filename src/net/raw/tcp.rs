@@ -379,7 +379,7 @@ pub mod scanner {
                                 tcp[tcpflags] & tcp-syn != 0 and \
                                 tcp[tcpflags] & tcp-ack != 0",
                                 self.device.ip_addr, sport);
-            let packets = self.scanner.sr(&filter, &mut gen, 1000000000)?;
+            let packets = self.scanner.sr(&filter, &mut gen, 2000000000)?;
 
             let mut services = Vec::new();
 

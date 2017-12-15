@@ -234,7 +234,7 @@ pub mod scanner {
         fn scan(&mut self) -> pcap::Result<Vec<(MacAddr, Ipv4Addr)>> {
             let mut gen = Ipv4ArpScannerPacketGenerator::new(&self.device);
             let filter = format!("arp and ether dst {}", self.device.mac_addr);
-            let packets = self.scanner.sr(&filter, &mut gen, 1000000000)?;
+            let packets = self.scanner.sr(&filter, &mut gen, 2000000000)?;
 
             let mut hosts = Vec::new();
 

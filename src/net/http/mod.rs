@@ -157,17 +157,18 @@ impl FromStr for Scheme {
 /// HTTP request.
 #[derive(Clone)]
 pub struct Request {
-    host:             String,
-    port:             u16,
-    inner:            GenericRequestBuilder,
-    timeout:          Option<Duration>,
-    max_line_length:  usize,
-    max_header_lines: usize,
+    host:                 String,
+    port:                 u16,
+    inner:                GenericRequestBuilder,
+    timeout:              Option<Duration>,
+    max_line_length:      usize,
+    max_header_lines:     usize,
+    ignore_response_body: bool,
 }
 
 impl Request {
     /// Create a new HTTP request.
-    pub fn new(method: Method, url: &str) -> Result<Request, Error> {
+    pub fn new(method: Method, url: &str, ignore_response_body: bool) -> Result<Request, Error> {
         let url = Url::from_str(url)
             .map_err(|_| Error::from("malformed URL"))?;
 
@@ -197,20 +198,21 @@ impl Request {
             .set_header_field(("User-Agent", uagent));
 
         let builder = Request {
-            host:             host.to_string(),
-            port:             port,
-            inner:            inner,
-            timeout:          Some(Duration::from_secs(20)),
-            max_line_length:  4096,
-            max_header_lines: 1024,
+            host:                 host.to_string(),
+            port:                 port,
+            inner:                inner,
+            timeout:              Some(Duration::from_secs(20)),
+            max_line_length:      4096,
+            max_header_lines:     1024,
+            ignore_response_body: ignore_response_body,
         };
 
         Ok(builder)
     }
 
     /// Create a new GET request.
-    pub fn get(url: &str) -> Result<Request, Error> {
-        Request::new(Method::GET, url)
+    pub fn get_header(url: &str) -> Result<Request, Error> {
+        Request::new(Method::GET, url, true)
     }
 
     /// Set protocol version.
@@ -255,11 +257,16 @@ impl Request {
 
         let timeout = self.timeout.clone();
 
+        let codec = ClientCodec::new(
+            self.max_line_length,
+            self.max_header_lines,
+            self.ignore_response_body);
+
         // single request-response cycle
         let response = TcpStream::connect(&addr.unwrap(), &handle)
             .map_err(|err| Error::from(err))
             .and_then(move |stream| {
-                stream.framed(ClientCodec::new(self.max_line_length, self.max_header_lines))
+                stream.framed(codec)
                     .send(self.inner.build())
                     .map_err(|err| Error::from(err))
                     .and_then(|stream| {
@@ -379,24 +386,29 @@ impl Future for FutureResponse {
 
 /// HTTP client codec.
 pub struct ClientCodec {
-    hdecoder:        GenericResponseHeaderDecoder,
-    bdecoder:        Option<Box<MessageBodyDecoder>>,
-    header:          Option<GenericResponseHeader>,
-    max_line_length: usize,
+    hdecoder:             GenericResponseHeaderDecoder,
+    bdecoder:             Option<Box<MessageBodyDecoder>>,
+    header:               Option<GenericResponseHeader>,
+    max_line_length:      usize,
+    ignore_response_body: bool,
 }
 
 impl ClientCodec {
     /// Create a new HTTP client codec.
-    pub fn new(max_line_length: usize, max_header_lines: usize) -> ClientCodec {
+    pub fn new(
+        max_line_length: usize,
+        max_header_lines: usize,
+        ignore_response_body: bool) -> ClientCodec {
         let hdecoder = GenericResponseHeaderDecoder::new(
             max_line_length,
             max_header_lines);
 
         ClientCodec {
-            hdecoder:        hdecoder,
-            bdecoder:        None,
-            header:          None,
-            max_line_length: max_line_length,
+            hdecoder:             hdecoder,
+            bdecoder:             None,
+            header:               None,
+            max_line_length:      max_line_length,
+            ignore_response_body: ignore_response_body,
         }
     }
 }
@@ -413,20 +425,20 @@ impl Decoder for ClientCodec {
                 let bdecoder: Box<MessageBodyDecoder>;
 
                 if status_code >= 100 && status_code < 200 {
-                    bdecoder = Box::new(FixedSizeBodyDecoder::new(0));
+                    bdecoder = Box::new(FixedSizeBodyDecoder::new(0, self.ignore_response_body));
                 } else if status_code == 204 {
-                    bdecoder = Box::new(FixedSizeBodyDecoder::new(0));
+                    bdecoder = Box::new(FixedSizeBodyDecoder::new(0, self.ignore_response_body));
                 } else if status_code == 304 {
-                    bdecoder = Box::new(FixedSizeBodyDecoder::new(0));
+                    bdecoder = Box::new(FixedSizeBodyDecoder::new(0, self.ignore_response_body));
                 } else if let Some(tenc) = header.get_header_field("transfer-encoding") {
                     let tenc = tenc.value()
                         .unwrap_or("")
                         .to_lowercase();
 
                     if tenc == "chunked" {
-                        bdecoder = Box::new(ChunkedBodyDecoder::new(self.max_line_length));
+                        bdecoder = Box::new(ChunkedBodyDecoder::new(self.max_line_length, self.ignore_response_body));
                     } else {
-                        bdecoder = Box::new(SimpleBodyDecoder::new());
+                        bdecoder = Box::new(SimpleBodyDecoder::new(self.ignore_response_body));
                     }
                 } else if let Some(clength) = header.get_header_field("content-length") {
                     let clength = clength.value()
@@ -434,9 +446,9 @@ impl Decoder for ClientCodec {
                     let clength = usize::from_str(clength)
                         .map_err(|_| Error::from("unable to decode Content-Length"))?;
 
-                    bdecoder = Box::new(FixedSizeBodyDecoder::new(clength));
+                    bdecoder = Box::new(FixedSizeBodyDecoder::new(clength, self.ignore_response_body));
                 } else {
-                    bdecoder = Box::new(SimpleBodyDecoder::new());
+                    bdecoder = Box::new(SimpleBodyDecoder::new(self.ignore_response_body));
                 }
 
                 self.bdecoder = Some(bdecoder);

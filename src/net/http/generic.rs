@@ -284,7 +284,7 @@ pub struct RequestHeader {
 }
 
 impl RequestHeader {
-    /// Create a new HTTP-like request.
+    /// Create a new HTTP-like request header.
     fn new(protocol: &str, version: &str, method: &str, path: &str) -> RequestHeader {
         RequestHeader {
             method:        method.to_string(),
@@ -711,14 +711,16 @@ impl<T> MessageBodyDecoder for T
 /// Simple HTTP-like message body decoder that consumes all data until EOF is
 /// received.
 pub struct SimpleBodyDecoder {
-    body: Vec<u8>,
+    body:   Vec<u8>,
+    ignore: bool,
 }
 
 impl SimpleBodyDecoder {
     /// Create a new simple body decoder.
-    pub fn new() -> SimpleBodyDecoder {
+    pub fn new(ignore_data: bool) -> SimpleBodyDecoder {
         SimpleBodyDecoder {
-            body: Vec::new(),
+            body:   Vec::new(),
+            ignore: ignore_data,
         }
     }
 }
@@ -730,7 +732,9 @@ impl Decoder for SimpleBodyDecoder {
     fn decode(&mut self, data: &mut BytesMut) -> Result<Option<MessageBody>, Error> {
         let data = data.take();
 
-        self.body.extend_from_slice(data.as_ref());
+        if !self.ignore {
+            self.body.extend_from_slice(data.as_ref());
+        }
 
         Ok(None)
     }
@@ -750,14 +754,24 @@ impl Decoder for SimpleBodyDecoder {
 pub struct FixedSizeBodyDecoder {
     body:     Option<Vec<u8>>,
     expected: usize,
+    ignore:   bool,
 }
 
 impl FixedSizeBodyDecoder {
     /// Create a new fixed-size decoder expecting a given number of bytes.
-    pub fn new(expected: usize) -> FixedSizeBodyDecoder {
+    pub fn new(expected: usize, ignore_data: bool) -> FixedSizeBodyDecoder {
+        let body;
+
+        if ignore_data {
+            body = Vec::new();
+        } else {
+            body = Vec::with_capacity(expected);
+        }
+
         FixedSizeBodyDecoder {
-            body:     Some(Vec::with_capacity(expected)),
+            body:     Some(body),
             expected: expected,
+            ignore:   ignore_data,
         }
     }
 }
@@ -780,7 +794,9 @@ impl Decoder for FixedSizeBodyDecoder {
         let data = data.split_to(take);
 
         if let Some(ref mut body) = self.body {
-            body.extend_from_slice(data.as_ref());
+            if !self.ignore {
+                body.extend_from_slice(data.as_ref());
+            }
         }
 
         if self.expected > 0 {
@@ -805,6 +821,7 @@ impl Decoder for FixedSizeBodyDecoder {
     }
 }
 
+/// Internal state of the chunked decoder.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum ChunkedDecoderState {
     ChunkHeader,
@@ -820,16 +837,18 @@ pub struct ChunkedBodyDecoder {
     ldecoder: LineDecoder,
     body:     Vec<u8>,
     expected: usize,
+    ignore:   bool,
 }
 
 impl ChunkedBodyDecoder {
     /// Create a new decoder for HTTP-like chunked bodies.
-    pub fn new(max_line_length: usize) -> ChunkedBodyDecoder {
+    pub fn new(max_line_length: usize, ignore_data: bool) -> ChunkedBodyDecoder {
         ChunkedBodyDecoder {
             state:    ChunkedDecoderState::ChunkHeader,
             ldecoder: LineDecoder::new(b"\r\n", max_line_length),
             body:     Vec::new(),
             expected: 0,
+            ignore:   ignore_data,
         }
     }
 
@@ -880,7 +899,9 @@ impl ChunkedBodyDecoder {
 
         let data = data.split_to(take);
 
-        self.body.extend_from_slice(data.as_ref());
+        if !self.ignore {
+            self.body.extend_from_slice(data.as_ref());
+        }
 
         if self.expected == 0 {
             self.state = ChunkedDecoderState::ChunkBodyDelimiter;
