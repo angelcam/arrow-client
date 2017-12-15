@@ -695,8 +695,7 @@ impl ApplicationConfig {
             ))?;
 
         {
-            let ssl_ctx_builder = builder.builder_mut()
-                .builder_mut();
+            let ssl_ctx_builder = builder.builder_mut();
 
             ssl_ctx_builder.set_cipher_list(SSL_CIPHER_LIST)
                 .map_err(|err| RuntimeError::from(
