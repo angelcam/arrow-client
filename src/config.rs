@@ -18,7 +18,6 @@ use std::fmt;
 use std::process;
 use std::str;
 
-use std::ascii::AsciiExt;
 use std::env::Args;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
