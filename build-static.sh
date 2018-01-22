@@ -14,18 +14,18 @@ SELF_DIR=`readlink -e $SELF_DIR`
 # Change the following variables as needed #
 ############################################
 
-BUILD_HOST=x86_64-unknown-linux-gnu
+BUILD_HOST=${MACHTYPE:-x86_64-unknown-linux-gnu}
 
-RUST_TARGET=arm-unknown-linux-musleabi
+RUST_TARGET=${RUST_TARGET:-arm-unknown-linux-musleabi}
 
-OPENSSL_TARGET=linux-armv4
+OPENSSL_TARGET=${OPENSSL_TARGET:-linux-armv4}
 
-KERNEL_HEADERS_ARCH=arm
+KERNEL_HEADERS_ARCH=${KERNEL_HEADERS_ARCH:-arm}
 
-FEATURE_DISCOVERY=1
+FEATURE_DISCOVERY=${FEATURE_DISCOVERY:-0}
 
-TOOLCHAIN_PREFIX=arm-hisiv300-linux-uclibcgnueabi-
-TOOLCHAIN_DIR=$SELF_DIR/toolchains/arm-hisiv300-linux
+TOOLCHAIN_TARGET=${TOOLCHAIN_TARGET:-arm-hisiv300-linux-uclibcgnueabi}
+TOOLCHAIN_DIR=${TOOLCHAIN_DIR:-$SELF_DIR/toolchains/arm-hisiv300-linux}
 
 #########################################################
 # Do not touch the following variables unless necessary #
@@ -41,7 +41,7 @@ OPENSSL_URL=https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz
 KERNEL_HEADERS_URL=http://ftp.barfooze.de/pub/sabotage/tarballs/kernel-headers-${KERNEL_HEADERS_VERSION}.tar.xz
 LIBPCAP_URL=http://www.tcpdump.org/release/libpcap-${LIBPCAP_VERSION}.tar.gz
 
-TOOLCHAIN_BIN=$TOOLCHAIN_DIR/bin
+TOOLCHAIN_BIN=${TOOLCHAIN_BIN:-$TOOLCHAIN_DIR/bin}
 
 ################################
 # Set up the build environment #
@@ -99,7 +99,7 @@ cd musl-${MUSL_VERSION}
 
 apply-patches musl-${MUSL_VERSION}
 
-export CROSS_COMPILE=$TOOLCHAIN_PREFIX
+export CROSS_COMPILE=${TOOLCHAIN_TARGET}-
 
 if [ ! -f config.mak ]; then
   ./configure \
@@ -134,9 +134,9 @@ rm -rf apps 2> /dev/null
 rm -rf fuzz 2> /dev/null
 rm -rf test 2> /dev/null
 
-export AR=${TOOLCHAIN_PREFIX}ar
+export AR=${TOOLCHAIN_TARGET}-ar
 export CC=musl-gcc
-export RANLIB=${TOOLCHAIN_PREFIX}ranlib
+export RANLIB=${TOOLCHAIN_TARGET}-ranlib
 
 if [ ! -f .configured ]; then
   ./Configure $OPENSSL_TARGET \
@@ -243,7 +243,7 @@ fi
 
 cat << EOF > .cargo/config
 [target.${RUST_TARGET}]
-ar = "${TOOLCHAIN_PREFIX}ar"
+ar = "${TOOLCHAIN_TARGET}-ar"
 linker = "musl-gcc"
 EOF
 
@@ -257,4 +257,4 @@ if [ -f .cargo/config.old ]; then
   mv .cargo/config.old .cargo/config
 fi
 
-${TOOLCHAIN_PREFIX}strip target/$RUST_TARGET/release/arrow-client
+${TOOLCHAIN_TARGET}-strip target/$RUST_TARGET/release/arrow-client
