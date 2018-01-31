@@ -92,14 +92,18 @@ impl<T, U> Stream for Pipe<T, U>
     type Error = U::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        // make sure that we feed the sink at least once on every poll to avoid
+        // congestion of the input stream
+        try!(self.feed_sink());
+
         loop {
-            // try to poll the output stream at first
+            // try to poll the output stream
             match try!(self.sink.poll()) {
                 Async::Ready(ready) => return Ok(Async::Ready(ready)),
                 Async::NotReady     => (),
             }
 
-            // if it's not ready, try to feed the sink
+            // if it's not ready, try to feed the sink again
             try_ready!(self.feed_sink());
         }
     }
