@@ -226,6 +226,18 @@ impl SessionContext {
     /// buffer.
     fn close(&mut self) {
         self.closed = true;
+
+        // we MUST notify any possible task consuming the output buffer that
+        // the connection was closed and that there will be no more output data
+        if let Some(task) = self.output_ready.take() {
+            task.notify();
+        }
+
+        // we MUST notify any possible task consuming the input buffer that
+        // the connection was closed and that there will be no more input data
+        if let Some(task) = self.input_ready.take() {
+            task.notify();
+        }
     }
 
     /// Mark the context as closed and set a given error. Note that this
@@ -412,6 +424,8 @@ impl SessionManager {
     /// Close a given session.
     pub fn close(&mut self, session_id: u32, _: u32) {
         if let Some(mut session) = self.sessions.remove(&session_id) {
+            log_info!(self.logger, "closing service connection; session ID: {:08x}", session_id);
+
             session.close();
         }
     }
