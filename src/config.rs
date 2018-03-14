@@ -83,6 +83,9 @@ const RTSP_PATHS_FILE: &'static str = "/etc/arrow/rtsp-paths";
 /// line).
 const MJPEG_PATHS_FILE: &'static str = "/etc/arrow/mjpeg-paths";
 
+/// Default port number for connecting to an Arrow Service.
+const DEFAULT_ARROW_SERVICE_PORT: u16 = 8900;
+
 
 /// List of TLS protocols that can be used for connections to Arrow services.
 const SSL_METHODS: &'static [Protocol] = &[
@@ -265,8 +268,7 @@ impl ApplicationConfigBuilder {
         // skip the application name
         args.next();
 
-        self.arrow_svc_addr = args.next()
-            .ok_or(ConfigError::from("missing Angelcam Arrow Service address"))?;
+        self.arrow_service_address(&mut args)?;
 
         while let Some(ref arg) = args.next() {
             match arg as &str {
@@ -308,6 +310,21 @@ impl ApplicationConfigBuilder {
         }
 
         Ok(self)
+    }
+
+    /// Process the Arrow Service address argument.
+    fn arrow_service_address(&mut self, args: &mut Args) -> Result<(), ConfigError> {
+        let addr = args.next()
+            .ok_or(ConfigError::from("missing Angelcam Arrow Service address"))?;
+
+        // add the default port number if the given address has no port
+        if addr.ends_with(']') || !addr.contains(':') {
+            self.arrow_svc_addr = format!("{}:{}", addr, DEFAULT_ARROW_SERVICE_PORT);
+        } else {
+            self.arrow_svc_addr = addr;
+        }
+
+        Ok(())
     }
 
     /// Process the CA certificate argument.
