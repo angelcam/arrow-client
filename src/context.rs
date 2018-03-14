@@ -127,7 +127,7 @@ impl ApplicationContextData {
 
         utils::result_or_log(
             &mut self.logger,
-            Severity::WARN,
+            Severity::DEBUG,
             "unable to save current connection state",
             res);
     }
