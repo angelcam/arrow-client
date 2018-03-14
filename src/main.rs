@@ -128,7 +128,11 @@ fn arrow_thread(mut app_context: ApplicationContext, cmd_channel: CommandChannel
         match res {
             Ok(addr) => cur_addr = addr,
             Err(err) => {
-                log_warn!(logger, "{}", err.description());
+                if err.kind() == ErrorKind::Unauthorized {
+                    log_info!(logger, "connection rejected by the remote service {}; is the client paired?", cur_addr);
+                } else {
+                    log_warn!(logger, "{}", err.description());
+                }
 
                 let cstate = match err.kind() {
                     ErrorKind::Unauthorized => ConnectionState::Unauthorized,
