@@ -16,7 +16,6 @@ mod error;
 mod proto;
 mod session;
 
-use std::error::Error;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -47,7 +46,6 @@ use context::ApplicationContext;
 
 use cmd_handler::{Command, CommandChannel};
 
-use net::arrow::error::ConnectionError;
 use net::arrow::proto::codec::{ArrowCodec, FromBytes};
 use net::arrow::proto::msg::ArrowMessage;
 use net::arrow::proto::msg::control::{
@@ -630,12 +628,12 @@ impl Stream for ArrowClient {
 }
 
 /// Get socket address for a given hostname and port.
-fn get_socket_addr(addr: &str) -> impl Future<Item = SocketAddr, Error = ConnectionError> {
+fn get_socket_addr(addr: &str) -> impl Future<Item = SocketAddr, Error = ArrowError> {
     let saddr = addr.to_socket_addrs()
-        .map_err(|err| ConnectionError::from(err))
+        .map_err(|err| ArrowError::connection_error(err))
         .and_then(move |mut addrs| {
             addrs.next()
-                .ok_or(ConnectionError::from(
+                .ok_or(ArrowError::connection_error(
                     format!("failed to lookup Arrow Service {} address information", addr)
                 ))
         });
@@ -664,11 +662,11 @@ pub fn connect(
     let connection = get_socket_addr(&addr)
         .and_then(move |saddr| {
             TcpStream::connect(&saddr, &tc_handle)
-                .map_err(|err| ConnectionError::from(err))
+                .map_err(|err| ArrowError::connection_error(err))
         })
         .and_then(move |socket| {
             app_context.get_tls_connector(&hostname)
-                .map_err(|err| ConnectionError::from(
+                .map_err(|err| ArrowError::other(
                     format!("unable to get TLS context: {}", err)
                 ))
                 .and_then(move |tls_connector| {
@@ -679,14 +677,20 @@ pub fn connect(
             // NOTE: we use our own hostname verification for now, this will be later
             // replaced by a propper one
             tls_connector.danger_connect_async_without_providing_domain_for_certificate_verification_and_server_name_indication(socket)
-                .map_err(|err| ConnectionError::from(err))
+                .map_err(|err| ArrowError::connection_error(err))
         });
 
     DEFAULT_TIMER
         .timeout(connection, Duration::from_secs(CONNECTION_TIMEOUT))
-        .map_err(move |err| ArrowError::connection_error(
-            format!("unable to connect to remote Arrow Service {} ({})", addr, err.description())
-        ))
+        .map_err(move |err| {
+            if err.is_elapsed() {
+                ArrowError::connection_error(format!("unable to connect to remote Arrow Service {} (connection timeout)", addr))
+            } else if let Some(inner) = err.into_inner() {
+                ArrowError::connection_error(format!("unable to connect to remote Arrow Service {} ({})", addr, inner))
+            } else {
+                ArrowError::other("timer error")
+            }
+        })
         .and_then(|stream| {
             let framed = stream.framed(ArrowCodec);
             let (sink, stream) = framed.split();

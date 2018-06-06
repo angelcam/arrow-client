@@ -25,8 +25,6 @@ use utils::RuntimeError;
 
 use native_tls;
 
-use tokio_timer::{TimerError, TimeoutError};
-
 /// Arrow error kinds.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ErrorKind {
@@ -135,12 +133,6 @@ impl From<DecodeError> for ArrowError {
     }
 }
 
-impl From<TimerError> for ArrowError {
-    fn from(err: TimerError) -> ArrowError {
-        ArrowError::from(format!("timer error: {}", err))
-    }
-}
-
 impl From<ConnectionError> for ArrowError {
     fn from(err: ConnectionError) -> ArrowError {
         ArrowError::from(format!("connection error: {}", err))
@@ -150,6 +142,12 @@ impl From<ConnectionError> for ArrowError {
 impl From<RuntimeError> for ArrowError {
     fn from(err: RuntimeError) -> ArrowError {
         ArrowError::from(format!("runtime error: {}", err))
+    }
+}
+
+impl From<native_tls::Error> for ArrowError {
+    fn from(err: native_tls::Error) -> ArrowError {
+        ArrowError::from(format!("TLS error: {}", err))
     }
 }
 
@@ -188,17 +186,5 @@ impl<'a> From<&'a str> for ConnectionError {
 impl From<io::Error> for ConnectionError {
     fn from(err: io::Error) -> ConnectionError {
         ConnectionError::from(format!("IO error: {}", err))
-    }
-}
-
-impl From<native_tls::Error> for ConnectionError {
-    fn from(err: native_tls::Error) -> ConnectionError {
-        ConnectionError::from(format!("TLS error: {}", err))
-    }
-}
-
-impl<T> From<TimeoutError<T>> for ConnectionError {
-    fn from(err: TimeoutError<T>) -> ConnectionError {
-        ConnectionError::from(format!("connection timeout: {}", err))
     }
 }

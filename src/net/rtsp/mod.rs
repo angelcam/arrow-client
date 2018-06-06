@@ -48,8 +48,6 @@ use tokio_core::reactor::Handle as TokioHandle;
 use tokio_io::AsyncRead;
 use tokio_io::codec::{Decoder, Encoder};
 
-use tokio_timer::TimeoutError;
-
 /// RTSP codec error.
 #[derive(Debug, Clone)]
 pub struct Error {
@@ -89,12 +87,6 @@ impl From<io::Error> for Error {
 impl From<generic::Error> for Error {
     fn from(err: generic::Error) -> Error {
         Error::from(err.description())
-    }
-}
-
-impl<T> From<TimeoutError<T>> for Error {
-    fn from(err: TimeoutError<T>) -> Error {
-        Error::from(format!("request timeout: {}", err))
     }
 }
 
@@ -281,7 +273,16 @@ impl Request {
 
         if let Some(timeout) = timeout {
             let response = DEFAULT_TIMER
-                .timeout(response, timeout);
+                .timeout(response, timeout)
+                .map_err(|err| {
+                    if err.is_elapsed() {
+                        Error::from("request timeout")
+                    } else if let Some(inner) = err.into_inner() {
+                        inner
+                    } else {
+                        Error::from("timer error")
+                    }
+                });
 
             FutureResponse::new(response)
         } else {

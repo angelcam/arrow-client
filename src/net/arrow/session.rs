@@ -473,13 +473,20 @@ impl SessionManager {
         let transport = session.transport();
         let mut err_handler = session.error_handler();
 
-        let connection = TcpStream::connect(&addr, &self.tc_handle);
-
         let client = DEFAULT_TIMER
             .timeout(
-                connection.map_err(|err| ConnectionError::from(err)),
-                Duration::from_secs(CONNECTION_TIMEOUT)
+                TcpStream::connect(&addr, &self.tc_handle),
+                Duration::from_secs(CONNECTION_TIMEOUT),
             )
+            .map_err(|err| {
+                if err.is_elapsed() {
+                    ConnectionError::from("connection timeout")
+                } else if let Some(inner) = err.into_inner() {
+                    ConnectionError::from(inner)
+                } else {
+                    ConnectionError::from("timer error")
+                }
+            })
             .and_then(|stream| {
                 let framed = stream.framed(RawCodec);
                 let (sink, stream) = framed.split();

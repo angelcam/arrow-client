@@ -12,50 +12,75 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std;
+use std::thread;
+
+use std::time::{Duration, Instant};
 
 use utils::logger::{BoxLogger, Logger};
 
 use futures::{Future, Stream};
 
-use tokio_timer::{Sleep, Timeout, TimeoutError};
-use tokio_timer::Timer as TokioTimer;
+use tokio_timer::{Delay, Deadline};
+use tokio_timer::timer::Handle as TokioTimerHandle;
+use tokio_timer::timer::Timer as TokioTimer;
 
-struct TimerContext {
+#[derive(Clone)]
+pub struct Timer {
     logger: Option<BoxLogger>,
-    timer:  TokioTimer,
+    handle: TokioTimerHandle,
 }
 
-impl TimerContext {
+impl Timer {
     /// Create a new timer context.
-    fn new(logger: Option<BoxLogger>) -> TimerContext {
-        let timer = TokioTimer::default();
+    pub fn new(mut logger: Option<BoxLogger>) -> Timer {
+        let (tx, rx) = std::sync::mpsc::channel::<TokioTimerHandle>();
 
-        TimerContext {
-            logger: logger,
-            timer:  timer,
+        let lgr = logger.clone();
+
+        thread::spawn(move || {
+            let mut timer = TokioTimer::default();
+
+            tx.send(timer.handle())
+                .expect("broken mpsc channel");
+
+            loop {
+                if let Err(_) = timer.turn(None) {
+                    if let Some(logger) = logger.as_mut() {
+                        log_error!(logger, "timer thread error");
+                    }
+
+                    panic!("timer thread error");
+                }
+            }
+        });
+
+        let handle = rx.recv()
+            .expect("broken mpsc channel");
+
+        Timer {
+            logger: lgr,
+            handle: handle,
         }
     }
 
     /// Sleep for a given period of time.
-    fn sleep(&self, time: Duration) -> Sleep {
-        self.timer.sleep(time)
+    pub fn sleep(&self, time: Duration) -> Delay {
+        self.handle.delay(Instant::now() + time)
     }
 
     /// Create a timeout.
-    fn timeout<F, E>(&self, future: F, timeout: Duration) -> Timeout<F>
-        where F: Future<Error=E>,
-              E: From<TimeoutError<F>> {
-        self.timer.timeout(future, timeout)
+    pub fn timeout<F>(&self, future: F, timeout: Duration) -> Deadline<F>
+        where F: Future {
+        self.handle.deadline(future, Instant::now() + timeout)
     }
 
     /// Create a new periodic task.
-    fn create_periodic_task<F>(&self, interval: Duration, f: F) -> impl Future<Item = (), Error = ()>
+    pub fn create_periodic_task<F>(&self, interval: Duration, f: F) -> impl Future<Item = (), Error = ()>
         where F: 'static + Fn() -> () {
         let logger = self.logger.clone();
 
-        self.timer.interval(interval)
+        self.handle.interval(Instant::now() + interval, interval)
             .for_each(move |_| {
                 f();
 
@@ -68,44 +93,6 @@ impl TimerContext {
 
                 Ok(())
             })
-    }
-}
-
-#[derive(Clone)]
-pub struct Timer {
-    context: Arc<Mutex<TimerContext>>,
-}
-
-impl Timer {
-    /// Create a new timer context.
-    pub fn new(logger: Option<BoxLogger>) -> Timer {
-        Timer {
-            context: Arc::new(Mutex::new(TimerContext::new(logger))),
-        }
-    }
-
-    /// Sleep for a given period of time.
-    pub fn sleep(&self, time: Duration) -> Sleep {
-        self.context.lock()
-            .unwrap()
-            .sleep(time)
-    }
-
-    /// Create a timeout.
-    pub fn timeout<F, E>(&self, future: F, timeout: Duration) -> Timeout<F>
-        where F: Future<Error=E>,
-              E: From<TimeoutError<F>> {
-        self.context.lock()
-            .unwrap()
-            .timeout(future, timeout)
-    }
-
-    /// Create a new periodic task.
-    pub fn create_periodic_task<F>(&self, interval: Duration, f: F) -> impl Future<Item = (), Error = ()>
-        where F: 'static + Fn() -> () {
-        self.context.lock()
-            .unwrap()
-            .create_periodic_task(interval, f)
     }
 }
 
