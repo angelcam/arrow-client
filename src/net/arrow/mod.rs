@@ -19,12 +19,13 @@ mod session;
 use std::error::Error;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::collections::VecDeque;
 use std::time::Duration;
 
 use time;
 
+use futures;
 use futures::task;
 
 use futures::{StartSend, Async, AsyncSink, Poll};
@@ -152,7 +153,7 @@ impl ArrowClientContext {
         let session_manager = SessionManager::new(
             app_context.clone(),
             cmsg_factory.clone(),
-            tc_handle.clone());
+            tc_handle);
 
         let t = time::precise_time_s();
 
@@ -629,43 +630,62 @@ impl Stream for ArrowClient {
     }
 }
 
+/// Get socket address for a given hostname and port.
+fn get_socket_addr(addr: &str) -> impl Future<Item = SocketAddr, Error = ConnectionError> {
+    let saddr = addr.to_socket_addrs()
+        .map_err(|err| ConnectionError::from(err))
+        .and_then(move |mut addrs| {
+            addrs.next()
+                .ok_or(ConnectionError::from(
+                    format!("failed to lookup Arrow Service {} address information", addr)
+                ))
+        });
+
+    futures::future::result(saddr)
+}
+
 /// Connect Arrow Client to a given address and return either a redirect address or an error.
 pub fn connect(
     app_context: ApplicationContext,
     cmd_channel: CommandChannel,
-    addr: &str) -> Result<String, ArrowError> {
-    let mut core = TokioCore::new()
-        .map_err(|err| ArrowError::other(err))?;
-
+    addr: &str,
+    tc_handle: &TokioCoreHandle) -> impl Future<Item = String, Error = ArrowError> {
     let hostname = get_hostname(addr);
 
-    let saddr = addr.to_socket_addrs()
-        .map_err(|err| ArrowError::connection_error(err))?
-        .next()
-        .ok_or(ArrowError::connection_error(
-            format!("failed to lookup Arrow Service {} address information", addr)
-        ))?;
+    let addr = addr.to_string();
+    let hostname = hostname.to_string();
 
-    let tls_connector = app_context.get_tls_connector(&hostname)
-        .map_err(|err| ArrowError::other(err))?;
+    let tc_handle = tc_handle.clone();
 
     let aclient = ArrowClient::new(
         app_context.clone(),
         cmd_channel,
-        core.handle());
+        tc_handle.clone());
 
-    let connection = TcpStream::connect(&saddr, &core.handle())
-        .map_err(|err| ConnectionError::from(err))
-        .and_then(|socket| {
+    let connection = get_socket_addr(&addr)
+        .and_then(move |saddr| {
+            TcpStream::connect(&saddr, &tc_handle)
+                .map_err(|err| ConnectionError::from(err))
+        })
+        .and_then(move |socket| {
+            app_context.get_tls_connector(&hostname)
+                .map_err(|err| ConnectionError::from(
+                    format!("unable to get TLS context: {}", err)
+                ))
+                .and_then(move |tls_connector| {
+                    Ok((socket, tls_connector))
+                })
+        })
+        .and_then(|(socket, tls_connector)| {
             // NOTE: we use our own hostname verification for now, this will be later
             // replaced by a propper one
             tls_connector.danger_connect_async_without_providing_domain_for_certificate_verification_and_server_name_indication(socket)
                 .map_err(|err| ConnectionError::from(err))
         });
 
-    let client = DEFAULT_TIMER
+    DEFAULT_TIMER
         .timeout(connection, Duration::from_secs(CONNECTION_TIMEOUT))
-        .map_err(|err| ArrowError::connection_error(
+        .map_err(move |err| ArrowError::connection_error(
             format!("unable to connect to remote Arrow Service {} ({})", addr, err.description())
         ))
         .and_then(|stream| {
@@ -681,7 +701,5 @@ pub fn connect(
                     context.get_redirect()
                         .ok_or(ArrowError::connection_error("connection to Arrow Service lost"))
                 })
-        });
-
-    core.run(client)
+        })
 }

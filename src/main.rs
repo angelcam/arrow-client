@@ -53,11 +53,16 @@ pub mod timer;
 use std::process;
 use std::thread;
 
+use std::cell::RefCell;
 use std::error::Error;
 use std::fmt::Debug;
+use std::rc::Rc;
 use std::time::Duration;
 
+use futures::{Future, Stream};
+
 use tokio_core::reactor::Core as TokioCore;
+use tokio_core::reactor::Handle as TokioCoreHandle;
 
 use config::usage;
 
@@ -72,7 +77,7 @@ use net::arrow::{ArrowError, ErrorKind};
 
 use timer::DEFAULT_TIMER;
 
-use utils::logger::Logger;
+use utils::logger::{BoxLogger, Logger};
 
 /// Connectionn retry timeout.
 const RETRY_TIMEOUT: f64 = 60.0;
@@ -93,63 +98,101 @@ fn result_or_usage<T, E>(res: Result<T, E>) -> T
     }
 }
 
-/// Arrow Client main thread.
-///
-/// This function ensures maintaining connection with a remote Arrow Service.
-fn arrow_thread(mut app_context: ApplicationContext, cmd_channel: CommandChannel) {
-    let mut logger = app_context.get_logger();
+/// This future ensures maintaining connection with a remote Arrow Service.
+struct ArrowMainTask {
+    tc_handle: TokioCoreHandle,
+    app_context: ApplicationContext,
+    cmd_channel: CommandChannel,
+    logger: BoxLogger,
+    default_addr: String,
+    current_addr: String,
+    last_attempt: f64,
+    pairing_mode_timeout: f64,
+    diagnostic_mode: bool,
+}
 
-    let diagnostic_mode = app_context.get_diagnostic_mode();
-    let addr = app_context.get_arrow_service_address();
+impl ArrowMainTask {
+    /// Create a new task.
+    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel, tc_handle: TokioCoreHandle) -> impl Future<Item = (), Error = ()> {
+        let logger = app_context.get_logger();
+        let addr = app_context.get_arrow_service_address();
+        let diagnostic_mode = app_context.get_diagnostic_mode();
 
-    let t = time::precise_time_s();
+        let t = time::precise_time_s();
 
-    let pairing_mode_timeout = t + PAIRING_MODE_TIMEOUT;
+        let pairing_mode_timeout = t + PAIRING_MODE_TIMEOUT;
 
-    let mut cur_addr = addr.clone();
-    let mut last_attempt;
+        let task = ArrowMainTask {
+            tc_handle: tc_handle,
+            app_context: app_context,
+            cmd_channel: cmd_channel,
+            logger: logger,
+            default_addr: addr.clone(),
+            current_addr: addr,
+            last_attempt: t,
+            pairing_mode_timeout: pairing_mode_timeout,
+            diagnostic_mode: diagnostic_mode,
+        };
 
-    loop {
-        log_info!(logger, "connecting to remote Arrow Service {}", cur_addr);
+        let task = Rc::new(RefCell::new(task));
 
-        last_attempt = time::precise_time_s();
+        let connector = task.clone();
+        let rhandler = task;
 
-        app_context.set_connection_state(ConnectionState::Connected);
+        futures::stream::repeat(())
+            .and_then(move |_| connector.borrow_mut().connect())
+            .then(move |res| rhandler.borrow_mut().process_result(res))
+            .for_each(|_| Ok(()))
+    }
 
-        let res = arrow::connect(
-            app_context.clone(),
-            cmd_channel.clone(),
-            &cur_addr);
+    /// Connect to the Arrow service.
+    fn connect(&mut self) -> impl Future<Item = String, Error = ArrowError> {
+        log_info!(&mut self.logger, "connecting to remote Arrow Service {}", self.current_addr);
 
-        if diagnostic_mode {
+        self.last_attempt = time::precise_time_s();
+
+        self.app_context.set_connection_state(ConnectionState::Connected);
+
+        arrow::connect(
+            self.app_context.clone(),
+            self.cmd_channel.clone(),
+            &self.current_addr,
+            &self.tc_handle)
+    }
+
+    /// Process a given connection result.
+    fn process_result(&mut self, res: Result<String, ArrowError>) -> impl Future<Item = (), Error = ()> {
+        if self.diagnostic_mode {
             diagnose_connection_result(&res);
-        }
+        } else if let Ok(addr) = res {
+            // set redirection
+            self.current_addr = addr;
 
-        match res {
-            Ok(addr) => cur_addr = addr,
-            Err(err) => {
-                if err.kind() == ErrorKind::Unauthorized {
-                    log_info!(logger, "connection rejected by the remote service {}; is the client paired?", cur_addr);
-                } else {
-                    log_warn!(logger, "{}", err.description());
-                }
-
-                let cstate = match err.kind() {
-                    ErrorKind::Unauthorized => ConnectionState::Unauthorized,
-                    _                       => ConnectionState::Disconnected,
-                };
-
-                app_context.set_connection_state(cstate);
-
-                let retry = process_connection_error(
-                    err,
-                    last_attempt,
-                    pairing_mode_timeout);
-
-                wait_for_retry(&mut logger, retry);
-
-                cur_addr = addr.to_string();
+            Box::new(futures::future::ok(()))
+        } else if let Err(err) = res {
+            if err.kind() == ErrorKind::Unauthorized {
+                log_info!(&mut self.logger, "connection rejected by the remote service {}; is the client paired?", self.current_addr);
+            } else {
+                log_warn!(&mut self.logger, "{}", err.description());
             }
+
+            let cstate = match err.kind() {
+                ErrorKind::Unauthorized => ConnectionState::Unauthorized,
+                _                       => ConnectionState::Disconnected,
+            };
+
+            self.app_context.set_connection_state(cstate);
+
+            let retry = process_connection_error(
+                err,
+                self.last_attempt,
+                self.pairing_mode_timeout);
+
+            self.current_addr = self.default_addr.clone();
+
+            wait_for_retry(&mut self.logger, retry)
+        } else {
+            panic!("unexpected Result variant")
         }
     }
 }
@@ -212,21 +255,25 @@ fn process_connection_error(
 }
 
 /// Process a given connection retry object.
-fn wait_for_retry(logger: &mut Logger, connection_retry: ConnectionRetry) {
+fn wait_for_retry(logger: &mut Logger, connection_retry: ConnectionRetry) -> Box<Future<Item = (), Error = ()>> {
     match connection_retry {
         ConnectionRetry::Timeout(t) if t > 0.5 => {
             log_info!(logger, "retrying in {:.3} seconds", t);
 
-            thread::sleep(Duration::from_millis((t * 1000.0) as u64));
+            let time = Duration::from_millis((t * 1000.0) as u64);
+            let sleep = DEFAULT_TIMER.sleep(time)
+                .map_err(|_| ());
+
+            Box::new(sleep)
         },
-        ConnectionRetry::Timeout(_) => (),
+        ConnectionRetry::Timeout(_) => {
+            Box::new(futures::future::ok(()))
+        },
         ConnectionRetry::Suspend(reason) => {
             log_info!(logger, "{}", reason.to_string());
             log_info!(logger, "suspending the connection thread");
 
-            loop {
-                thread::sleep(Duration::from_millis(60000));
-            }
+            Box::new(futures::future::empty())
         },
     }
 }
@@ -268,6 +315,9 @@ fn main() {
 
     let cmd_channel = tx.clone();
 
+    // create Arrow client main task
+    let arrow_main_task = ArrowMainTask::new(context, cmd_channel, handle.clone());
+
     // schedule periodic network scan
     let periodic_network_scan = DEFAULT_TIMER
         .create_periodic_task(
@@ -278,11 +328,7 @@ fn main() {
         );
 
     handle.spawn(periodic_network_scan);
-
-    // start the Arrow client thread
-    thread::spawn(move || {
-        arrow_thread(context, cmd_channel)
-    });
+    handle.spawn(arrow_main_task);
 
     // run the command handler event loop
     core.run(rx)

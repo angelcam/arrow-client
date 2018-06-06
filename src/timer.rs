@@ -19,7 +19,7 @@ use utils::logger::{BoxLogger, Logger};
 
 use futures::{Future, Poll, Stream};
 
-use tokio_timer::{Timeout, TimeoutError};
+use tokio_timer::{Sleep, Timeout, TimeoutError};
 use tokio_timer::Timer as TokioTimer;
 
 pub struct PeriodicTask {
@@ -49,6 +49,11 @@ impl TimerContext {
             logger: logger,
             timer:  timer,
         }
+    }
+
+    /// Sleep for a given period of time.
+    fn sleep(&self, time: Duration) -> Sleep {
+        self.timer.sleep(time)
     }
 
     /// Create a timeout.
@@ -94,6 +99,13 @@ impl Timer {
         Timer {
             context: Arc::new(Mutex::new(TimerContext::new(logger))),
         }
+    }
+
+    /// Sleep for a given period of time.
+    pub fn sleep(&self, time: Duration) -> Sleep {
+        self.context.lock()
+            .unwrap()
+            .sleep(time)
     }
 
     /// Create a timeout.
