@@ -23,8 +23,8 @@ mod update;
 
 use std::mem;
 
-use std::rc::Rc;
-use std::cell::Cell;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bytes::BytesMut;
 
@@ -420,24 +420,20 @@ impl FromBytes for ControlMessage {
 /// Control Protocol message factory with shared message ID counter.
 #[derive(Clone)]
 pub struct ControlMessageFactory {
-    counter: Rc<Cell<u16>>,
+    counter: Arc<AtomicUsize>,
 }
 
 impl ControlMessageFactory {
     /// Create a new Control Protocol message factory.
     pub fn new() -> ControlMessageFactory {
         ControlMessageFactory {
-            counter: Rc::new(Cell::new(0)),
+            counter: Arc::new(AtomicUsize::new(0)),
         }
     }
 
     /// Get next message ID and increment the counter.
     fn next_id(&mut self) -> u16 {
-        let res = self.counter.get();
-
-        self.counter.set(res.wrapping_add(1));
-
-        res
+        self.counter.fetch_add(1, Ordering::SeqCst) as u16
     }
 
     /// Create a new ACK message with a given error code.

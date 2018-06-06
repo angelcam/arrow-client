@@ -105,9 +105,9 @@ pub trait ServiceTable {
 }
 
 /// Type alias for boxed service table.
-pub type BoxServiceTable = Box<ServiceTable>;
+pub type BoxServiceTable = Box<ServiceTable + Send + Sync>;
 
-impl ServiceTable for Box<ServiceTable> {
+impl ServiceTable for Box<ServiceTable + Send + Sync> {
     fn get(&self, id: u16) -> Option<Service> {
         self.as_ref()
             .get(id)

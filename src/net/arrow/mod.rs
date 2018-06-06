@@ -16,10 +16,9 @@ mod error;
 mod proto;
 mod session;
 
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use time;
@@ -33,10 +32,10 @@ use futures::stream::Stream;
 use futures::sink::Sink;
 use futures::task::Task;
 
-use tokio_core::net::TcpStream;
-use tokio_core::reactor::Handle as TokioCoreHandle;
+use tokio;
 
-use tokio_io::AsyncRead;
+use tokio::io::AsyncRead;
+use tokio::net::TcpStream;
 
 use futures_ex::StreamEx;
 
@@ -135,8 +134,7 @@ impl ArrowClientContext {
     /// Create a new Arrow Client.
     fn new(
         app_context: ApplicationContext,
-        cmd_channel: CommandChannel,
-        tc_handle: TokioCoreHandle) -> ArrowClientContext {
+        cmd_channel: CommandChannel) -> ArrowClientContext {
         let logger = app_context.get_logger();
         let svc_table = app_context.get_service_table();
 
@@ -147,8 +145,7 @@ impl ArrowClientContext {
         let cmsg_factory = ControlMessageFactory::new();
         let session_manager = SessionManager::new(
             app_context.clone(),
-            cmsg_factory.clone(),
-            tc_handle);
+            cmsg_factory.clone());
 
         let t = time::precise_time_s();
 
@@ -554,21 +551,19 @@ impl Stream for ArrowClientContext {
 }
 
 struct ArrowClient {
-    context: Rc<RefCell<ArrowClientContext>>,
+    context: Arc<Mutex<ArrowClientContext>>,
 }
 
 impl ArrowClient {
     /// Create a new instance of Arrow Client.
     fn new(
         app_context: ApplicationContext,
-        cmd_channel: CommandChannel,
-        tc_handle: TokioCoreHandle) -> ArrowClient {
+        cmd_channel: CommandChannel) -> ArrowClient {
         let context = ArrowClientContext::new(
             app_context.clone(),
-            cmd_channel,
-            tc_handle.clone());
+            cmd_channel);
 
-        let context = Rc::new(RefCell::new(context));
+        let context = Arc::new(Mutex::new(context));
 
         let event_handler = context.clone();
 
@@ -576,12 +571,13 @@ impl ArrowClient {
             .create_periodic_task(
                 Duration::from_millis(1000),
                 move || {
-                    event_handler.borrow_mut()
+                    event_handler.lock()
+                        .unwrap()
                         .time_event()
                 }
             );
 
-        tc_handle.spawn(events);
+        tokio::spawn(events);
 
         ArrowClient {
             context: context,
@@ -590,7 +586,8 @@ impl ArrowClient {
 
     /// Get redirect address (if any).
     fn get_redirect(&self) -> Option<String> {
-        self.context.borrow()
+        self.context.lock()
+            .unwrap()
             .get_redirect()
     }
 }
@@ -600,17 +597,20 @@ impl Sink for ArrowClient {
     type SinkError = ArrowError;
 
     fn start_send(&mut self, msg: ArrowMessage) -> StartSend<ArrowMessage, ArrowError> {
-        self.context.borrow_mut()
+        self.context.lock()
+            .unwrap()
             .start_send(msg)
     }
 
     fn poll_complete(&mut self) -> Poll<(), ArrowError> {
-        self.context.borrow_mut()
+        self.context.lock()
+            .unwrap()
             .poll_complete()
     }
 
     fn close(&mut self) -> Poll<(), ArrowError> {
-        self.context.borrow_mut()
+        self.context.lock()
+            .unwrap()
             .close()
     }
 }
@@ -620,7 +620,8 @@ impl Stream for ArrowClient {
     type Error = ArrowError;
 
     fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
-        self.context.borrow_mut()
+        self.context.lock()
+            .unwrap()
             .poll()
     }
 }
@@ -643,23 +644,19 @@ fn get_socket_addr(addr: &str) -> impl Future<Item = SocketAddr, Error = ArrowEr
 pub fn connect(
     app_context: ApplicationContext,
     cmd_channel: CommandChannel,
-    addr: &str,
-    tc_handle: &TokioCoreHandle) -> impl Future<Item = String, Error = ArrowError> {
+    addr: &str) -> impl Future<Item = String, Error = ArrowError> {
     let hostname = get_hostname(addr);
 
     let addr = addr.to_string();
     let hostname = hostname.to_string();
 
-    let tc_handle = tc_handle.clone();
-
     let aclient = ArrowClient::new(
         app_context.clone(),
-        cmd_channel,
-        tc_handle.clone());
+        cmd_channel);
 
     let connection = get_socket_addr(&addr)
-        .and_then(move |saddr| {
-            TcpStream::connect(&saddr, &tc_handle)
+        .and_then(|saddr| {
+            TcpStream::connect(&saddr)
                 .map_err(|err| ArrowError::connection_error(err))
         })
         .and_then(move |socket| {

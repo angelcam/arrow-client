@@ -25,7 +25,7 @@ use openssl::error::ErrorStack as SslErrorStack;
 use openssl::ssl::Error as SslError;
 use openssl::ssl::{HandshakeError, SslConnector, SslStream};
 
-use tokio_io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 /// TLS error.
 #[derive(Debug, Clone)]

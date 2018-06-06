@@ -42,10 +42,9 @@ use bytes::BytesMut;
 
 use futures::{Future, IntoFuture, Poll, Sink, Stream};
 
-use tokio_core::net::TcpStream;
-use tokio_core::reactor::Handle as TokioHandle;
+use tokio::io::AsyncRead;
+use tokio::net::TcpStream;
 
-use tokio_io::AsyncRead;
 use tokio_io::codec::{Decoder, Encoder};
 
 /// RTSP codec error.
@@ -240,7 +239,7 @@ impl Request {
     }
 
     /// Send the request and return a future response
-    pub fn send(self, handle: &TokioHandle) -> FutureResponse {
+    pub fn send(self) -> FutureResponse {
         let addr = net::utils::get_socket_address((self.host.as_ref(), self.port))
             .map_err(|_| Error::from("unable to resolve a given socket address"));
 
@@ -256,7 +255,7 @@ impl Request {
             self.ignore_response_body);
 
         // single request-response cycle
-        let response = TcpStream::connect(&addr.unwrap(), &handle)
+        let response = TcpStream::connect(&addr.unwrap())
             .map_err(|err| Error::from(err))
             .and_then(move |stream| {
                 stream.framed(codec)

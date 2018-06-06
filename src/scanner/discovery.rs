@@ -18,14 +18,13 @@ use std::io;
 use std::fmt;
 use std::result;
 
-use std::cell::Cell;
 use std::fs::File;
 use std::error::Error;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, BufRead};
 use std::fmt::{Display, Formatter};
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::future;
@@ -33,8 +32,7 @@ use futures::stream;
 
 use futures::{Future, Poll, Stream};
 
-use tokio_core::reactor::Core as TokioCore;
-use tokio_core::reactor::Handle as TokioHandle;
+use tokio;
 
 use net::raw::pcap;
 
@@ -123,14 +121,13 @@ pub fn scan_network(
     logger: BoxLogger,
     rtsp_paths_file: &str,
     mjpeg_paths_file: &str) -> Result<ScanResult> {
-    let mut tcore = TokioCore::new()
+    let mut runtime = tokio::runtime::current_thread::Runtime::new()
         .map_err(|err| DiscoveryError::from(
             format!("Asyn IO error: {}", err)
         ))?;
 
     let context = Context::new(
         logger.clone(),
-        tcore.handle(),
         rtsp_paths_file,
         mjpeg_paths_file)?;
 
@@ -139,7 +136,7 @@ pub fn scan_network(
 
     let mut report = find_open_ports(context.clone());
 
-    let rtsp_services = tcore.run(
+    let rtsp_services = runtime.block_on(
         find_rtsp_services(
             context.clone(),
             report.socket_addrs()))?;
@@ -148,12 +145,12 @@ pub fn scan_network(
         rtsp_services,
         rtsp_port_priorities);
 
-    let rtsp_streams = tcore.run(
+    let rtsp_streams = runtime.block_on(
         find_rtsp_streams(
             context.clone(),
             rtsp_services.into_iter()))?;
 
-    let http_services = tcore.run(
+    let http_services = runtime.block_on(
         find_http_services(
             context.clone(),
             report.socket_addrs()))?;
@@ -164,7 +161,7 @@ pub fn scan_network(
 
     let mjpeg_services = http_services.clone();
 
-    let mjpeg_streams = tcore.run(
+    let mjpeg_streams = runtime.block_on(
         find_mjpeg_streams(
             context.clone(),
             mjpeg_services.into_iter()))?;
@@ -202,14 +199,13 @@ pub fn scan_network(
 struct ContextData {
     logger:               BoxLogger,
     tcontext:             ThreadingContext,
-    thandle:              TokioHandle,
     port_candidates:      HashSet<u16>,
     rtsp_port_candidates: HashSet<u16>,
     http_port_candidates: HashSet<u16>,
     rtsp_port_priorities: HashMap<u16, usize>,
     http_port_priorities: HashMap<u16, usize>,
-    rtsp_paths:           Rc<Vec<String>>,
-    mjpeg_paths:          Rc<Vec<String>>,
+    rtsp_paths:           Arc<Vec<String>>,
+    mjpeg_paths:          Arc<Vec<String>>,
     request_timeout:      Duration,
 }
 
@@ -217,7 +213,6 @@ impl ContextData {
     /// Create new context data for the network scanner context.
     fn new(
         logger: BoxLogger,
-        handle: TokioHandle,
         rtsp_paths_file: &str,
         mjpeg_paths_file: &str) -> Result<ContextData> {
         let rtsp_paths  = load_paths(rtsp_paths_file)?;
@@ -239,14 +234,13 @@ impl ContextData {
         let cdata = ContextData {
             logger: logger,
             tcontext: pcap::new_threading_context(),
-            thandle:  handle,
             port_candidates: port_candidates,
             rtsp_port_candidates: rtsp_port_candidates,
             http_port_candidates: http_port_candidates,
             rtsp_port_priorities: rtsp_port_priorities,
             http_port_priorities: http_port_priorities,
-            rtsp_paths:           Rc::new(rtsp_paths),
-            mjpeg_paths:          Rc::new(mjpeg_paths),
+            rtsp_paths:           Arc::new(rtsp_paths),
+            mjpeg_paths:          Arc::new(mjpeg_paths),
             request_timeout:      Duration::from_millis(2000),
         };
 
@@ -288,24 +282,22 @@ fn get_port_priorities(ports: &[u16]) -> HashMap<u16, usize> {
 /// Network scanner context.
 #[derive(Clone)]
 struct Context {
-    data: Rc<ContextData>,
+    data: Arc<ContextData>,
 }
 
 impl Context {
     /// Create a new network scanner context.
     fn new(
         logger: BoxLogger,
-        handle: TokioHandle,
         rtsp_paths_file: &str,
         mjpeg_paths_file: &str) -> Result<Context> {
         let data = ContextData::new(
             logger,
-            handle,
             rtsp_paths_file,
             mjpeg_paths_file)?;
 
         let context = Context {
-            data: Rc::new(data),
+            data: Arc::new(data),
         };
 
         Ok(context)
@@ -314,11 +306,6 @@ impl Context {
     /// Get logger.
     fn get_logger(&self) -> BoxLogger {
         self.data.logger.clone()
-    }
-
-    /// Get tokio handle.
-    fn get_tokio_handle(&self) -> TokioHandle {
-        self.data.thandle.clone()
     }
 
     /// Get PCAP threading context.
@@ -357,12 +344,12 @@ impl Context {
     }
 
     /// Get RTSP paths.
-    fn get_rtsp_paths(&self) -> Rc<Vec<String>> {
+    fn get_rtsp_paths(&self) -> Arc<Vec<String>> {
         self.data.rtsp_paths.clone()
     }
 
     /// Get MJPEG paths.
-    fn get_mjpeg_paths(&self) -> Rc<Vec<String>> {
+    fn get_mjpeg_paths(&self) -> Arc<Vec<String>> {
         self.data.mjpeg_paths.clone()
     }
 }
@@ -587,7 +574,7 @@ fn is_rtsp_service(context: Context, addr: SocketAddr) -> FutureResult<bool> {
 
     let check = request.unwrap()
         .set_request_timeout(Some(context.get_request_timeout()))
-        .send(&context.get_tokio_handle())
+        .send()
         .then(|result| {
             Ok(result.is_ok())
         });
@@ -621,7 +608,7 @@ fn get_http_response(
 
     let response = request.unwrap()
         .set_request_timeout(Some(context.get_request_timeout()))
-        .send(&context.get_tokio_handle())
+        .send()
         .map_err(|err| DiscoveryError::from(
             format!("HTTP client error: {}", err)
         ));
@@ -764,9 +751,9 @@ fn find_rtsp_stream(
     addr: SocketAddr) -> FutureResult<Service> {
     let paths = context.get_rtsp_paths();
 
-    let result = Rc::new(Cell::new(Service::unknown_rtsp(mac, addr)));
+    let result = Arc::new(Mutex::new(Service::unknown_rtsp(mac, addr)));
 
-    let accumulator = Rc::downgrade(&result);
+    let accumulator = Arc::downgrade(&result);
 
     let stream = stream::iter_ok::<_, DiscoveryError>(0..paths.len())
         .and_then(move |index| match paths.get(index) {
@@ -776,7 +763,7 @@ fn find_rtsp_stream(
         .filter_map(|svc| svc)
         .skip_while(move |svc| {
             if let Some(result) = accumulator.upgrade() {
-                result.set(svc.clone());
+                *result.lock().unwrap() = svc.clone();
             }
 
             match svc.service_type() {
@@ -787,8 +774,8 @@ fn find_rtsp_stream(
         })
         .into_future()
         .and_then(move |_| {
-            if let Ok(result) = Rc::try_unwrap(result) {
-                Ok(result.into_inner())
+            if let Ok(result) = Arc::try_unwrap(result) {
+                Ok(result.into_inner().unwrap())
             } else {
                 Ok(Service::unknown_rtsp(mac, addr))
             }
@@ -838,7 +825,7 @@ fn get_rtsp_stream_type(
 
     let status = request.unwrap()
         .set_request_timeout(Some(context.get_request_timeout()))
-        .send(&context.get_tokio_handle())
+        .send()
         .and_then(move |response| {
             if is_hipcam_rtsp_response(&response)
                 && path != "/11" && path != "/12" {

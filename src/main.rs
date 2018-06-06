@@ -30,9 +30,8 @@ extern crate lazy_static;
 #[macro_use]
 extern crate futures;
 
-extern crate tokio_core;
+extern crate tokio;
 extern crate tokio_io;
-extern crate tokio_timer;
 
 pub mod futures_ex;
 
@@ -57,9 +56,6 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use futures::{Future, Stream};
-
-use tokio_core::reactor::Core as TokioCore;
-use tokio_core::reactor::Handle as TokioCoreHandle;
 
 use config::usage;
 
@@ -97,7 +93,6 @@ fn result_or_usage<T, E>(res: Result<T, E>) -> T
 
 /// This future ensures maintaining connection with a remote Arrow Service.
 struct ArrowMainTask {
-    tc_handle: TokioCoreHandle,
     app_context: ApplicationContext,
     cmd_channel: CommandChannel,
     logger: BoxLogger,
@@ -110,7 +105,7 @@ struct ArrowMainTask {
 
 impl ArrowMainTask {
     /// Create a new task.
-    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel, tc_handle: TokioCoreHandle) -> impl Future<Item = (), Error = ()> {
+    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel) -> impl Future<Item = (), Error = ()> {
         let logger = app_context.get_logger();
         let addr = app_context.get_arrow_service_address();
         let diagnostic_mode = app_context.get_diagnostic_mode();
@@ -120,7 +115,6 @@ impl ArrowMainTask {
         let pairing_mode_timeout = t + PAIRING_MODE_TIMEOUT;
 
         let task = ArrowMainTask {
-            tc_handle: tc_handle,
             app_context: app_context,
             cmd_channel: cmd_channel,
             logger: logger,
@@ -153,8 +147,7 @@ impl ArrowMainTask {
         arrow::connect(
             self.app_context.clone(),
             self.cmd_channel.clone(),
-            &self.current_addr,
-            &self.tc_handle)
+            &self.current_addr)
     }
 
     /// Process a given connection result.
@@ -291,10 +284,8 @@ fn diagnose_connection_result(
 
 /// Arrow Client main function.
 fn main() {
-    let mut core = TokioCore::new()
-        .expect("unable to create an event loop");
-
-    let handle = core.handle();
+    let mut runtime = tokio::runtime::current_thread::Runtime::new()
+        .expect("unable to create a tokio runtime");
 
     let config = result_or_usage(
         ApplicationConfig::create());
@@ -313,7 +304,7 @@ fn main() {
     let cmd_channel = tx.clone();
 
     // create Arrow client main task
-    let arrow_main_task = ArrowMainTask::new(context, cmd_channel, handle.clone());
+    let arrow_main_task = ArrowMainTask::new(context, cmd_channel);
 
     // schedule periodic network scan
     let periodic_network_scan = DEFAULT_TIMER
@@ -324,10 +315,11 @@ fn main() {
             }
         );
 
-    handle.spawn(periodic_network_scan);
-    handle.spawn(arrow_main_task);
+    runtime.spawn(periodic_network_scan);
+    runtime.spawn(arrow_main_task);
+    runtime.spawn(rx);
 
-    // run the command handler event loop
-    core.run(rx)
+    // start processing the event loop
+    runtime.run()
         .unwrap_or_default();
 }

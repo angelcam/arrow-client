@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::error::Error;
 use std::time::Duration;
 use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 
 use bytes::{Bytes, BytesMut};
 
@@ -27,10 +26,10 @@ use futures::task::Task;
 use futures::stream::Stream;
 use futures::sink::Sink;
 
-use tokio_core::net::TcpStream;
-use tokio_core::reactor::Handle as TokioCoreHandle;
+use tokio;
 
-use tokio_io::AsyncRead;
+use tokio::io::AsyncRead;
+use tokio::net::TcpStream;
 
 use futures_ex::StreamEx;
 
@@ -253,7 +252,7 @@ impl SessionContext {
 
 /// Arrow session (i.e. connection to an external service).
 struct Session {
-    context: Rc<RefCell<SessionContext>>,
+    context: Arc<Mutex<SessionContext>>,
 }
 
 impl Session {
@@ -262,13 +261,14 @@ impl Session {
         let context = SessionContext::new(service_id, session_id);
 
         Session {
-            context: Rc::new(RefCell::new(context))
+            context: Arc::new(Mutex::new(context))
         }
     }
 
     /// Push a given Arrow Message into the output buffer.
     fn push(&mut self, msg: ArrowMessage) {
-        self.context.borrow_mut()
+        self.context.lock()
+            .unwrap()
             .push_output_message(msg)
     }
 
@@ -278,7 +278,8 @@ impl Session {
     ///   has been closed
     /// * `Async::NotReady` if there was no data available
     fn take(&mut self) -> Poll<Option<ArrowMessage>, ConnectionError> {
-        self.context.borrow_mut()
+        self.context.lock()
+            .unwrap()
             .take_input_message()
     }
 
@@ -286,7 +287,8 @@ impl Session {
     /// data, however the buffered data can be still processed. It's up to
     /// the corresponding tasks to consume all remaining data.
     fn close(&mut self) {
-        self.context.borrow_mut()
+        self.context.lock()
+            .unwrap()
             .close()
     }
 
@@ -307,7 +309,7 @@ impl Session {
 
 /// Session transport.
 struct SessionTransport {
-    context: Rc<RefCell<SessionContext>>,
+    context: Arc<Mutex<SessionContext>>,
 }
 
 impl Stream for SessionTransport {
@@ -315,7 +317,8 @@ impl Stream for SessionTransport {
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Option<Bytes>, ConnectionError> {
-        self.context.borrow_mut()
+        self.context.lock()
+            .unwrap()
             .take_output_data()
     }
 }
@@ -325,17 +328,19 @@ impl Sink for SessionTransport {
     type SinkError = ConnectionError;
 
     fn start_send(&mut self, data: Bytes) -> StartSend<Bytes, ConnectionError> {
-        self.context.borrow_mut()
+        self.context.lock()
+            .unwrap()
             .push_input_data(data)
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        self.context.borrow_mut()
+        self.context.lock()
+            .unwrap()
             .flush_input_buffer()
     }
 
     fn close(&mut self) -> Poll<(), ConnectionError> {
-        let mut context = self.context.borrow_mut();
+        let mut context = self.context.lock().unwrap();
 
         // mark the context as closed
         context.close();
@@ -347,13 +352,14 @@ impl Sink for SessionTransport {
 
 /// Session error handler.
 struct SessionErrorHandler {
-    context: Rc<RefCell<SessionContext>>,
+    context: Arc<Mutex<SessionContext>>,
 }
 
 impl SessionErrorHandler {
     /// Save a given transport error into the session context.
     fn set_error(&mut self, err: ConnectionError) {
-        self.context.borrow_mut()
+        self.context.lock()
+            .unwrap()
             .set_error(err)
     }
 }
@@ -361,7 +367,6 @@ impl SessionErrorHandler {
 /// Arrow session manager.
 pub struct SessionManager {
     logger:       BoxLogger,
-    tc_handle:    TokioCoreHandle,
     svc_table:    BoxServiceTable,
     cmsg_factory: ControlMessageFactory,
     cmsg_queue:   VecDeque<ArrowMessage>,
@@ -374,13 +379,11 @@ impl SessionManager {
     /// Create a new session manager.
     pub fn new(
         app_context: ApplicationContext,
-        cmsg_factory: ControlMessageFactory,
-        tc_handle: TokioCoreHandle) -> SessionManager {
+        cmsg_factory: ControlMessageFactory) -> SessionManager {
         let svc_table = app_context.get_service_table();
 
         SessionManager {
             logger:       app_context.get_logger(),
-            tc_handle:    tc_handle,
             svc_table:    svc_table.boxed(),
             cmsg_factory: cmsg_factory,
             cmsg_queue:   VecDeque::new(),
@@ -475,7 +478,7 @@ impl SessionManager {
 
         let client = DEFAULT_TIMER
             .timeout(
-                TcpStream::connect(&addr, &self.tc_handle),
+                TcpStream::connect(&addr),
                 Duration::from_secs(CONNECTION_TIMEOUT),
             )
             .map_err(|err| {
@@ -503,7 +506,7 @@ impl SessionManager {
                 Ok(())
             });
 
-        self.tc_handle.spawn(client);
+        tokio::spawn(client);
 
         Ok(session)
     }

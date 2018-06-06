@@ -12,67 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std;
-use std::thread;
-
 use std::time::{Duration, Instant};
 
 use utils::logger::{BoxLogger, Logger};
 
 use futures::{Future, Stream};
 
-use tokio_timer::{Delay, Deadline};
-use tokio_timer::timer::Handle as TokioTimerHandle;
-use tokio_timer::timer::Timer as TokioTimer;
+use tokio::timer::{Delay, Deadline, Interval};
 
 #[derive(Clone)]
 pub struct Timer {
     logger: Option<BoxLogger>,
-    handle: TokioTimerHandle,
 }
 
 impl Timer {
     /// Create a new timer context.
-    pub fn new(mut logger: Option<BoxLogger>) -> Timer {
-        let (tx, rx) = std::sync::mpsc::channel::<TokioTimerHandle>();
-
-        let lgr = logger.clone();
-
-        thread::spawn(move || {
-            let mut timer = TokioTimer::default();
-
-            tx.send(timer.handle())
-                .expect("broken mpsc channel");
-
-            loop {
-                if let Err(_) = timer.turn(None) {
-                    if let Some(logger) = logger.as_mut() {
-                        log_error!(logger, "timer thread error");
-                    }
-
-                    panic!("timer thread error");
-                }
-            }
-        });
-
-        let handle = rx.recv()
-            .expect("broken mpsc channel");
-
+    pub fn new(logger: Option<BoxLogger>) -> Timer {
         Timer {
-            logger: lgr,
-            handle: handle,
+            logger: logger,
         }
     }
 
     /// Sleep for a given period of time.
     pub fn sleep(&self, time: Duration) -> Delay {
-        self.handle.delay(Instant::now() + time)
+        Delay::new(Instant::now() + time)
     }
 
     /// Create a timeout.
     pub fn timeout<F>(&self, future: F, timeout: Duration) -> Deadline<F>
         where F: Future {
-        self.handle.deadline(future, Instant::now() + timeout)
+        Deadline::new(future, Instant::now() + timeout)
     }
 
     /// Create a new periodic task.
@@ -80,7 +49,7 @@ impl Timer {
         where F: 'static + Fn() -> () {
         let logger = self.logger.clone();
 
-        self.handle.interval(Instant::now() + interval, interval)
+        Interval::new(Instant::now() + interval, interval)
             .for_each(move |_| {
                 f();
 
