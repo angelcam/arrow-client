@@ -35,7 +35,6 @@ use futures::sink::Sink;
 use futures::task::Task;
 
 use tokio_core::net::TcpStream;
-use tokio_core::reactor::Core as TokioCore;
 use tokio_core::reactor::Handle as TokioCoreHandle;
 
 use tokio_io::AsyncRead;

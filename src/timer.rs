@@ -17,23 +17,10 @@ use std::time::Duration;
 
 use utils::logger::{BoxLogger, Logger};
 
-use futures::{Future, Poll, Stream};
+use futures::{Future, Stream};
 
 use tokio_timer::{Sleep, Timeout, TimeoutError};
 use tokio_timer::Timer as TokioTimer;
-
-pub struct PeriodicTask {
-    task: Box<Future<Item=(), Error=()>>,
-}
-
-impl Future for PeriodicTask {
-    type Item = ();
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.task.poll()
-    }
-}
 
 struct TimerContext {
     logger: Option<BoxLogger>,
@@ -64,11 +51,11 @@ impl TimerContext {
     }
 
     /// Create a new periodic task.
-    fn create_periodic_task<F>(&self, interval: Duration, f: F) -> PeriodicTask
+    fn create_periodic_task<F>(&self, interval: Duration, f: F) -> impl Future<Item = (), Error = ()>
         where F: 'static + Fn() -> () {
         let logger = self.logger.clone();
 
-        let task = self.timer.interval(interval)
+        self.timer.interval(interval)
             .for_each(move |_| {
                 f();
 
@@ -80,11 +67,7 @@ impl TimerContext {
                 }
 
                 Ok(())
-            });
-
-        PeriodicTask {
-            task: Box::new(task),
-        }
+            })
     }
 }
 
@@ -118,7 +101,7 @@ impl Timer {
     }
 
     /// Create a new periodic task.
-    pub fn create_periodic_task<F>(&self, interval: Duration, f: F) -> PeriodicTask
+    pub fn create_periodic_task<F>(&self, interval: Duration, f: F) -> impl Future<Item = (), Error = ()>
         where F: 'static + Fn() -> () {
         self.context.lock()
             .unwrap()

@@ -51,7 +51,6 @@ pub mod svc_table;
 pub mod timer;
 
 use std::process;
-use std::thread;
 
 use std::cell::RefCell;
 use std::error::Error;
