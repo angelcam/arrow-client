@@ -35,6 +35,7 @@ use svc_table::{
 
 use net;
 
+use net::tls::TlsConnector;
 use net::raw::ether::MacAddr;
 use net::raw::devices::EthernetDevice;
 use net::url::Url;
@@ -53,12 +54,11 @@ use json;
 
 use json::JsonValue;
 
-use native_tls::{Protocol, TlsConnector};
-use native_tls::backend::openssl::TlsConnectorBuilderExt;
+use openssl::ssl;
 
 use openssl::nid::COMMONNAME;
 use openssl::ssl::SSL_VERIFY_PEER;
-use openssl::ssl::SslContextBuilder;
+use openssl::ssl::{SslConnectorBuilder, SslMethod};
 use openssl::x509::X509StoreContextRef;
 
 use uuid::Uuid;
@@ -85,12 +85,6 @@ const MJPEG_PATHS_FILE: &'static str = "/etc/arrow/mjpeg-paths";
 
 /// Default port number for connecting to an Arrow Service.
 const DEFAULT_ARROW_SERVICE_PORT: u16 = 8900;
-
-
-/// List of TLS protocols that can be used for connections to Arrow services.
-const SSL_METHODS: &'static [Protocol] = &[
-    Protocol::Tlsv12
-];
 
 /// List of cipher that can be used for TLS connections to Arrow services.
 const SSL_CIPHER_LIST: &'static str = "HIGH:!aNULL:!kRSA:!PSK:!MD5:!RC4";
@@ -700,39 +694,39 @@ impl ApplicationConfig {
 
     /// Get TLS connector for a given server hostname.
     pub fn get_tls_connector(&self, hostname: &str) -> Result<TlsConnector, RuntimeError> {
-        let mut builder = TlsConnector::builder()
+        let mut builder = SslConnectorBuilder::new(SslMethod::tls())
             .map_err(|err| RuntimeError::from(
                 format!("unable to create a TLS connection builder: {}", err)
             ))?;
 
-        builder.supported_protocols(SSL_METHODS)
+        let mut options = builder.options();
+
+        options.insert(ssl::SSL_OP_NO_COMPRESSION);
+        options.insert(ssl::SSL_OP_NO_SSLV2);
+        options.insert(ssl::SSL_OP_NO_SSLV3);
+        options.insert(ssl::SSL_OP_NO_TLSV1);
+        options.insert(ssl::SSL_OP_NO_TLSV1_1);
+
+        builder.set_options(options);
+
+        builder.set_cipher_list(SSL_CIPHER_LIST)
             .map_err(|err| RuntimeError::from(
-                format!("unable to set supported TLS protocols: {}", err)
+                format!("unable to set TLS cipher list: {}", err)
             ))?;
 
-        {
-            let ssl_ctx_builder = builder.builder_mut();
-
-            ssl_ctx_builder.set_cipher_list(SSL_CIPHER_LIST)
-                .map_err(|err| RuntimeError::from(
-                    format!("unable to set TLS cipher list: {}", err)
-                ))?;
-
-            for ca_cert in &self.ca_certificates {
-                ssl_ctx_builder.load_ca_certificates(ca_cert)?;
-            }
-
-            let hostname = hostname.to_string();
-
-            ssl_ctx_builder.set_verify_callback(SSL_VERIFY_PEER, move |p, x509| {
-                verify_callback(&hostname, p, x509)
-            });
+        for ca_cert in &self.ca_certificates {
+            builder.load_ca_certificates(ca_cert)?;
         }
 
-        builder.build()
-            .map_err(|err| RuntimeError::from(
-                format!("unable to create a TLS connector: {}", err)
-            ))
+        let hostname = hostname.to_string();
+
+        builder.set_verify_callback(SSL_VERIFY_PEER, move |p, x509| {
+            verify_callback(&hostname, p, x509)
+        });
+
+        let connector = TlsConnector::from(builder.build());
+
+        Ok(connector)
     }
 
     /// Get read-only reference to the shared service table.
@@ -1021,12 +1015,12 @@ fn is_cert_file<P: AsRef<Path>>(path: P) -> bool {
 }
 
 /// Simple extension to the SslContextBuilder.
-trait SslContextBuilderExt {
+trait SslConnectorBuilderExt {
     /// Load all CA certificates from a given path.
     fn load_ca_certificates<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RuntimeError>;
 }
 
-impl SslContextBuilderExt for SslContextBuilder {
+impl SslConnectorBuilderExt for SslConnectorBuilder {
     fn load_ca_certificates<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RuntimeError> {
         let path = path.as_ref();
 

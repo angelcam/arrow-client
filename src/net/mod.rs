@@ -20,5 +20,6 @@ pub mod http;
 
 pub mod raw;
 pub mod arrow;
+pub mod tls;
 pub mod url;
 pub mod utils;

@@ -24,6 +24,7 @@ use config::ApplicationConfig;
 
 use svc_table::{Service, SharedServiceTableRef};
 
+use net::tls::TlsConnector;
 use net::raw::ether::MacAddr;
 
 use scanner::ScanResult;
@@ -33,8 +34,6 @@ use utils;
 use utils::RuntimeError;
 
 use utils::logger::{BoxLogger, Severity};
-
-use native_tls::TlsConnector;
 
 use uuid::Uuid;
 

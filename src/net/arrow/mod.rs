@@ -38,8 +38,6 @@ use tokio_core::reactor::Handle as TokioCoreHandle;
 
 use tokio_io::AsyncRead;
 
-use tokio_tls::TlsConnectorExt;
-
 use futures_ex::StreamEx;
 
 use context::ApplicationContext;

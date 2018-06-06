@@ -17,7 +17,6 @@
 extern crate bytes;
 extern crate farmhash;
 extern crate libc;
-extern crate native_tls;
 extern crate openssl;
 extern crate time;
 extern crate uuid;
@@ -34,7 +33,6 @@ extern crate futures;
 extern crate tokio_core;
 extern crate tokio_io;
 extern crate tokio_timer;
-extern crate tokio_tls;
 
 pub mod futures_ex;
 

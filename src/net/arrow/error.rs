@@ -20,10 +20,9 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 use net::arrow::proto::error::DecodeError;
+use net::tls::TlsError;
 
 use utils::RuntimeError;
-
-use native_tls;
 
 /// Arrow error kinds.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -145,8 +144,8 @@ impl From<RuntimeError> for ArrowError {
     }
 }
 
-impl From<native_tls::Error> for ArrowError {
-    fn from(err: native_tls::Error) -> ArrowError {
+impl From<TlsError> for ArrowError {
+    fn from(err: TlsError) -> ArrowError {
         ArrowError::from(format!("TLS error: {}", err))
     }
 }
