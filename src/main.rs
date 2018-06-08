@@ -30,6 +30,8 @@ extern crate lazy_static;
 #[macro_use]
 extern crate futures;
 
+extern crate num_cpus;
+
 extern crate tokio;
 extern crate tokio_io;
 
@@ -283,15 +285,31 @@ fn diagnose_connection_result(
 
 /// Create a new single-threaded tokio runtime.
 #[cfg(not(feature = "threads"))]
-fn create_tokio_runtime() -> tokio::runtime::current_thread::Runtime {
+fn create_tokio_runtime(_: usize) -> tokio::runtime::current_thread::Runtime {
     tokio::runtime::current_thread::Runtime::new()
         .expect("unable to create a tokio runtime")
 }
 
 /// Create a multi-threaded tokio runtime.
 #[cfg(feature = "threads")]
-fn create_tokio_runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Runtime::new()
+fn create_tokio_runtime(mut threads: usize) -> tokio::runtime::Runtime {
+    // by default we use the number of CPUs
+    if threads == 0 {
+        threads = num_cpus::get();
+    }
+
+    // just in case we cannot get the number of CPUs
+    if threads == 0 {
+        threads = 1;
+    }
+
+    let mut threadpool_builder = tokio::executor::thread_pool::Builder::new();
+
+    threadpool_builder.pool_size(threads);
+
+    tokio::runtime::Builder::new()
+        .threadpool_builder(threadpool_builder)
+        .build()
         .expect("unable to create a tokio runtime")
 }
 
@@ -312,10 +330,10 @@ fn tokio_run(runtime: tokio::runtime::Runtime) {
 
 /// Arrow Client main function.
 fn main() {
-    let mut runtime = create_tokio_runtime();
-
     let config = result_or_usage(
         ApplicationConfig::create());
+
+    let threads = config.get_thread_count();
 
     let context = ApplicationContext::new(config);
 
@@ -341,6 +359,8 @@ fn main() {
                 tx.send(Command::PeriodicNetworkScan)
             }
         );
+
+    let mut runtime = create_tokio_runtime(threads);
 
     runtime.spawn(periodic_network_scan);
     runtime.spawn(arrow_main_task);
