@@ -49,10 +49,9 @@ pub mod timer;
 
 use std::process;
 
-use std::cell::RefCell;
 use std::error::Error;
 use std::fmt::Debug;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::{Future, Stream};
@@ -125,14 +124,14 @@ impl ArrowMainTask {
             diagnostic_mode: diagnostic_mode,
         };
 
-        let task = Rc::new(RefCell::new(task));
+        let task = Arc::new(Mutex::new(task));
 
         let connector = task.clone();
         let rhandler = task;
 
         futures::stream::repeat(())
-            .and_then(move |_| connector.borrow_mut().connect())
-            .then(move |res| rhandler.borrow_mut().process_result(res))
+            .and_then(move |_| connector.lock().unwrap().connect())
+            .then(move |res| rhandler.lock().unwrap().process_result(res))
             .for_each(|_| Ok(()))
     }
 
@@ -245,7 +244,7 @@ fn process_connection_error(
 }
 
 /// Process a given connection retry object.
-fn wait_for_retry(logger: &mut Logger, connection_retry: ConnectionRetry) -> Box<Future<Item = (), Error = ()>> {
+fn wait_for_retry(logger: &mut Logger, connection_retry: ConnectionRetry) -> Box<Future<Item = (), Error = ()> + Send + Sync> {
     match connection_retry {
         ConnectionRetry::Timeout(t) if t > 0.5 => {
             log_info!(logger, "retrying in {:.3} seconds", t);
@@ -282,10 +281,38 @@ fn diagnose_connection_result(
     }
 }
 
+/// Create a new single-threaded tokio runtime.
+#[cfg(not(feature = "threads"))]
+fn create_tokio_runtime() -> tokio::runtime::current_thread::Runtime {
+    tokio::runtime::current_thread::Runtime::new()
+        .expect("unable to create a tokio runtime")
+}
+
+/// Create a multi-threaded tokio runtime.
+#[cfg(feature = "threads")]
+fn create_tokio_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Runtime::new()
+        .expect("unable to create a tokio runtime")
+}
+
+/// Create a new single-threaded tokio runtime.
+#[cfg(not(feature = "threads"))]
+fn tokio_run(mut runtime: tokio::runtime::current_thread::Runtime) {
+    runtime.run()
+        .unwrap()
+}
+
+/// Create a multi-threaded tokio runtime.
+#[cfg(feature = "threads")]
+fn tokio_run(runtime: tokio::runtime::Runtime) {
+    runtime.shutdown_on_idle()
+        .wait()
+        .unwrap();
+}
+
 /// Arrow Client main function.
 fn main() {
-    let mut runtime = tokio::runtime::current_thread::Runtime::new()
-        .expect("unable to create a tokio runtime");
+    let mut runtime = create_tokio_runtime();
 
     let config = result_or_usage(
         ApplicationConfig::create());
@@ -319,7 +346,5 @@ fn main() {
     runtime.spawn(arrow_main_task);
     runtime.spawn(rx);
 
-    // start processing the event loop
-    runtime.run()
-        .unwrap_or_default();
+    tokio_run(runtime);
 }
