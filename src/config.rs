@@ -72,6 +72,9 @@ const EXIT_CODE_CERT_ERROR:    i32 = 5;*/
 /// Arrow Client configuration file.
 const CONFIG_FILE: &'static str = "/etc/arrow/config.json";
 
+/// Arrow Client configuration file skeleton.
+const CONFIG_FILE_SKELETON: &'static str = "/etc/arrow/config-skel.json";
+
 /// Arrow Client connection state file.
 const STATE_FILE: &'static str = "/var/lib/arrow/state";
 
@@ -160,6 +163,7 @@ struct ApplicationConfigBuilder {
     services:           Vec<Service>,
     logger_type:        LoggerType,
     config_file:        String,
+    config_file_skel:   String,
     state_file:         String,
     rtsp_paths_file:    String,
     mjpeg_paths_file:   String,
@@ -184,6 +188,7 @@ impl ApplicationConfigBuilder {
             services:           Vec::new(),
             logger_type:        LoggerType::Syslog,
             config_file:        CONFIG_FILE.to_string(),
+            config_file_skel:   CONFIG_FILE_SKELETON.to_string(),
             state_file:         STATE_FILE.to_string(),
             rtsp_paths_file:    RTSP_PATHS_FILE.to_string(),
             mjpeg_paths_file:   MJPEG_PATHS_FILE.to_string(),
@@ -215,12 +220,37 @@ impl ApplicationConfigBuilder {
             ),
         };
 
+        let config_skeleton = utils::result_or_log(
+                &mut logger,
+                Severity::WARN,
+                format!("unable to read configuration file skeleton\"{}\"", self.config_file_skel),
+                PersistentConfig::load(&self.config_file_skel));
+
         let config = utils::result_or_log(
                 &mut logger,
                 Severity::WARN,
-                format!("unable to read config file \"{}\", creating a new one", self.config_file),
-                PersistentConfig::load(&self.config_file))
+                format!("unable to read configuration file \"{}\"", self.config_file),
+                PersistentConfig::load(&self.config_file));
+
+        let config_skeleton_exists = config_skeleton.is_some();
+
+        // get the persistent config, if there is no config, use the skeleton,
+        // if there is no skeleton, create a new config
+        let config = config.or(config_skeleton)
             .unwrap_or(PersistentConfig::new());
+
+        // if there is no skeleton, create one from the config
+        if !config_skeleton_exists {
+            let config_skeleton = config.to_skeleton();
+
+            log_info!(&mut logger, "creating configuration file skeleton \"{}\"", self.config_file_skel);
+
+            utils::result_or_log(
+                &mut logger,
+                Severity::WARN,
+                format!("unable to create configuration file skeleton \"{}\"", self.config_file_skel),
+                config_skeleton.save(&self.config_file_skel));
+        }
 
         let mut config = ApplicationConfig {
             version:           config.version,
@@ -251,7 +281,7 @@ impl ApplicationConfigBuilder {
 
         config.save()
             .map_err(|_| ConfigError::from(
-                format!("unable to save config file \"{}\"", &config.config_file)
+                format!("unable to save configuration file \"{}\"", &config.config_file)
             ))?;
 
         Ok(config)
@@ -282,6 +312,8 @@ impl ApplicationConfigBuilder {
                 arg => {
                     if arg.starts_with("--config-file=") {
                         self.config_file(arg);
+                    } else if arg.starts_with("--config-file-skel=") {
+                        self.config_file_skel(arg);
                     } else if arg.starts_with("--conn-state-file=") {
                         self.conn_state_file(arg);
                     } else if arg.starts_with("--rtsp-paths=") {
@@ -476,6 +508,12 @@ impl ApplicationConfigBuilder {
         self.config_file = arg[14..].to_string()
     }
 
+    /// Process the config-file-skel argument.
+    fn config_file_skel(&mut self, arg: &str) {
+        // skip "--config-file-skel=" length
+        self.config_file_skel = arg[19..].to_string()
+    }
+
     /// Process the conn-state-file argument.
     fn conn_state_file(&mut self, arg: &str) {
         // skip "--conn-state-file=" length
@@ -545,6 +583,16 @@ impl PersistentConfig {
         let config = PersistentConfig::from_json(object)?;
 
         Ok(config)
+    }
+
+    /// Create a configuration skeleton from this persistent config.
+    fn to_skeleton(&self) -> PersistentConfig {
+        PersistentConfig {
+            uuid: self.uuid.clone(),
+            passwd: self.passwd.clone(),
+            version: 0,
+            svc_table: SharedServiceTable::new(),
+        }
     }
 
     /// Save configuration into a given file.
@@ -1073,6 +1121,9 @@ pub fn usage(exit_code: i32) -> ! {
     println!("    -v        enable debug logs\n");
     println!("    --config-file=path  alternative path to the client configuration file");
     println!("                        (default value: /etc/arrow/config.json)");
+    println!("    --config-file-skel=path  the client will use this file as a backup for");
+    println!("                        its credentials (default value:");
+    println!("                        /etc/arrow/config-skel.json)");
     println!("    --conn-state-file=path  alternative path to the client connection state");
     println!("                        file (default value: /var/lib/arrow/state)");
     println!("    --diagnostic-mode   start the client in diagnostic mode (i.e. the client");
