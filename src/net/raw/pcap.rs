@@ -21,8 +21,8 @@ use std::result;
 use std::slice;
 
 use std::error::Error;
-use std::thread::JoinHandle;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::ffi::CString;
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
@@ -31,8 +31,12 @@ use net::raw::ether::packet::EtherPacket;
 
 use utils;
 
-use time;
+use bytes::Bytes;
 
+use libc;
+
+use libc::pollfd;
+use libc::POLLIN;
 use libc::{c_int, c_uint, c_long, c_char, c_uchar, c_void, size_t};
 
 /// PCAP module error.
@@ -84,7 +88,7 @@ type time_t      = c_long;
 type suseconds_t = c_long;
 
 #[allow(non_camel_case_types)]
-type pcap_handler = extern fn(*mut c_uchar, *const pcap_pkthdr, *const c_uchar);
+type pcap_handler = unsafe extern "C" fn(*mut c_uchar, *const pcap_pkthdr, *const c_uchar);
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
@@ -139,30 +143,29 @@ extern "C" {
     fn pcap_freecode(prog: *mut bpf_program) -> c_void;
     fn pcap_setfilter(p: pcap_t, prog: *mut bpf_program) -> c_int;
     fn pcap_inject(p: pcap_t, buf: *const c_void, size: size_t) -> c_int;
+    fn pcap_get_selectable_fd(p: pcap_t) -> c_int;
 }
 
 /// PCAP context for synchronizing thread unsafe calls.
-pub struct Context;
+struct Context;
 
-/// PCAP context for synchronizing thread unsafe calls.
-pub type ThreadingContext = Arc<Mutex<Context>>;
-
-/// Create a new PCAP context for synchronizing thread unsafe calls.
-pub fn new_threading_context() -> ThreadingContext {
-    Arc::new(Mutex::new(Context))
+lazy_static!{
+    /// PCAP context for synchronizing thread unsafe calls.
+    static ref TC: Arc<Mutex<Context>> = {
+        Arc::new(Mutex::new(Context))
+    };
 }
 
 /// PCAP Capture builder.
-pub struct CaptureBuilder {
+struct CaptureBuilder {
     capture: Capture,
 }
 
 impl CaptureBuilder {
     /// Create a new CaptureBuilder for a given device.
-    pub fn new(pc: ThreadingContext, dname: &str) -> Result<CaptureBuilder> {
+    fn new(dname: &str) -> Result<CaptureBuilder> {
         let mut result = CaptureBuilder {
             capture: Capture {
-                pc:     pc,
                 errbuf: Box::new([0; 4096]),
                 h:      ptr::null_mut()
             }
@@ -183,19 +186,19 @@ impl CaptureBuilder {
     }
 
     /// Set promiscuous mode.
-    pub fn promisc(self, p: bool) -> CaptureBuilder {
+    fn promisc(self, p: bool) -> CaptureBuilder {
         unsafe { pcap_set_promisc(self.capture.h, p as c_int); }
         self
     }
 
-    /// Set timeout.
-    pub fn timeout(self, ms: i32) -> CaptureBuilder {
+    /// Set packet buffer timeout.
+    fn timeout(self, ms: i32) -> CaptureBuilder {
         unsafe { pcap_set_timeout(self.capture.h, ms as c_int); }
         self
     }
 
     /// Activate.
-    pub fn activate(self) -> Result<Capture> {
+    fn activate(self) -> Result<Capture> {
         let ret = unsafe { pcap_activate(self.capture.h) };
         match ret {
             0 => Ok(self.capture),
@@ -204,19 +207,15 @@ impl CaptureBuilder {
     }
 }
 
-/// Capture result.
-pub type CaptureResult = Result<Option<Vec<u8>>>;
-
 /// PCAP capture.
-pub struct Capture {
-    pc:     ThreadingContext,
+struct Capture {
     errbuf: Box<[c_char; 4096]>,
     h:      pcap_t,
 }
 
 impl Capture {
     /// Start capturing packets (at most count) and pass them to a given callback.
-    pub fn dispatch<F>(&mut self, count: usize, callback: F) -> Result<usize>
+    fn dispatch<F>(&mut self, count: usize, callback: F) -> Result<usize>
         where F: FnMut(&[u8]) {
         let mut callback: Box<FnMut(&[u8])> = Box::new(callback);
 
@@ -237,8 +236,29 @@ impl Capture {
         }
     }
 
+    /// Poll the internal file descriptor.
+    fn poll(&mut self, timeout: u64) {
+        unsafe {
+            let fd = pcap_get_selectable_fd(self.h);
+
+            // on some systems, there is no selectable file descriptor
+            if fd < 0 {
+                thread::sleep(Duration::from_millis(timeout))
+            } else {
+                // input/output for the poll function
+                let mut fds = pollfd {
+                    fd: fd,
+                    events: POLLIN,
+                    revents: 0,
+                };
+
+                libc::poll(&mut fds, 1, timeout as _);
+            }
+        }
+    }
+
     /// Set the underlaying file descriptor into non-blocking mode.
-    pub fn set_non_blocking(&mut self, non_blocking: bool) -> Result<()> {
+    fn set_non_blocking(&mut self, non_blocking: bool) -> Result<()> {
         let mut errbuf = [0; 4096];
 
         unsafe {
@@ -257,7 +277,7 @@ impl Capture {
     }
 
     /// Set packet filter.
-    pub fn filter(&mut self, f: &str) -> Result<()> {
+    fn filter(&mut self, f: &str) -> Result<()> {
         unsafe {
             let mut prog = self.compile_filter(f)?;
 
@@ -273,7 +293,7 @@ impl Capture {
     }
 
     /// Inject a given raw packet.
-    pub fn inject(&mut self, data: &[u8]) -> Result<usize> {
+    fn inject(&mut self, data: &[u8]) -> Result<usize> {
         let ptr = data.as_ptr() as *const c_void;
         let ret = unsafe {
             pcap_inject(self.h, ptr, data.len() as size_t)
@@ -288,7 +308,7 @@ impl Capture {
 
     /// Compile a given filter string.
     unsafe fn compile_filter(&mut self, f: &str) -> Result<bpf_program> {
-        let _lock = self.pc.lock()
+        let _lock = TC.lock()
             .unwrap();
 
         let f_cstr = CString::new(f).unwrap();
@@ -314,153 +334,110 @@ impl Drop for Capture {
 unsafe impl Send for Capture {
 }
 
-extern "C" fn capture_packet_callback(
+unsafe extern "C" fn capture_packet_callback(
     misc: *mut c_uchar,
     header: *const pcap_pkthdr,
     data: *const c_uchar) {
-    unsafe {
-        let callback = misc as *mut Box<FnMut(&[u8])>;
-        let header   = &*header;
+    let callback = misc as *mut Box<FnMut(&[u8])>;
+    let header   = &*header;
 
-        let data = slice::from_raw_parts(
-            data as *const u8,
-            header.caplen as usize);
+    let data = slice::from_raw_parts(
+        data as *const u8,
+        header.caplen as usize);
 
-        (*callback)(data);
-    }
-}
-
-/// Common trait for packet generators which may be used in combination with
-/// the PCAP packet scanner.
-pub trait PacketGenerator {
-    /// Get next packet.
-    fn next<'a>(&'a mut self) -> Option<&'a [u8]>;
+    (*callback)(data);
 }
 
 /// PCAP packet scanner (implementation of a send-receive service).
 pub struct Scanner {
-    pc:            ThreadingContext,
-    device:        String,
-    end_indicator: Arc<Mutex<bool>>,
+    device: String,
 }
 
 impl Scanner {
     /// Create a new PCAP scanner for a given device.
-    pub fn new(pc: ThreadingContext, device: &str) -> Scanner {
+    pub fn new(device: &str) -> Scanner {
         Scanner {
-            pc:            pc,
-            device:        device.to_string(),
-            end_indicator: Arc::new(Mutex::new(false)),
+            device: device.to_string(),
         }
     }
 
     /// Send all packets from a given iterator and receive all packets
     /// according to a given filter.
-    pub fn sr<G: PacketGenerator>(
+    pub fn sr<F>(
         &mut self,
         filter: &str,
-        gen: &mut G,
-        timeout: u64) -> Result<Vec<EtherPacket>> {
-        self.set_end_indicator(false);
+        packet_generator: F,
+        timeout: u64) -> Result<Vec<EtherPacket>>
+    where
+        F: FnMut() -> Option<Bytes>,
+    {
+        let end_indicator = Arc::new(AtomicBool::new(false));
 
-        let thread = self.start_listener(filter, timeout)?;
+        let device = self.device.clone();
+        let filter = filter.to_string();
+        let ei_handle = end_indicator.clone();
 
-        self.send_requests(gen)?;
-
-        self.set_end_indicator(true);
-
-        match thread.join() {
-            Err(_)  => Err(PcapError::from("listener thread panicked")),
-            Ok(res) => Ok(res)
-        }
-    }
-
-    /// Start packet listener thread.
-    fn start_listener(
-        &mut self,
-        filter: &str,
-        timeout: u64) -> Result<JoinHandle<Vec<EtherPacket>>> {
-        let ei = self.end_indicator.clone();
-
-        let cap = CaptureBuilder::new(self.pc.clone(), &self.device)?
-            .timeout((timeout / 1000000) as i32)
-            .promisc(true);
-
-        let mut cap = cap.activate()?;
-
-        cap.filter(filter)?;
-        cap.set_non_blocking(true)?;
-
-        let handle = thread::spawn(move || {
-            Self::packet_listener(cap, ei, timeout)
+        let t = thread::spawn(move || {
+            packet_listener(&device, &filter, ei_handle)
         });
 
-        Ok(handle)
+        send_packets(&self.device, packet_generator)?;
+
+        // give the packet listener some time to collect incoming packets
+        thread::sleep(Duration::from_millis(timeout));
+
+        end_indicator.store(true, Ordering::SeqCst);
+
+        t.join().map_err(|_| PcapError::from("listener thread panicked"))?
     }
+}
 
-    /// Packet listener thread.
-    fn packet_listener(
-        mut cap: Capture,
-        shared_end_indicator: Arc<Mutex<bool>>,
-        timeout: u64) -> Vec<EtherPacket> {
-        let mut vec = Vec::new();
-        let mut t   = time::precise_time_ns();
-        let mut end = false;
+/// Listen for incoming packets matching a given filter until a given end
+/// indicator is set.
+fn packet_listener(
+    device: &str,
+    filter: &str,
+    end_indicator: Arc<AtomicBool>) -> Result<Vec<EtherPacket>> {
+    let mut cap = CaptureBuilder::new(device)?
+        .timeout(100)
+        .promisc(true)
+        .activate()?;
 
-        while !end || time::precise_time_ns() < (t + timeout) {
-            let callback = |data: &[u8]| {
-                if let Ok(ep) = EtherPacket::parse(data) {
-                    vec.push(ep);
-                }
-            };
+    cap.filter(filter)?;
+    cap.set_non_blocking(true)?;
 
-            let res = match cap.dispatch(1, callback) {
-                Err(error) => panic!(error),
-                Ok(count)  => count,
-            };
+    let mut res = Vec::new();
 
-            // XXX: this is a hack to avoid high CPU utilization because some
-            // platforms don't support timeout of blocking capture
-            if res == 0 {
-                thread::sleep(Duration::from_millis(20));
+    {
+        let mut callback = |data: &[u8]| {
+            if let Ok(packet) = EtherPacket::parse(data) {
+                res.push(packet);
             }
+        };
 
-            if !end && Self::get_end_indicator_value(&shared_end_indicator) {
-                t   = time::precise_time_ns();
-                end = true;
+        while !end_indicator.load(Ordering::SeqCst) {
+            let count = cap.dispatch(1, &mut callback)?;
+
+            if count == 0 {
+                cap.poll(100);
             }
         }
-
-        vec
     }
 
-    /// Send all pending packets.
-    fn send_requests<G: PacketGenerator>(
-        &mut self,
-        gen: &mut G) -> Result<()> {
-        let mut cap = CaptureBuilder::new(self.pc.clone(), &self.device)?
-            .activate()?;
+    Ok(res)
+}
 
-        while let Some(pkt) = gen.next() {
-            cap.inject(pkt)?;
-        }
+/// Send all packets using a given network device. This call is blocking.
+fn send_packets<F>(device: &str, mut packet_generator: F) -> Result<()>
+where
+    F: FnMut() -> Option<Bytes>,
+{
+    let mut cap = CaptureBuilder::new(device)?
+        .activate()?;
 
-        Ok(())
+    while let Some(pkt) = packet_generator() {
+        cap.inject(pkt.as_ref())?;
     }
 
-    /// Set listener end indicator.
-    fn set_end_indicator(&mut self, val: bool) {
-        let mut end_indicator = self.end_indicator.lock()
-            .unwrap();
-
-        *end_indicator = val;
-    }
-
-    /// Get end indicator value.
-    fn get_end_indicator_value(end_indicator: &Arc<Mutex<bool>>) -> bool {
-        let ei = end_indicator.lock()
-            .unwrap();
-
-        *ei
-    }
+    Ok(())
 }

@@ -198,15 +198,17 @@ impl IcmpEchoPacket for IcmpPacket {
 pub mod scanner {
     use super::*;
 
-    use net::raw::pcap;
-
     use std::net::Ipv4Addr;
+
+    use bytes::Bytes;
+
+    use net::raw::pcap;
 
     use net::raw::devices::EthernetDevice;
     use net::raw::ether::MacAddr;
     use net::raw::ether::packet::EtherPacket;
     use net::raw::ip::Ipv4Packet;
-    use net::raw::pcap::{Scanner, PacketGenerator, ThreadingContext};
+    use net::raw::pcap::Scanner;
     use net::raw::utils::Serialize;
 
     use net::utils::Ipv4AddrEx;
@@ -221,23 +223,19 @@ pub mod scanner {
 
     impl IcmpScanner {
         /// Scan a given device and return list of all active hosts.
-        pub fn scan_device(
-            tc: ThreadingContext,
-            device: &EthernetDevice) -> pcap::Result<Vec<(MacAddr, Ipv4Addr)>> {
-            IcmpScanner::new(tc, device).scan()
+        pub fn scan_device(device: &EthernetDevice) -> pcap::Result<Vec<(MacAddr, Ipv4Addr)>> {
+            IcmpScanner::new(device).scan()
         }
 
         /// Create a new scanner instance.
-        fn new(
-            tc: ThreadingContext,
-            device: &EthernetDevice) -> IcmpScanner {
+        fn new(device: &EthernetDevice) -> IcmpScanner {
             let mask    = device.netmask.as_u32();
             let addr    = device.ip_addr.as_u32();
             let network = addr & mask;
 
             IcmpScanner {
                 device:  device.clone(),
-                scanner: Scanner::new(tc, &device.name),
+                scanner: Scanner::new(&device.name),
                 mask:    mask,
                 network: network
             }
@@ -245,10 +243,47 @@ pub mod scanner {
 
         /// Scan a given device and return list of all active hosts.
         fn scan(&mut self) -> pcap::Result<Vec<(MacAddr, Ipv4Addr)>> {
-            let mut gen = IcmpPacketGenerator::new(&self.device);
+            let bcast = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
+            let hsrc = self.device.mac_addr;
+            let psrc = self.device.ip_addr;
+            let mask = self.device.netmask.as_u32();
+            let addr = self.device.ip_addr.as_u32();
+
+            let end = addr | !mask;
+
+            let mut current = (addr & mask) + 1;
+
+            let mut buffer = Vec::new();
+
+            let mut generator = move || {
+                if current < end {
+                    let icmp_id  = (current >> 16) as u16;
+                    let icmp_seq = (current & 0xff) as u16;
+
+                    let pdst = Ipv4Addr::from(current);
+
+                    let icmpp = IcmpPacket::empty_echo_request(icmp_id, icmp_seq);
+                    let ipp = Ipv4Packet::icmp(psrc, pdst, 64, icmpp);
+                    let pkt = EtherPacket::ipv4(hsrc, bcast, ipp);
+
+                    buffer.clear();
+
+                    pkt.serialize(&mut buffer)
+                        .unwrap();
+
+                    current += 1;
+
+                    let pkt = Bytes::from(buffer.as_slice());
+
+                    Some(pkt)
+                } else {
+                    None
+                }
+            };
+
             let filter  = format!("icmp and icmp[icmptype] = icmp-echoreply \
                                     and ip dst {}", self.device.ip_addr);
-            let packets = self.scanner.sr(&filter, &mut gen, 2000000000)?;
+            let packets = self.scanner.sr(&filter, &mut generator, 2000)?;
 
             let mut hosts = Vec::new();
 
@@ -270,65 +305,6 @@ pub mod scanner {
             }
 
             Ok(hosts)
-        }
-    }
-
-    /// Packet generator for the ICMP scanner.
-    struct IcmpPacketGenerator {
-        device:  EthernetDevice,
-        bcast:   MacAddr,
-        current: u32,
-        last:    u32,
-        buffer:  Vec<u8>,
-    }
-
-    impl IcmpPacketGenerator {
-        /// Create a new packet generator.
-        fn new(device: &EthernetDevice) -> IcmpPacketGenerator {
-            let bcast       = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
-            let mask        = device.netmask.as_u32();
-            let addr        = device.ip_addr.as_u32();
-            let mut current = addr & mask;
-            let last        = current | !mask;
-
-            current += 1;
-
-            IcmpPacketGenerator {
-                device:  device.clone(),
-                bcast:   bcast,
-                current: current,
-                last:    last,
-                buffer:  Vec::new(),
-            }
-        }
-    }
-
-    impl PacketGenerator for IcmpPacketGenerator {
-        fn next<'a>(&'a mut self) -> Option<&'a [u8]> {
-            if self.current < self.last {
-                let icmp_id  = (self.current >> 16) as u16;
-                let icmp_seq = (self.current & 0xff) as u16;
-
-                let pdst = Ipv4Addr::from(self.current);
-
-                let icmpp = IcmpPacket::empty_echo_request(
-                    icmp_id, icmp_seq);
-                let ipp   = Ipv4Packet::icmp(
-                    self.device.ip_addr, pdst, 64, icmpp);
-                let pkt   = EtherPacket::ipv4(
-                    self.device.mac_addr, self.bcast, ipp);
-
-                self.buffer.clear();
-
-                pkt.serialize(&mut self.buffer)
-                    .unwrap();
-
-                self.current += 1;
-
-                Some(self.buffer.as_ref())
-            } else {
-                None
-            }
         }
     }
 }

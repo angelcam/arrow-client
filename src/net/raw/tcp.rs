@@ -213,16 +213,18 @@ pub mod scanner {
 
     use std::slice;
 
-    use net::raw::pcap;
-
     use std::ops::Range;
     use std::net::Ipv4Addr;
+
+    use bytes::Bytes;
+
+    use net::raw::pcap;
 
     use net::raw::devices::EthernetDevice;
     use net::raw::ether::MacAddr;
     use net::raw::ether::packet::EtherPacket;
     use net::raw::ip::Ipv4Packet;
-    use net::raw::pcap::{Scanner, PacketGenerator, ThreadingContext};
+    use net::raw::pcap::Scanner;
     use net::raw::utils::Serialize;
 
     /// TCP port range.
@@ -348,21 +350,18 @@ pub mod scanner {
         /// Ethernet network, the EthernetDevice and the MAC address must
         /// be also specified.)
         pub fn scan_ipv4_hosts<HI: Iterator<Item=(MacAddr, Ipv4Addr)>>(
-            tc: ThreadingContext,
             device: &EthernetDevice,
             hosts: HI,
             endpoints: &PortCollection) -> pcap::Result<Vec<(MacAddr, Ipv4Addr, u16)>> {
-            TcpPortScanner::new(tc, device)
+            TcpPortScanner::new(device)
                 .scan(hosts, endpoints)
         }
 
         /// Create a new port scanner.
-        fn new(
-            tc: ThreadingContext,
-            device: &EthernetDevice) -> TcpPortScanner {
+        fn new(device: &EthernetDevice) -> TcpPortScanner {
             TcpPortScanner {
                 device:  device.clone(),
-                scanner: Scanner::new(tc, &device.name)
+                scanner: Scanner::new(&device.name)
             }
         }
 
@@ -374,12 +373,18 @@ pub mod scanner {
             endpoints: &PortCollection) -> pcap::Result<Vec<Service>> {
             let sport   = 61234;
             let mut gen = TcpPortScannerPacketGenerator::new(
-                                &self.device, hosts, sport, endpoints);
+                &self.device, hosts, sport, endpoints);
+
+            let mut generator = move || {
+                gen.next()
+                    .map(|pkt| Bytes::from(pkt))
+            };
+
             let filter  = format!("tcp and dst host {} and dst port {} and \
                                 tcp[tcpflags] & tcp-syn != 0 and \
                                 tcp[tcpflags] & tcp-ack != 0",
                                 self.device.ip_addr, sport);
-            let packets = self.scanner.sr(&filter, &mut gen, 2000000000)?;
+            let packets = self.scanner.sr(&filter, &mut generator, 2000)?;
 
             let mut services = Vec::new();
 
@@ -413,7 +418,10 @@ pub mod scanner {
         buffer:    Vec<u8>,
     }
 
-    impl<'a, HI: Iterator<Item=Host>> TcpPortScannerPacketGenerator<'a, HI> {
+    impl<'a, HI: Iterator<Item=Host>> TcpPortScannerPacketGenerator<'a, HI>
+    where
+        HI: Iterator<Item=Host>,
+    {
         /// Create a new packet generator.
         fn new(
             device: &EthernetDevice,
@@ -432,10 +440,8 @@ pub mod scanner {
                 buffer:    Vec::new(),
             }
         }
-    }
 
-    impl<'a, HI> PacketGenerator for TcpPortScannerPacketGenerator<'a, HI>
-        where HI: Iterator<Item=Host> {
+        /// Get next packet.
         fn next<'b>(&'b mut self) -> Option<&'b [u8]> {
             if let Some((hdst, pdst)) = self.host {
                 if let Some(port) = self.ports.next() {

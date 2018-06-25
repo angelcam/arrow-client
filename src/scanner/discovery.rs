@@ -45,7 +45,6 @@ use net::raw::arp::scanner::Ipv4ArpScanner;
 use net::raw::devices::EthernetDevice;
 use net::raw::ether::MacAddr;
 use net::raw::icmp::scanner::IcmpScanner;
-use net::raw::pcap::ThreadingContext;
 use net::raw::tcp::scanner::{TcpPortScanner, PortCollection};
 
 use scanner::result::{
@@ -198,7 +197,6 @@ pub fn scan_network(
 /// Internal data for the network scanner context.
 struct ContextData {
     logger:               BoxLogger,
-    tcontext:             ThreadingContext,
     port_candidates:      HashSet<u16>,
     rtsp_port_candidates: HashSet<u16>,
     http_port_candidates: HashSet<u16>,
@@ -233,7 +231,6 @@ impl ContextData {
 
         let cdata = ContextData {
             logger: logger,
-            tcontext: pcap::new_threading_context(),
             port_candidates: port_candidates,
             rtsp_port_candidates: rtsp_port_candidates,
             http_port_candidates: http_port_candidates,
@@ -308,11 +305,6 @@ impl Context {
         self.data.logger.clone()
     }
 
-    /// Get PCAP threading context.
-    fn get_pcap_threading_context(&self) -> ThreadingContext {
-        self.data.tcontext.clone()
-    }
-
     /// Get request timeout.
     fn get_request_timeout(&self) -> Duration {
         self.data.request_timeout.clone()
@@ -384,15 +376,13 @@ fn find_open_ports_in_network(
 
     let mut report = ScanResult::new();
 
-    let tc = context.get_pcap_threading_context();
-
     log_debug!(&mut logger, "running ARP scan in local network on interface {}", device.name);
-    for (mac, ip) in Ipv4ArpScanner::scan_device(tc.clone(), device)? {
+    for (mac, ip) in Ipv4ArpScanner::scan_device(device)? {
         report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ARP);
     }
 
     log_debug!(&mut logger, "running ICMP echo scan in local network on interface {}", device.name);
-    for (mac, ip) in IcmpScanner::scan_device(tc.clone(), device)? {
+    for (mac, ip) in IcmpScanner::scan_device(device)? {
         report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ICMP);
     }
 
@@ -428,8 +418,6 @@ fn find_open_ports_on_hosts<I>(
             _              => None
         });
 
-    let tc = context.get_pcap_threading_context();
-
     let candidates = context.get_port_candidates()
         .iter()
         .map(|port| *port);
@@ -437,7 +425,7 @@ fn find_open_ports_on_hosts<I>(
     let ports = PortCollection::new()
         .add_all(candidates);
 
-    let res = TcpPortScanner::scan_ipv4_hosts(tc, device, hosts, &ports)?
+    let res = TcpPortScanner::scan_ipv4_hosts(device, hosts, &ports)?
         .into_iter()
         .map(|(mac, ip, p)| (mac, SocketAddr::V4(SocketAddrV4::new(ip, p))))
         .collect::<Vec<_>>();

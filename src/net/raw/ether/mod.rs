@@ -78,7 +78,7 @@ impl MacAddr {
 
 impl Display for MacAddr {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
-        f.write_str(&format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        f.write_fmt(format_args!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
             self.bytes[0], self.bytes[1], self.bytes[2],
             self.bytes[3], self.bytes[4], self.bytes[5]))
     }

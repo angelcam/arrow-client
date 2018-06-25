@@ -194,14 +194,16 @@ impl RawArpPacketHeader {
 pub mod scanner {
     use super::*;
 
-    use net::raw::pcap;
-
     use std::net::Ipv4Addr;
+
+    use bytes::Bytes;
+
+    use net::raw::pcap;
 
     use net::raw::devices::EthernetDevice;
     use net::raw::ether::MacAddr;
     use net::raw::ether::packet::EtherPacket;
-    use net::raw::pcap::{Scanner, PacketGenerator, ThreadingContext};
+    use net::raw::pcap::Scanner;
     use net::raw::utils::Serialize;
 
     use net::utils::Ipv4AddrEx;
@@ -214,27 +216,59 @@ pub mod scanner {
 
     impl Ipv4ArpScanner {
         /// Scan a given device and return list of all active hosts.
-        pub fn scan_device(
-            tc: ThreadingContext,
-            device: &EthernetDevice) -> pcap::Result<Vec<(MacAddr, Ipv4Addr)>> {
-            Ipv4ArpScanner::new(tc, device).scan()
+        pub fn scan_device(device: &EthernetDevice) -> pcap::Result<Vec<(MacAddr, Ipv4Addr)>> {
+            Ipv4ArpScanner::new(device).scan()
         }
 
         /// Create a new scanner instance.
-        fn new(
-            tc: ThreadingContext,
-            device: &EthernetDevice) -> Ipv4ArpScanner {
+        fn new(device: &EthernetDevice) -> Ipv4ArpScanner {
             Ipv4ArpScanner {
                 device:  device.clone(),
-                scanner: Scanner::new(tc, &device.name)
+                scanner: Scanner::new(&device.name)
             }
         }
 
         /// Scan a given device and return list of all active hosts.
         fn scan(&mut self) -> pcap::Result<Vec<(MacAddr, Ipv4Addr)>> {
-            let mut gen = Ipv4ArpScannerPacketGenerator::new(&self.device);
+            let bcast = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
+            let hdst = MacAddr::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
+            let hsrc = self.device.mac_addr;
+            let psrc = self.device.ip_addr;
+            let mask = self.device.netmask.as_u32();
+            let addr = self.device.ip_addr.as_u32();
+
+            let end = addr | !mask;
+
+            let mut current = (addr & mask) + 1;
+
+            let mut buffer = Vec::new();
+
+            let mut generator = move || {
+                if current < end {
+                    let pdst = Ipv4Addr::from(current);
+                    let arpp = ArpPacket::ipv4_over_ethernet(
+                        ArpOperation::REQUEST,
+                        &hsrc, &psrc, &hdst, &pdst);
+                    let pkt = EtherPacket::arp(hsrc, bcast, arpp);
+
+                    buffer.clear();
+
+                    pkt.serialize(&mut buffer)
+                        .unwrap();
+
+                    current += 1;
+
+                    let pkt = Bytes::from(buffer.as_slice());
+
+                    Some(pkt)
+                } else {
+                    None
+                }
+            };
+
             let filter = format!("arp and ether dst {}", self.device.mac_addr);
-            let packets = self.scanner.sr(&filter, &mut gen, 2000000000)?;
+
+            let packets = self.scanner.sr(&filter, &mut generator, 2000)?;
 
             let mut hosts = Vec::new();
 
@@ -248,63 +282,6 @@ pub mod scanner {
             }
 
             Ok(hosts)
-        }
-    }
-
-    /// Packet generator for the IPv4 ARP scanner.
-    struct Ipv4ArpScannerPacketGenerator {
-        device:  EthernetDevice,
-        hdst:    MacAddr,
-        bcast:   MacAddr,
-        current: u32,
-        last:    u32,
-        buffer:  Vec<u8>,
-    }
-
-    impl Ipv4ArpScannerPacketGenerator {
-        /// Create a new packet generator.
-        fn new(device: &EthernetDevice) -> Ipv4ArpScannerPacketGenerator {
-            let bcast       = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
-            let hdst        = MacAddr::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
-            let mask        = device.netmask.as_u32();
-            let addr        = device.ip_addr.as_u32();
-            let mut current = addr & mask;
-            let last        = current | !mask;
-
-            current += 1;
-
-            Ipv4ArpScannerPacketGenerator {
-                device:  device.clone(),
-                hdst:    hdst,
-                bcast:   bcast,
-                current: current,
-                last:    last,
-                buffer:  Vec::new(),
-            }
-        }
-    }
-
-    impl PacketGenerator for Ipv4ArpScannerPacketGenerator {
-        fn next<'a>(&'a mut self) -> Option<&'a [u8]> {
-            if self.current < self.last {
-                let pdst = Ipv4Addr::from(self.current);
-                let arpp = ArpPacket::ipv4_over_ethernet(ArpOperation::REQUEST,
-                    &self.device.mac_addr, &self.device.ip_addr,
-                    &self.hdst, &pdst);
-                let pkt  = EtherPacket::arp(
-                    self.device.mac_addr, self.bcast, arpp);
-
-                self.buffer.clear();
-
-                pkt.serialize(&mut self.buffer)
-                    .unwrap();
-
-                self.current += 1;
-
-                Some(self.buffer.as_ref())
-            } else {
-                None
-            }
         }
     }
 }
