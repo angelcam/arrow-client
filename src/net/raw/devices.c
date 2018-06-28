@@ -57,7 +57,7 @@ static int get_mac_address(int fd, const char* dname, unsigned char* buffer) {
     struct ifreq dconf;
 
     memset(&dconf, 0, sizeof(dconf));
-    strncpy(dconf.ifr_name, dname, IFNAMSIZ);
+    strncpy(dconf.ifr_name, dname, IFNAMSIZ - 1);
 
     if (ioctl(fd, SIOCGIFHWADDR, &dconf) != 0)
         return -1;
