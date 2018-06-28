@@ -19,7 +19,7 @@ mod session;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Instant, Duration};
 
 use time;
 
@@ -36,6 +36,7 @@ use tokio;
 
 use tokio::io::AsyncRead;
 use tokio::net::TcpStream;
+use tokio::timer::{Deadline, Interval};
 
 use futures_ex::StreamEx;
 
@@ -68,8 +69,6 @@ use net::raw::ether::MacAddr;
 use net::utils::get_hostname;
 
 use svc_table::SharedServiceTableRef;
-
-use timer::DEFAULT_TIMER;
 
 use utils::logger::{Logger, BoxLogger};
 
@@ -567,15 +566,22 @@ impl ArrowClient {
 
         let event_handler = context.clone();
 
-        let events = DEFAULT_TIMER
-            .create_periodic_task(
-                Duration::from_millis(1000),
-                move || {
-                    event_handler.lock()
-                        .unwrap()
-                        .time_event()
+        let interval = Duration::from_millis(1000);
+
+        let events = Interval::new(Instant::now() + interval, interval)
+            .map_err(|_| ())
+            .for_each(move |_| {
+                let mut context = event_handler.lock().unwrap();
+
+                if context.is_closed() {
+                    return Err(());
                 }
-            );
+
+                context.time_event();
+
+                Ok(())
+            })
+            .then(|_| Ok(()));
 
         tokio::spawn(events);
 
@@ -675,8 +681,7 @@ pub fn connect(
                 .map_err(|err| ArrowError::connection_error(err))
         });
 
-    DEFAULT_TIMER
-        .timeout(connection, Duration::from_secs(CONNECTION_TIMEOUT))
+    Deadline::new(connection, Instant::now() + Duration::from_secs(CONNECTION_TIMEOUT))
         .map_err(move |err| {
             if err.is_elapsed() {
                 ArrowError::connection_error(format!("unable to connect to remote Arrow Service {} (connection timeout)", addr))

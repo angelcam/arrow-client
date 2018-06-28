@@ -209,27 +209,27 @@ mod test {
         assert!(file_exists("testlog.1"));
         assert!(!file_exists("testlog.2"));
 
-        log_error!(logger, "foo");
+        log_warn!(logger, "foo");
 
         assert!(file_exists("testlog.2"));
         assert!(!file_exists("testlog.3"));
 
-        log_error!(logger, "foo");
+        log_warn!(logger, "foo");
 
         assert!(file_exists("testlog.3"));
         assert!(!file_exists("testlog.4"));
 
-        log_error!(logger, "foo");
+        log_warn!(logger, "foo");
 
         assert!(file_exists("testlog.4"));
         assert!(!file_exists("testlog.5"));
 
-        log_error!(logger, "foo");
+        log_warn!(logger, "foo");
 
         assert!(file_exists("testlog.5"));
         assert!(!file_exists("testlog.6"));
 
-        log_error!(logger, "foo");
+        log_warn!(logger, "foo");
 
         assert!(file_exists("testlog.5"));
         assert!(!file_exists("testlog.6"));

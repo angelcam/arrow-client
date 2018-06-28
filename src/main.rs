@@ -24,6 +24,7 @@ extern crate uuid;
 #[macro_use]
 extern crate json;
 
+#[cfg(feature = "discovery")]
 #[macro_use]
 extern crate lazy_static;
 
@@ -47,16 +48,17 @@ pub mod context;
 pub mod cmd_handler;
 pub mod scanner;
 pub mod svc_table;
-pub mod timer;
 
 use std::process;
 
 use std::error::Error;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Instant, Duration};
 
 use futures::{Future, Stream};
+
+use tokio::timer::{Delay, Interval};
 
 use config::usage;
 
@@ -68,8 +70,6 @@ use cmd_handler::{Command, CommandChannel};
 use net::arrow;
 
 use net::arrow::{ArrowError, ErrorKind};
-
-use timer::DEFAULT_TIMER;
 
 use utils::logger::{BoxLogger, Logger};
 
@@ -252,7 +252,7 @@ fn wait_for_retry(logger: &mut Logger, connection_retry: ConnectionRetry) -> Box
             log_info!(logger, "retrying in {:.3} seconds", t);
 
             let time = Duration::from_millis((t * 1000.0) as u64);
-            let sleep = DEFAULT_TIMER.sleep(time)
+            let sleep = Delay::new(Instant::now() + time)
                 .map_err(|_| ());
 
             Box::new(sleep)
@@ -351,14 +351,16 @@ fn main() {
     // create Arrow client main task
     let arrow_main_task = ArrowMainTask::new(context, cmd_channel);
 
+    let interval = Duration::from_millis(1000);
+
     // schedule periodic network scan
-    let periodic_network_scan = DEFAULT_TIMER
-        .create_periodic_task(
-            Duration::from_secs(1),
-            move || {
-                tx.send(Command::PeriodicNetworkScan)
-            }
-        );
+    let periodic_network_scan = Interval::new(Instant::now() + interval, interval)
+        .for_each(move |_| {
+            tx.send(Command::PeriodicNetworkScan);
+
+            Ok(())
+        })
+        .map_err(|_| ());
 
     let mut runtime = create_tokio_runtime(threads);
 

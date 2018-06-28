@@ -38,12 +38,6 @@ macro_rules! log_warn {
     };
 }
 
-macro_rules! log_error {
-    ($logger:expr, $( $arg:tt )*) => {
-        $logger.error(file!(), line!(), &format!($($arg)*))
-    };
-}
-
 pub mod syslog;
 pub mod stderr;
 pub mod file;
@@ -168,8 +162,6 @@ mod tests {
     fn test_logger() {
         let mut logger = TestLogger { last_severity: Severity::DEBUG };
 
-        log_error!(logger, "msg");
-        assert_eq!(Severity::ERROR, logger.last_severity);
         log_warn!(logger, "msg");
         assert_eq!(Severity::WARN, logger.last_severity);
         log_info!(logger, "msg");

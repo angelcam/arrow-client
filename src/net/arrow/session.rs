@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::error::Error;
-use std::time::Duration;
+use std::time::{Instant, Duration};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
@@ -30,6 +30,7 @@ use tokio;
 
 use tokio::io::AsyncRead;
 use tokio::net::TcpStream;
+use tokio::timer::Deadline;
 
 use futures_ex::StreamEx;
 
@@ -46,8 +47,6 @@ use net::arrow::proto::msg::control::{
 
     ControlMessageFactory,
 };
-
-use timer::DEFAULT_TIMER;
 
 use utils::logger::{Logger, BoxLogger};
 
@@ -476,11 +475,11 @@ impl SessionManager {
         let transport = session.transport();
         let mut err_handler = session.error_handler();
 
-        let client = DEFAULT_TIMER
-            .timeout(
-                TcpStream::connect(&addr),
-                Duration::from_secs(CONNECTION_TIMEOUT),
-            )
+        let connection = TcpStream::connect(&addr);
+
+        let timeout = Duration::from_secs(CONNECTION_TIMEOUT);
+
+        let client = Deadline::new(connection, Instant::now() + timeout)
             .map_err(|err| {
                 if err.is_elapsed() {
                     ConnectionError::from("connection timeout")
