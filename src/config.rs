@@ -164,6 +164,7 @@ struct ApplicationConfigBuilder {
     logger_type:        LoggerType,
     config_file:        String,
     config_file_skel:   String,
+    identity_file:      Option<String>,
     state_file:         String,
     rtsp_paths_file:    String,
     mjpeg_paths_file:   String,
@@ -190,6 +191,7 @@ impl ApplicationConfigBuilder {
             logger_type:        LoggerType::Syslog,
             config_file:        CONFIG_FILE.to_string(),
             config_file_skel:   CONFIG_FILE_SKELETON.to_string(),
+            identity_file:      None,
             state_file:         STATE_FILE.to_string(),
             rtsp_paths_file:    RTSP_PATHS_FILE.to_string(),
             mjpeg_paths_file:   MJPEG_PATHS_FILE.to_string(),
@@ -252,6 +254,16 @@ impl ApplicationConfigBuilder {
                 Severity::WARN,
                 format!("unable to create configuration file skeleton \"{}\"", self.config_file_skel),
                 config_skeleton.save(&self.config_file_skel));
+        }
+
+        if let Some(identity_file) = self.identity_file {
+            let identity = config.to_identity();
+
+            utils::result_or_log(
+                &mut logger,
+                Severity::WARN,
+                format!("unable to create identity file \"{}\"", identity_file),
+                identity.save(&identity_file));
         }
 
         let mut config = ApplicationConfig {
@@ -319,6 +331,8 @@ impl ApplicationConfigBuilder {
                         self.config_file_skel(arg);
                     } else if arg.starts_with("--conn-state-file=") {
                         self.conn_state_file(arg);
+                    } else if arg.starts_with("--identity-file=") {
+                        self.identity_file(arg);
                     } else if arg.starts_with("--rtsp-paths=") {
                         self.rtsp_paths(arg)?;
                     } else if arg.starts_with("--mjpeg-paths=") {
@@ -536,6 +550,12 @@ impl ApplicationConfigBuilder {
         self.config_file_skel = arg[19..].to_string()
     }
 
+    /// Process the identity-file argument.
+    fn identity_file(&mut self, arg: &str) {
+        // skip "--identity-file=" length
+        self.identity_file = Some(arg[16..].to_string())
+    }
+
     /// Process the conn-state-file argument.
     fn conn_state_file(&mut self, arg: &str) {
         // skip "--conn-state-file=" length
@@ -568,6 +588,31 @@ impl ApplicationConfigBuilder {
         self.mjpeg_paths_file = mjpeg_paths_file.to_string();
 
         Ok(())
+    }
+}
+
+/// Client identification that can be publicly available.
+struct PublicIdentity {
+    uuid: Uuid,
+}
+
+impl PublicIdentity {
+    /// Save identity into a given file.
+    fn save(&self, path: &str) -> Result<(), ConfigError> {
+        let mut file = File::create(path)?;
+
+        self.to_json()
+            .write(&mut file)?;
+
+        Ok(())
+    }
+}
+
+impl ToJson for PublicIdentity {
+    fn to_json(&self) -> JsonValue {
+        object!{
+            "uuid" => format!("{}", self.uuid.hyphenated())
+        }
     }
 }
 
@@ -605,6 +650,13 @@ impl PersistentConfig {
         let config = PersistentConfig::from_json(object)?;
 
         Ok(config)
+    }
+
+    /// Get client public identity.
+    fn to_identity(&self) -> PublicIdentity {
+        PublicIdentity {
+            uuid: self.uuid,
+        }
     }
 
     /// Create a configuration skeleton from this persistent config.
@@ -1152,6 +1204,9 @@ pub fn usage(exit_code: i32) -> ! {
     println!("    --config-file-skel=path  the client will use this file as a backup for");
     println!("                        its credentials (default value:");
     println!("                        /etc/arrow/config-skel.json)");
+    println!("    --identity-file=path  a file that will contain only the public part of");
+    println!("                        the client identification (i.e. there will be no");
+    println!("                        secret in the file)");
     println!("    --conn-state-file=path  alternative path to the client connection state");
     println!("                        file (default value: /var/lib/arrow/state)");
     println!("    --diagnostic-mode   start the client in diagnostic mode (i.e. the client");
