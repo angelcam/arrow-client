@@ -14,7 +14,7 @@
 
 use bytes::{Bytes, BytesMut};
 
-use tokio_io::codec::{Decoder, Encoder};
+use tokio_codec::{Decoder, Encoder};
 
 use net::arrow::error::{ArrowError, ConnectionError};
 use net::arrow::proto::error::DecodeError;

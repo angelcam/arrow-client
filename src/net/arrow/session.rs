@@ -28,9 +28,10 @@ use futures::sink::Sink;
 
 use tokio;
 
-use tokio::io::AsyncRead;
 use tokio::net::TcpStream;
 use tokio::timer::Deadline;
+
+use tokio_codec::Decoder;
 
 use futures_ex::StreamEx;
 
@@ -490,7 +491,8 @@ impl SessionManager {
                 }
             })
             .and_then(|stream| {
-                let framed = stream.framed(RawCodec);
+                let framed = RawCodec.framed(stream);
+
                 let (sink, stream) = framed.split();
 
                 let messages = stream.pipe(transport);

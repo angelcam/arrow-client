@@ -34,9 +34,10 @@ use futures::task::Task;
 
 use tokio;
 
-use tokio::io::AsyncRead;
 use tokio::net::TcpStream;
 use tokio::timer::{Deadline, Interval};
+
+use tokio_codec::Decoder;
 
 use futures_ex::StreamEx;
 
@@ -692,7 +693,8 @@ pub fn connect(
             }
         })
         .and_then(|stream| {
-            let framed = stream.framed(ArrowCodec);
+            let framed = ArrowCodec.framed(stream);
+
             let (sink, stream) = framed.split();
 
             let messages = stream.pipe(aclient);

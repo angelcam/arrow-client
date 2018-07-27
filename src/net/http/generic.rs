@@ -27,7 +27,7 @@ use utils::string::reader::Reader as StringReader;
 
 use bytes::BytesMut;
 
-use tokio_io::codec::Decoder;
+use tokio_codec::Decoder;
 
 /// Codec error.
 #[derive(Debug, Clone)]

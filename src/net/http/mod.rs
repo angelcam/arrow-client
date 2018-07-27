@@ -41,11 +41,10 @@ use bytes::BytesMut;
 
 use futures::{IntoFuture, Future, Poll, Sink, Stream};
 
-use tokio::io::AsyncRead;
 use tokio::net::TcpStream;
 use tokio::timer::Deadline;
 
-use tokio_io::codec::{Decoder, Encoder};
+use tokio_codec::{Decoder, Encoder};
 
 /// HTTP codec error.
 #[derive(Debug, Clone)]
@@ -256,7 +255,7 @@ impl Request {
         let response = TcpStream::connect(&addr.unwrap())
             .map_err(|err| Error::from(err))
             .and_then(move |stream| {
-                stream.framed(codec)
+                codec.framed(stream)
                     .send(self.inner.build())
                     .map_err(|err| Error::from(err))
                     .and_then(|stream| {
