@@ -35,7 +35,7 @@ use futures::task::Task;
 use tokio;
 
 use tokio::net::TcpStream;
-use tokio::timer::{Deadline, Interval};
+use tokio::timer::{Timeout, Interval};
 
 use tokio_codec::Decoder;
 
@@ -682,7 +682,7 @@ pub fn connect(
                 .map_err(|err| ArrowError::connection_error(err))
         });
 
-    Deadline::new(connection, Instant::now() + Duration::from_secs(CONNECTION_TIMEOUT))
+    Timeout::new(connection, Duration::from_secs(CONNECTION_TIMEOUT))
         .map_err(move |err| {
             if err.is_elapsed() {
                 ArrowError::connection_error(format!("unable to connect to remote Arrow Service {} (connection timeout)", addr))

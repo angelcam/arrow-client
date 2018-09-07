@@ -20,7 +20,7 @@ use std::fmt;
 use std::error::Error as ErrorTrait;
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
-use std::time::{Instant, Duration};
+use std::time::Duration;
 
 use net;
 
@@ -41,7 +41,7 @@ use bytes::BytesMut;
 use futures::{Future, IntoFuture, Poll, Sink, Stream};
 
 use tokio::net::TcpStream;
-use tokio::timer::Deadline;
+use tokio::timer::Timeout;
 
 use tokio_codec::{Decoder, Encoder};
 
@@ -269,7 +269,7 @@ impl Request {
             });
 
         if let Some(timeout) = timeout {
-            let response = Deadline::new(response, Instant::now() + timeout)
+            let response = Timeout::new(response, timeout)
                 .map_err(|err| {
                     if err.is_elapsed() {
                         Error::from("request timeout")
