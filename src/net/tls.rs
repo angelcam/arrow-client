@@ -96,11 +96,7 @@ where
     }
 }
 
-impl<S> AsyncRead for TlsStream<S>
-where
-    S: AsyncRead + AsyncWrite,
-{
-}
+impl<S> AsyncRead for TlsStream<S> where S: AsyncRead + AsyncWrite {}
 
 impl<S> AsyncWrite for TlsStream<S>
 where
@@ -116,10 +112,12 @@ where
                         return Err(err);
                     }
                 }
-                Err(err) => return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("TLS shutdown error: {}", err),
-                )),
+                Err(err) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("TLS shutdown error: {}", err),
+                    ));
+                }
             }
         }
 
@@ -146,7 +144,11 @@ where
     type Error = TlsError;
 
     fn poll(&mut self) -> Poll<TlsStream<S>, TlsError> {
-        match self.handshake.take().expect("the future has been already resolved") {
+        match self
+            .handshake
+            .take()
+            .expect("the future has been already resolved")
+        {
             Ok(stream) => Ok(Async::Ready(stream.into())),
             Err(HandshakeError::SetupFailure(err)) => Err(TlsError::from(err)),
             Err(HandshakeError::Failure(m)) => Err(TlsError::from(m.into_error())),
@@ -158,7 +160,7 @@ where
                     self.handshake = Some(Err(HandshakeError::WouldBlock(m)));
 
                     Ok(Async::NotReady)
-                },
+                }
             },
         }
     }
@@ -179,7 +181,9 @@ impl TlsConnector {
         // NOTE: We do not need to validate the server name because we use only one root
         // certificate. It's a self signed certificate issued directly by Angelcam and used
         // only for Arrow.
-        let handshake = self.inner.configure()
+        let handshake = self
+            .inner
+            .configure()
             .map_err(|err| HandshakeError::from(err))
             .and_then(move |configuration| {
                 configuration
@@ -195,8 +199,6 @@ impl TlsConnector {
 
 impl From<SslConnector> for TlsConnector {
     fn from(connector: SslConnector) -> TlsConnector {
-        TlsConnector {
-            inner: connector,
-        }
+        TlsConnector { inner: connector }
     }
 }

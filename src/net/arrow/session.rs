@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::error::Error;
-use std::time::Duration;
 use std::collections::{HashMap, VecDeque};
+use std::error::Error;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
 
 use futures::task;
 
-use futures::{Async, AsyncSink, Future, Poll, StartSend};
-use futures::task::Task;
-use futures::stream::Stream;
 use futures::sink::Sink;
+use futures::stream::Stream;
+use futures::task::Task;
+use futures::{Async, AsyncSink, Future, Poll, StartSend};
 
 use tokio;
 
@@ -32,55 +32,48 @@ use tokio::codec::Decoder;
 use tokio::net::TcpStream;
 use tokio::timer::Timeout;
 
-use futures_ex::StreamEx;
-
-use context::ApplicationContext;
-
-use svc_table::{BoxServiceTable, ServiceTable};
-
-use net::arrow::error::{ArrowError, ConnectionError};
-use net::arrow::proto::codec::RawCodec;
-use net::arrow::proto::msg::ArrowMessage;
-use net::arrow::proto::msg::control::{
-    EC_NO_ERROR,
-    EC_CONNECTION_ERROR,
-
-    ControlMessageFactory,
+use crate::context::ApplicationContext;
+use crate::futures_ex::StreamEx;
+use crate::net::arrow::error::{ArrowError, ConnectionError};
+use crate::net::arrow::proto::codec::RawCodec;
+use crate::net::arrow::proto::msg::control::{
+    ControlMessageFactory, EC_CONNECTION_ERROR, EC_NO_ERROR,
 };
+use crate::net::arrow::proto::msg::ArrowMessage;
+use crate::svc_table::{BoxServiceTable, ServiceTable};
+use crate::utils::logger::{BoxLogger, Logger};
 
-use utils::logger::{Logger, BoxLogger};
-
-const INPUT_BUFFER_LIMIT:  usize = 32768;
+const INPUT_BUFFER_LIMIT: usize = 32768;
 const OUTPUT_BUFFER_LIMIT: usize = 4 * 1024 * 1024;
 
 const CONNECTION_TIMEOUT: u64 = 20;
 
 /// Session context.
 struct SessionContext {
-    service_id:   u16,
-    session_id:   u32,
-    input:        BytesMut,
-    output:       BytesMut,
-    input_ready:  Option<Task>,
-    input_empty:  Option<Task>,
+    service_id: u16,
+    session_id: u32,
+    input: BytesMut,
+    output: BytesMut,
+    input_ready: Option<Task>,
+    input_empty: Option<Task>,
     output_ready: Option<Task>,
-    closed:       bool,
-    error:        Option<ConnectionError>,
+    closed: bool,
+    error: Option<ConnectionError>,
 }
 
 impl SessionContext {
     /// Create a new session context for a given service ID and session ID.
     fn new(service_id: u16, session_id: u32) -> SessionContext {
         SessionContext {
-            service_id:   service_id,
-            session_id:   session_id,
-            input:        BytesMut::with_capacity(8192),
-            output:       BytesMut::with_capacity(8192),
-            input_ready:  None,
-            input_empty:  None,
+            service_id: service_id,
+            session_id: session_id,
+            input: BytesMut::with_capacity(8192),
+            output: BytesMut::with_capacity(8192),
+            input_ready: None,
+            input_empty: None,
             output_ready: None,
-            closed:       false,
-            error:        None,
+            closed: false,
+            error: None,
         }
     }
 
@@ -88,7 +81,7 @@ impl SessionContext {
     fn push_output_message(&mut self, msg: ArrowMessage) {
         // ignore all incoming messages after the connection gets closed
         if self.closed {
-            return
+            return;
         }
 
         let data = msg.payload();
@@ -116,8 +109,7 @@ impl SessionContext {
     ///   has been closed
     /// * `Async::NotReady` if there was no data available
     fn take_input_message(&mut self) -> Poll<Option<ArrowMessage>, ConnectionError> {
-        let data = self.input.take()
-            .freeze();
+        let data = self.input.take().freeze();
 
         // we MUST notify any possible task feeding the input buffer that the
         // buffer is empty again
@@ -126,16 +118,13 @@ impl SessionContext {
         }
 
         if data.len() > 0 {
-            let message = ArrowMessage::new(
-                self.service_id,
-                self.session_id,
-                data);
+            let message = ArrowMessage::new(self.service_id, self.session_id, data);
 
             Ok(Async::Ready(Some(message)))
         } else if self.closed {
             match self.error.take() {
                 Some(err) => Err(err),
-                None      => Ok(Async::Ready(None)),
+                None => Ok(Async::Ready(None)),
             }
         } else {
             // save the current task and wait until there is some data
@@ -154,7 +143,7 @@ impl SessionContext {
     /// * an error if the context has been closed
     fn push_input_data(&mut self, mut msg: Bytes) -> StartSend<Bytes, ConnectionError> {
         if self.closed {
-            return Err(ConnectionError::from("connection has been closed"))
+            return Err(ConnectionError::from("connection has been closed"));
         }
 
         let mut take = msg.len();
@@ -204,8 +193,7 @@ impl SessionContext {
     ///   not data in the output buffer
     /// * `Async::NotReady` if there is no data available
     fn take_output_data(&mut self) -> Poll<Option<Bytes>, ConnectionError> {
-        let data = self.output.take()
-            .freeze();
+        let data = self.output.take().freeze();
 
         if data.len() > 0 {
             Ok(Async::Ready(Some(data)))
@@ -244,7 +232,7 @@ impl SessionContext {
         // ignore all errors after the connection gets closed
         if !self.closed {
             self.closed = true;
-            self.error  = Some(err);
+            self.error = Some(err);
         }
     }
 }
@@ -260,15 +248,13 @@ impl Session {
         let context = SessionContext::new(service_id, session_id);
 
         Session {
-            context: Arc::new(Mutex::new(context))
+            context: Arc::new(Mutex::new(context)),
         }
     }
 
     /// Push a given Arrow Message into the output buffer.
     fn push(&mut self, msg: ArrowMessage) {
-        self.context.lock()
-            .unwrap()
-            .push_output_message(msg)
+        self.context.lock().unwrap().push_output_message(msg)
     }
 
     /// Take an Arrow Message from the input buffer. The method returns:
@@ -277,31 +263,27 @@ impl Session {
     ///   has been closed
     /// * `Async::NotReady` if there was no data available
     fn take(&mut self) -> Poll<Option<ArrowMessage>, ConnectionError> {
-        self.context.lock()
-            .unwrap()
-            .take_input_message()
+        self.context.lock().unwrap().take_input_message()
     }
 
     /// Mark the session as closed. The session context won't accept any new
     /// data, however the buffered data can be still processed. It's up to
     /// the corresponding tasks to consume all remaining data.
     fn close(&mut self) {
-        self.context.lock()
-            .unwrap()
-            .close()
+        self.context.lock().unwrap().close()
     }
 
     /// Get session transport.
     fn transport(&self) -> SessionTransport {
         SessionTransport {
-            context: self.context.clone()
+            context: self.context.clone(),
         }
     }
 
     /// Get session error handler.
     fn error_handler(&self) -> SessionErrorHandler {
         SessionErrorHandler {
-            context: self.context.clone()
+            context: self.context.clone(),
         }
     }
 }
@@ -312,30 +294,24 @@ struct SessionTransport {
 }
 
 impl Stream for SessionTransport {
-    type Item  = Bytes;
+    type Item = Bytes;
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Option<Bytes>, ConnectionError> {
-        self.context.lock()
-            .unwrap()
-            .take_output_data()
+        self.context.lock().unwrap().take_output_data()
     }
 }
 
 impl Sink for SessionTransport {
-    type SinkItem  = Bytes;
+    type SinkItem = Bytes;
     type SinkError = ConnectionError;
 
     fn start_send(&mut self, data: Bytes) -> StartSend<Bytes, ConnectionError> {
-        self.context.lock()
-            .unwrap()
-            .push_input_data(data)
+        self.context.lock().unwrap().push_input_data(data)
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        self.context.lock()
-            .unwrap()
-            .flush_input_buffer()
+        self.context.lock().unwrap().flush_input_buffer()
     }
 
     fn close(&mut self) -> Poll<(), ConnectionError> {
@@ -357,38 +333,37 @@ struct SessionErrorHandler {
 impl SessionErrorHandler {
     /// Save a given transport error into the session context.
     fn set_error(&mut self, err: ConnectionError) {
-        self.context.lock()
-            .unwrap()
-            .set_error(err)
+        self.context.lock().unwrap().set_error(err)
     }
 }
 
 /// Arrow session manager.
 pub struct SessionManager {
-    logger:       BoxLogger,
-    svc_table:    BoxServiceTable,
+    logger: BoxLogger,
+    svc_table: BoxServiceTable,
     cmsg_factory: ControlMessageFactory,
-    cmsg_queue:   VecDeque<ArrowMessage>,
-    sessions:     HashMap<u32, Session>,
-    poll_order:   VecDeque<u32>,
-    new_session:  Option<Task>,
+    cmsg_queue: VecDeque<ArrowMessage>,
+    sessions: HashMap<u32, Session>,
+    poll_order: VecDeque<u32>,
+    new_session: Option<Task>,
 }
 
 impl SessionManager {
     /// Create a new session manager.
     pub fn new(
         app_context: ApplicationContext,
-        cmsg_factory: ControlMessageFactory) -> SessionManager {
+        cmsg_factory: ControlMessageFactory,
+    ) -> SessionManager {
         let svc_table = app_context.get_service_table();
 
         SessionManager {
-            logger:       app_context.get_logger(),
-            svc_table:    svc_table.boxed(),
+            logger: app_context.get_logger(),
+            svc_table: svc_table.boxed(),
             cmsg_factory: cmsg_factory,
-            cmsg_queue:   VecDeque::new(),
-            sessions:     HashMap::new(),
-            poll_order:   VecDeque::new(),
-            new_session:  None,
+            cmsg_queue: VecDeque::new(),
+            sessions: HashMap::new(),
+            poll_order: VecDeque::new(),
+            new_session: None,
         }
     }
 
@@ -402,22 +377,20 @@ impl SessionManager {
     pub fn send(&mut self, msg: ArrowMessage) {
         let header = msg.header();
 
-        let session = self.take_session(
-            header.service,
-            header.session);
+        let session = self.take_session(header.service, header.session);
 
         if let Ok(mut session) = session {
             session.push(msg);
 
-            self.sessions.insert(
-                header.session,
-                session);
+            self.sessions.insert(header.session, session);
         } else if let Err(err) = session {
-            log_warn!(self.logger, "unable to connect to a remote service: {}", err.description());
+            log_warn!(
+                self.logger,
+                "unable to connect to a remote service: {}",
+                err.description()
+            );
 
-            let msg = self.create_hup_message(
-                header.session,
-                EC_CONNECTION_ERROR);
+            let msg = self.create_hup_message(header.session, EC_CONNECTION_ERROR);
 
             self.cmsg_queue.push_back(msg);
         }
@@ -426,23 +399,22 @@ impl SessionManager {
     /// Close a given session.
     pub fn close(&mut self, session_id: u32, _: u32) {
         if let Some(mut session) = self.sessions.remove(&session_id) {
-            log_info!(self.logger, "closing service connection; session ID: {:08x}", session_id);
+            log_info!(
+                self.logger,
+                "closing service connection; session ID: {:08x}",
+                session_id
+            );
 
             session.close();
         }
     }
 
     /// Take a given session object.
-    fn take_session(
-        &mut self,
-        service_id: u16,
-        session_id: u32) -> Result<Session, ArrowError> {
+    fn take_session(&mut self, service_id: u16, session_id: u32) -> Result<Session, ArrowError> {
         if !self.sessions.contains_key(&session_id) {
             let session = self.connect(service_id, session_id)?;
 
-            self.sessions.insert(
-                session_id,
-                session);
+            self.sessions.insert(session_id, session);
 
             self.poll_order.push_back(session_id);
 
@@ -459,17 +431,27 @@ impl SessionManager {
 
     /// Connect to a given service and create an associated session object
     /// with a given ID.
-    fn connect(
-        &mut self,
-        service_id: u16,
-        session_id: u32) -> Result<Session, ArrowError> {
-        let svc = self.svc_table.get(service_id)
-            .ok_or(ArrowError::other(format!("unknown service ID: {:04x}", service_id)))?;
+    fn connect(&mut self, service_id: u16, session_id: u32) -> Result<Session, ArrowError> {
+        let svc = self
+            .svc_table
+            .get(service_id)
+            .ok_or(ArrowError::other(format!(
+                "unknown service ID: {:04x}",
+                service_id
+            )))?;
 
-        let addr = svc.address()
-            .ok_or(ArrowError::other(format!("there is no address for a given service; service ID: {:04x}", service_id)))?;
+        let addr = svc.address().ok_or(ArrowError::other(format!(
+            "there is no address for a given service; service ID: {:04x}",
+            service_id
+        )))?;
 
-        log_info!(self.logger, "connecting to remote service: {}, service ID: {:04x}, session ID: {:08x}", addr, service_id, session_id);
+        log_info!(
+            self.logger,
+            "connecting to remote service: {}, service ID: {:04x}, session ID: {:08x}",
+            addr,
+            service_id,
+            session_id
+        );
 
         let session = Session::new(service_id, session_id);
         let transport = session.transport();
@@ -512,26 +494,25 @@ impl SessionManager {
     }
 
     /// Create HUP message for a given session.
-    fn create_hup_message(
-        &mut self,
-        session_id: u32,
-        error_code: u32) -> ArrowMessage {
-        log_debug!(self.logger, "sending a HUP message (session ID: {:08x}, error_code: {:08x})...", session_id, error_code);
+    fn create_hup_message(&mut self, session_id: u32, error_code: u32) -> ArrowMessage {
+        log_debug!(
+            self.logger,
+            "sending a HUP message (session ID: {:08x}, error_code: {:08x})...",
+            session_id,
+            error_code
+        );
 
-        ArrowMessage::from(
-            self.cmsg_factory.hup(
-                session_id,
-                error_code))
+        ArrowMessage::from(self.cmsg_factory.hup(session_id, error_code))
     }
 }
 
 impl Stream for SessionManager {
-    type Item  = ArrowMessage;
+    type Item = ArrowMessage;
     type Error = ArrowError;
 
     fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
         if let Some(msg) = self.cmsg_queue.pop_front() {
-            return Ok(Async::Ready(Some(msg)))
+            return Ok(Async::Ready(Some(msg)));
         }
 
         let mut count = self.poll_order.len();
@@ -543,31 +524,36 @@ impl Stream for SessionManager {
                         Ok(Async::NotReady) => {
                             self.sessions.insert(session_id, session);
                             self.poll_order.push_back(session_id);
-                        },
+                        }
                         Ok(Async::Ready(None)) => {
-                            log_info!(self.logger, "service connection closed; session ID: {:08x}", session_id);
+                            log_info!(
+                                self.logger,
+                                "service connection closed; session ID: {:08x}",
+                                session_id
+                            );
 
-                            let msg = self.create_hup_message(
-                                session_id,
-                                EC_NO_ERROR);
+                            let msg = self.create_hup_message(session_id, EC_NO_ERROR);
 
-                            return Ok(Async::Ready(Some(msg)))
-                        },
+                            return Ok(Async::Ready(Some(msg)));
+                        }
                         Ok(Async::Ready(Some(msg))) => {
                             self.sessions.insert(session_id, session);
                             self.poll_order.push_back(session_id);
 
-                            return Ok(Async::Ready(Some(msg)))
-                        },
+                            return Ok(Async::Ready(Some(msg)));
+                        }
                         Err(err) => {
-                            log_warn!(self.logger, "service connection error; session ID: {:08x}: {}", session_id, err.description());
-
-                            let msg = self.create_hup_message(
+                            log_warn!(
+                                self.logger,
+                                "service connection error; session ID: {:08x}: {}",
                                 session_id,
-                                EC_CONNECTION_ERROR);
+                                err.description()
+                            );
 
-                            return Ok(Async::Ready(Some(msg)))
-                        },
+                            let msg = self.create_hup_message(session_id, EC_CONNECTION_ERROR);
+
+                            return Ok(Async::Ready(Some(msg)));
+                        }
                     }
                 }
             }

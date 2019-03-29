@@ -16,12 +16,12 @@ use std::mem;
 
 use bytes::BytesMut;
 
-use utils;
+use crate::utils;
 
-use net::arrow::proto::codec::{FromBytes, Encode};
-use net::arrow::proto::msg::MessageBody;
-use net::arrow::proto::msg::control::ControlMessageBody;
-use net::arrow::proto::error::DecodeError;
+use crate::net::arrow::proto::codec::{Encode, FromBytes};
+use crate::net::arrow::proto::error::DecodeError;
+use crate::net::arrow::proto::msg::control::ControlMessageBody;
+use crate::net::arrow::proto::msg::MessageBody;
 
 /// ACK message.
 #[repr(packed)]
@@ -32,9 +32,7 @@ pub struct AckMessage {
 impl AckMessage {
     /// Create a new ACK message for a given error code.
     pub fn new(err: u32) -> AckMessage {
-        AckMessage {
-            err: err,
-        }
+        AckMessage { err: err }
     }
 }
 
@@ -54,13 +52,14 @@ impl MessageBody for AckMessage {
     }
 }
 
-impl ControlMessageBody for AckMessage {
-}
+impl ControlMessageBody for AckMessage {}
 
 impl FromBytes for AckMessage {
     fn from_bytes(bytes: &[u8]) -> Result<Option<AckMessage>, DecodeError> {
         if bytes.len() != mem::size_of::<AckMessage>() {
-            return Err(DecodeError::from("malformed Arrow Control Protocol ACK message"));
+            return Err(DecodeError::from(
+                "malformed Arrow Control Protocol ACK message",
+            ));
         }
 
         let ptr = bytes.as_ptr() as *const AckMessage;

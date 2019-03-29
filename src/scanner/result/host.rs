@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashSet;
 use std::collections::hash_set::Iter as HashSetIterator;
+use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
-use net::raw::ether::MacAddr;
+use crate::net::raw::ether::MacAddr;
 
-pub const HR_FLAG_ARP: u8  = 0x01;
+pub const HR_FLAG_ARP: u8 = 0x01;
 pub const HR_FLAG_ICMP: u8 = 0x02;
 
 /// Host record (i.e. a scan report element).
 #[derive(Clone)]
 pub struct HostRecord {
     pub flags: u8,
-    pub mac:   MacAddr,
-    pub ip:    IpAddr,
+    pub mac: MacAddr,
+    pub ip: IpAddr,
 
     ports: HashSet<u16>,
 }
@@ -36,9 +36,9 @@ impl HostRecord {
     pub fn new(mac: MacAddr, ip: IpAddr, flags: u8) -> HostRecord {
         HostRecord {
             flags: flags,
-            mac:   mac,
-            ip:    ip,
-            ports: HashSet::new()
+            mac: mac,
+            ip: ip,
+            ports: HashSet::new(),
         }
     }
 
@@ -49,7 +49,9 @@ impl HostRecord {
 
     /// Add ports from a given iterator.
     pub fn add_ports<I>(&mut self, ports: I)
-        where I: IntoIterator<Item=u16> {
+    where
+        I: IntoIterator<Item = u16>,
+    {
         self.ports.extend(ports)
     }
 
@@ -73,7 +75,7 @@ impl<'a> PortIterator<'a> {
     /// Create a new port iterator from a given hash set iterator.
     fn new(host: &'a HostRecord) -> PortIterator<'a> {
         PortIterator {
-            inner: host.ports.iter()
+            inner: host.ports.iter(),
         }
     }
 }
@@ -82,8 +84,7 @@ impl<'a> Iterator for PortIterator<'a> {
     type Item = u16;
 
     fn next(&mut self) -> Option<u16> {
-        self.inner.next()
-            .map(|port| *port)
+        self.inner.next().map(|port| *port)
     }
 }
 
@@ -96,8 +97,8 @@ impl<'a> ExactSizeIterator for PortIterator<'a> {
 /// Socket address iterator.
 pub struct SocketAddrIterator<'a> {
     port_iterator: PortIterator<'a>,
-    mac_addr:      MacAddr,
-    ip_addr:       IpAddr,
+    mac_addr: MacAddr,
+    ip_addr: IpAddr,
 }
 
 impl<'a> SocketAddrIterator<'a> {
@@ -105,8 +106,8 @@ impl<'a> SocketAddrIterator<'a> {
     fn new(host: &'a HostRecord) -> SocketAddrIterator<'a> {
         SocketAddrIterator {
             port_iterator: host.ports(),
-            mac_addr:      host.mac,
-            ip_addr:       host.ip,
+            mac_addr: host.mac,
+            ip_addr: host.ip,
         }
     }
 }
@@ -118,7 +119,7 @@ impl<'a> Iterator for SocketAddrIterator<'a> {
         if let Some(port) = self.port_iterator.next() {
             let res = match self.ip_addr {
                 IpAddr::V4(ip_addr) => SocketAddr::V4(SocketAddrV4::new(ip_addr, port)),
-                IpAddr::V6(ip_addr) => SocketAddr::V6(SocketAddrV6::new(ip_addr, port, 0, 0))
+                IpAddr::V6(ip_addr) => SocketAddr::V6(SocketAddrV6::new(ip_addr, port, 0, 0)),
             };
 
             Some((self.mac_addr, res))

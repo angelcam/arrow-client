@@ -58,7 +58,7 @@ impl From<json::Error> for ParseError {
 }
 
 /// Common trait for objects that can be constructed from JSON.
-pub trait FromJson : Sized {
+pub trait FromJson: Sized {
     /// Parse object from JSON.
     fn from_json(value: JsonValue) -> Result<Self, ParseError>;
 }

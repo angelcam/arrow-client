@@ -18,78 +18,59 @@ mod session;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 use time;
 
 use futures::task;
 
-use futures::{StartSend, Async, AsyncSink, Poll};
 use futures::future::Future;
-use futures::stream::Stream;
 use futures::sink::Sink;
+use futures::stream::Stream;
 use futures::task::Task;
+use futures::{Async, AsyncSink, Poll, StartSend};
 
 use tokio;
 
 use tokio::codec::Decoder;
 use tokio::net::TcpStream;
-use tokio::timer::{Timeout, Interval};
+use tokio::timer::{Interval, Timeout};
 
-use futures_ex::StreamEx;
-
-use context::ApplicationContext;
-
-use cmd_handler::{Command, CommandChannel};
-
-use net::arrow::proto::codec::{ArrowCodec, FromBytes};
-use net::arrow::proto::msg::ArrowMessage;
-use net::arrow::proto::msg::control::{
-    EC_NO_ERROR,
-    EC_UNSUPPORTED_PROTOCOL_VERSION,
-    EC_UNAUTHORIZED,
-    EC_INTERNAL_SERVER_ERROR,
-
-    STATUS_FLAG_SCAN,
-
-    AckMessage,
-    ControlMessage,
-    ControlMessageType,
-    HupMessage,
-    RedirectMessage,
-    SimpleServiceTable,
+use crate::cmd_handler::{Command, CommandChannel};
+use crate::context::ApplicationContext;
+use crate::futures_ex::StreamEx;
+use crate::net::arrow::proto::codec::{ArrowCodec, FromBytes};
+use crate::net::arrow::proto::msg::control::ControlMessageFactory;
+use crate::net::arrow::proto::msg::control::{
+    AckMessage, ControlMessage, ControlMessageType, HupMessage, RedirectMessage,
+    SimpleServiceTable, EC_INTERNAL_SERVER_ERROR, EC_NO_ERROR, EC_UNAUTHORIZED,
+    EC_UNSUPPORTED_PROTOCOL_VERSION, STATUS_FLAG_SCAN,
 };
-use net::arrow::session::SessionManager;
-use net::arrow::proto::msg::control::ControlMessageFactory;
+use crate::net::arrow::proto::msg::ArrowMessage;
+use crate::net::arrow::session::SessionManager;
+use crate::net::raw::ether::MacAddr;
+use crate::svc_table::SharedServiceTableRef;
+use crate::utils::logger::{BoxLogger, Logger};
 
-use net::raw::ether::MacAddr;
+pub use self::error::{ArrowError, ErrorKind};
 
-use svc_table::SharedServiceTableRef;
+use crate::net::utils::get_socket_address_async;
 
-use utils::logger::{Logger, BoxLogger};
-
-pub use self::error::{
-    ArrowError,
-    ErrorKind,
-};
-
-use net::utils::get_socket_address_async;
-
-const ACK_TIMEOUT:         f64 = 20.0;
-const CONNECTION_TIMEOUT:  u64 = 20;
-const PING_PERIOD:         f64 = 60.0;
-const UPDATE_CHECK_PERIOD: f64 =  5.0;
+const ACK_TIMEOUT: f64 = 20.0;
+const CONNECTION_TIMEOUT: u64 = 20;
+const PING_PERIOD: f64 = 60.0;
+const UPDATE_CHECK_PERIOD: f64 = 5.0;
 
 /// Arrow Protocol states.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum ProtocolState {
     Handshake,
-    Established
+    Established,
 }
 
 /// Helper struct for expected ACK messages.
 struct ExpectedAck {
-    timestamp:  f64,
+    timestamp: f64,
     message_id: u16,
 }
 
@@ -97,7 +78,7 @@ impl ExpectedAck {
     /// Create a new ACK message expectation.
     fn new(message_id: u16) -> ExpectedAck {
         ExpectedAck {
-            timestamp:  time::precise_time_s(),
+            timestamp: time::precise_time_s(),
             message_id: message_id,
         }
     }
@@ -110,28 +91,26 @@ impl ExpectedAck {
 
 /// Arrow Client implementation.
 struct ArrowClientContext {
-    logger:           BoxLogger,
-    app_context:      ApplicationContext,
-    cmd_channel:      CommandChannel,
-    svc_table:        SharedServiceTableRef,
-    cmsg_factory:     ControlMessageFactory,
-    sessions:         SessionManager,
-    messages:         VecDeque<ArrowMessage>,
-    expected_acks:    VecDeque<ExpectedAck>,
-    state:            ProtocolState,
-    task:             Option<Task>,
-    redirect:         Option<String>,
-    closed:           bool,
-    last_ping:        f64,
+    logger: BoxLogger,
+    app_context: ApplicationContext,
+    cmd_channel: CommandChannel,
+    svc_table: SharedServiceTableRef,
+    cmsg_factory: ControlMessageFactory,
+    sessions: SessionManager,
+    messages: VecDeque<ArrowMessage>,
+    expected_acks: VecDeque<ExpectedAck>,
+    state: ProtocolState,
+    task: Option<Task>,
+    redirect: Option<String>,
+    closed: bool,
+    last_ping: f64,
     last_update_chck: f64,
-    last_stable_ver:  usize,
+    last_stable_ver: usize,
 }
 
 impl ArrowClientContext {
     /// Create a new Arrow Client.
-    fn new(
-        app_context: ApplicationContext,
-        cmd_channel: CommandChannel) -> ArrowClientContext {
+    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel) -> ArrowClientContext {
         let logger = app_context.get_logger();
         let svc_table = app_context.get_service_table();
 
@@ -140,44 +119,36 @@ impl ArrowClientContext {
         let passwd = app_context.get_arrow_password();
 
         let cmsg_factory = ControlMessageFactory::new();
-        let session_manager = SessionManager::new(
-            app_context.clone(),
-            cmsg_factory.clone());
+        let session_manager = SessionManager::new(app_context.clone(), cmsg_factory.clone());
 
         let t = time::precise_time_s();
 
         let mut client = ArrowClientContext {
-            logger:           logger,
-            app_context:      app_context,
-            cmd_channel:      cmd_channel,
-            svc_table:        svc_table,
-            cmsg_factory:     cmsg_factory,
-            sessions:         session_manager,
-            messages:         VecDeque::new(),
-            expected_acks:    VecDeque::new(),
-            state:            ProtocolState::Handshake,
-            task:             None,
-            redirect:         None,
-            closed:           false,
-            last_ping:        t,
+            logger: logger,
+            app_context: app_context,
+            cmd_channel: cmd_channel,
+            svc_table: svc_table,
+            cmsg_factory: cmsg_factory,
+            sessions: session_manager,
+            messages: VecDeque::new(),
+            expected_acks: VecDeque::new(),
+            state: ProtocolState::Handshake,
+            task: None,
+            redirect: None,
+            closed: false,
+            last_ping: t,
             last_update_chck: t,
-            last_stable_ver:  0,
+            last_stable_ver: 0,
         };
 
-        client.send_register_message(
-            mac,
-            uuid.as_bytes()
-                .clone(),
-            passwd.as_bytes()
-                .clone());
+        client.send_register_message(mac, uuid.as_bytes().clone(), passwd.as_bytes().clone());
 
         client
     }
 
     /// Get redirect address (if any).
     fn get_redirect(&self) -> Option<String> {
-        self.redirect.as_ref()
-            .map(|r| r.clone())
+        self.redirect.as_ref().map(|r| r.clone())
     }
 
     /// Check if the client has been closed.
@@ -239,27 +210,19 @@ impl ArrowClientContext {
     fn send_unconfirmed_control_message(&mut self, msg: ControlMessage) {
         let header = msg.header();
 
-        self.expected_acks.push_back(
-            ExpectedAck::new(header.msg_id));
+        self.expected_acks
+            .push_back(ExpectedAck::new(header.msg_id));
 
         self.send_control_message(msg);
     }
 
     /// Send REGISTER message.
-    fn send_register_message(
-        &mut self,
-        mac: MacAddr,
-        uuid: [u8; 16],
-        password: [u8; 16]) {
+    fn send_register_message(&mut self, mac: MacAddr, uuid: [u8; 16], password: [u8; 16]) {
         log_debug!(self.logger, "sending REGISTER request...");
 
         let svc_table = SimpleServiceTable::from(self.svc_table.visible());
 
-        let msg = self.cmsg_factory.register(
-            mac,
-            uuid,
-            password,
-            svc_table);
+        let msg = self.cmsg_factory.register(mac, uuid, password, svc_table);
 
         self.last_stable_ver = self.svc_table.version();
 
@@ -297,20 +260,28 @@ impl ArrowClientContext {
 
         let header = msg.header();
 
-        log_debug!(self.logger, "received control message: {:?}", header.message_type());
+        log_debug!(
+            self.logger,
+            "received control message: {:?}",
+            header.message_type()
+        );
 
         match header.message_type() {
-            ControlMessageType::ACK             => self.process_ack_message(msg),
-            ControlMessageType::PING            => self.process_ping_message(msg),
-            ControlMessageType::HUP             => self.process_hup_message(msg),
-            ControlMessageType::REDIRECT        => self.process_redirect_message(msg),
-            ControlMessageType::GET_STATUS      => self.process_get_status_message(msg),
+            ControlMessageType::ACK => self.process_ack_message(msg),
+            ControlMessageType::PING => self.process_ping_message(msg),
+            ControlMessageType::HUP => self.process_hup_message(msg),
+            ControlMessageType::REDIRECT => self.process_redirect_message(msg),
+            ControlMessageType::GET_STATUS => self.process_get_status_message(msg),
             ControlMessageType::GET_SCAN_REPORT => self.process_get_scan_report_message(msg),
             ControlMessageType::RESET_SVC_TABLE => self.process_command(Command::ResetServiceTable),
-            ControlMessageType::SCAN_NETWORK    => self.process_command(Command::ScanNetwork),
-            ControlMessageType::UNKNOWN
-                => Err(ArrowError::other(format!("unknow control message received"))),
-            mt  => Err(ArrowError::other(format!("unexpected control message received: {:?}", mt))),
+            ControlMessageType::SCAN_NETWORK => self.process_command(Command::ScanNetwork),
+            ControlMessageType::UNKNOWN => Err(ArrowError::other(format!(
+                "unknow control message received"
+            ))),
+            mt => Err(ArrowError::other(format!(
+                "unexpected control message received: {:?}",
+                mt
+            ))),
         }
     }
 
@@ -335,8 +306,7 @@ impl ArrowClientContext {
 
     /// Process handshake ACK.
     fn process_handshake_ack(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
-        let ack = msg.body::<AckMessage>()
-            .expect("ACK message expected");
+        let ack = msg.body::<AckMessage>().expect("ACK message expected");
 
         if ack.err == EC_NO_ERROR {
             // switch the protocol state into normal operation
@@ -349,11 +319,17 @@ impl ArrowClientContext {
 
             Ok(())
         } else if ack.err == EC_UNAUTHORIZED {
-            Err(ArrowError::unauthorized("Arrow REGISTER failed (unauthorized)"))
+            Err(ArrowError::unauthorized(
+                "Arrow REGISTER failed (unauthorized)",
+            ))
         } else if ack.err == EC_UNSUPPORTED_PROTOCOL_VERSION {
-            Err(ArrowError::unsupported_protocol_version("Arrow REGISTER failed (unsupported version of the Arrow Protocol)"))
+            Err(ArrowError::unsupported_protocol_version(
+                "Arrow REGISTER failed (unsupported version of the Arrow Protocol)",
+            ))
         } else if ack.err == EC_INTERNAL_SERVER_ERROR {
-            Err(ArrowError::arrow_server_error("Arrow REGISTER failed (internal server error)"))
+            Err(ArrowError::arrow_server_error(
+                "Arrow REGISTER failed (internal server error)",
+            ))
         } else {
             Err(ArrowError::other("Arrow REGISTER failed (unknown error)"))
         }
@@ -362,16 +338,16 @@ impl ArrowClientContext {
     /// Process a given PING message.
     fn process_ping_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
         if self.state != ProtocolState::Established {
-            return Err(ArrowError::other("cannot handle PING message in the Handshake state"))
+            return Err(ArrowError::other(
+                "cannot handle PING message in the Handshake state",
+            ));
         }
 
         let header = msg.header();
 
         log_debug!(self.logger, "sending an ACK message...");
 
-        let ack = self.cmsg_factory.ack(
-            header.msg_id,
-            0x00);
+        let ack = self.cmsg_factory.ack(header.msg_id, 0x00);
 
         self.send_control_message(ack);
 
@@ -381,15 +357,14 @@ impl ArrowClientContext {
     /// Process a given HUP message.
     fn process_hup_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
         if self.state != ProtocolState::Established {
-            return Err(ArrowError::other("cannot handle HUP message in the Handshake state"))
+            return Err(ArrowError::other(
+                "cannot handle HUP message in the Handshake state",
+            ));
         }
 
-        let hup = msg.body::<HupMessage>()
-            .expect("HUP message expected");
+        let hup = msg.body::<HupMessage>().expect("HUP message expected");
 
-        self.sessions.close(
-            hup.session_id,
-            hup.error_code);
+        self.sessions.close(hup.session_id, hup.error_code);
 
         Ok(())
     }
@@ -397,10 +372,13 @@ impl ArrowClientContext {
     /// Process a given REDIRECT message.
     fn process_redirect_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
         if self.state != ProtocolState::Established {
-            return Err(ArrowError::other("cannot handle REDIRECT message in the Handshake state"))
+            return Err(ArrowError::other(
+                "cannot handle REDIRECT message in the Handshake state",
+            ));
         }
 
-        let msg = msg.body::<RedirectMessage>()
+        let msg = msg
+            .body::<RedirectMessage>()
             .expect("REDIRECT message expected");
 
         self.redirect = Some(msg.target.clone());
@@ -416,7 +394,9 @@ impl ArrowClientContext {
     /// Process a given GET_STATUS message.
     fn process_get_status_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
         if self.state != ProtocolState::Established {
-            return Err(ArrowError::other("cannot handle GET_STATUS message in the Handshake state"))
+            return Err(ArrowError::other(
+                "cannot handle GET_STATUS message in the Handshake state",
+            ));
         }
 
         let header = msg.header();
@@ -429,10 +409,9 @@ impl ArrowClientContext {
 
         log_debug!(self.logger, "sending a STATUS message...");
 
-        let msg = self.cmsg_factory.status(
-            header.msg_id,
-            status_flags,
-            self.sessions.len() as u32);
+        let msg = self
+            .cmsg_factory
+            .status(header.msg_id, status_flags, self.sessions.len() as u32);
 
         self.send_control_message(msg);
 
@@ -442,7 +421,9 @@ impl ArrowClientContext {
     /// Process a given GET_SCAN_REPORT message.
     fn process_get_scan_report_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
         if self.state != ProtocolState::Established {
-            return Err(ArrowError::other("cannot handle GET_SCAN_REPORT message in the Handshake state"))
+            return Err(ArrowError::other(
+                "cannot handle GET_SCAN_REPORT message in the Handshake state",
+            ));
         }
 
         let header = msg.header();
@@ -450,12 +431,11 @@ impl ArrowClientContext {
         log_debug!(self.logger, "sending a SCAN_REPORT message...");
 
         let scan_result = self.app_context.get_scan_result();
-        let svc_table   = self.app_context.get_service_table();
+        let svc_table = self.app_context.get_service_table();
 
-        let msg = self.cmsg_factory.scan_report(
-            header.msg_id,
-            scan_result,
-            &svc_table);
+        let msg = self
+            .cmsg_factory
+            .scan_report(header.msg_id, scan_result, &svc_table);
 
         self.send_control_message(msg);
 
@@ -465,7 +445,10 @@ impl ArrowClientContext {
     /// Send a given command using the underlaying command channel.
     fn process_command(&mut self, cmd: Command) -> Result<(), ArrowError> {
         if self.state != ProtocolState::Established {
-            return Err(ArrowError::other(format!("cannot handle the {:?} command in the Handshake state", cmd)))
+            return Err(ArrowError::other(format!(
+                "cannot handle the {:?} command in the Handshake state",
+                cmd
+            )));
         }
 
         self.cmd_channel.send(cmd);
@@ -476,7 +459,9 @@ impl ArrowClientContext {
     /// Process a given service request message.
     fn process_service_request_message(&mut self, msg: ArrowMessage) -> Result<(), ArrowError> {
         if self.state != ProtocolState::Established {
-            return Err(ArrowError::other("cannot handle service requests in the Handshake state"))
+            return Err(ArrowError::other(
+                "cannot handle service requests in the Handshake state",
+            ));
         }
 
         self.sessions.send(msg);
@@ -486,13 +471,13 @@ impl ArrowClientContext {
 }
 
 impl Sink for ArrowClientContext {
-    type SinkItem  = ArrowMessage;
+    type SinkItem = ArrowMessage;
     type SinkError = ArrowError;
 
     fn start_send(&mut self, msg: ArrowMessage) -> StartSend<ArrowMessage, ArrowError> {
         // ignore the message if the client has been closed
         if self.is_closed() {
-            return Ok(AsyncSink::Ready)
+            return Ok(AsyncSink::Ready);
         }
 
         let header = msg.header();
@@ -523,21 +508,23 @@ impl Sink for ArrowClientContext {
 }
 
 impl Stream for ArrowClientContext {
-    type Item  = ArrowMessage;
+    type Item = ArrowMessage;
     type Error = ArrowError;
 
     fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
         if self.ack_timeout() {
-            return Err(ArrowError::connection_error("Arrow Service connection timeout"))
+            return Err(ArrowError::connection_error(
+                "Arrow Service connection timeout",
+            ));
         } else if self.is_closed() {
-            return Ok(Async::Ready(None))
+            return Ok(Async::Ready(None));
         } else if let Some(msg) = self.messages.pop_front() {
-            return Ok(Async::Ready(Some(msg)))
+            return Ok(Async::Ready(Some(msg)));
         } else if let Async::Ready(msg) = self.sessions.poll()? {
             if msg.is_none() {
                 panic!("session manager returned end of stream")
             } else {
-                return Ok(Async::Ready(msg))
+                return Ok(Async::Ready(msg));
             }
         }
 
@@ -553,12 +540,8 @@ struct ArrowClient {
 
 impl ArrowClient {
     /// Create a new instance of Arrow Client.
-    fn new(
-        app_context: ApplicationContext,
-        cmd_channel: CommandChannel) -> ArrowClient {
-        let context = ArrowClientContext::new(
-            app_context.clone(),
-            cmd_channel);
+    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel) -> ArrowClient {
+        let context = ArrowClientContext::new(app_context.clone(), cmd_channel);
 
         let context = Arc::new(Mutex::new(context));
 
@@ -583,50 +566,38 @@ impl ArrowClient {
 
         tokio::spawn(events);
 
-        ArrowClient {
-            context: context,
-        }
+        ArrowClient { context: context }
     }
 
     /// Get redirect address (if any).
     fn get_redirect(&self) -> Option<String> {
-        self.context.lock()
-            .unwrap()
-            .get_redirect()
+        self.context.lock().unwrap().get_redirect()
     }
 }
 
 impl Sink for ArrowClient {
-    type SinkItem  = ArrowMessage;
+    type SinkItem = ArrowMessage;
     type SinkError = ArrowError;
 
     fn start_send(&mut self, msg: ArrowMessage) -> StartSend<ArrowMessage, ArrowError> {
-        self.context.lock()
-            .unwrap()
-            .start_send(msg)
+        self.context.lock().unwrap().start_send(msg)
     }
 
     fn poll_complete(&mut self) -> Poll<(), ArrowError> {
-        self.context.lock()
-            .unwrap()
-            .poll_complete()
+        self.context.lock().unwrap().poll_complete()
     }
 
     fn close(&mut self) -> Poll<(), ArrowError> {
-        self.context.lock()
-            .unwrap()
-            .close()
+        self.context.lock().unwrap().close()
     }
 }
 
 impl Stream for ArrowClient {
-    type Item  = ArrowMessage;
+    type Item = ArrowMessage;
     type Error = ArrowError;
 
     fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
-        self.context.lock()
-            .unwrap()
-            .poll()
+        self.context.lock().unwrap().poll()
     }
 }
 
@@ -634,33 +605,30 @@ impl Stream for ArrowClient {
 pub fn connect(
     app_context: ApplicationContext,
     cmd_channel: CommandChannel,
-    addr: &str) -> impl Future<Item = String, Error = ArrowError> {
+    addr: &str,
+) -> impl Future<Item = String, Error = ArrowError> {
     let addr = addr.to_string();
 
     let addr1 = addr.clone();
     let addr2 = addr.clone();
 
-    let aclient = ArrowClient::new(
-        app_context.clone(),
-        cmd_channel);
+    let aclient = ArrowClient::new(app_context.clone(), cmd_channel);
 
     let connection = get_socket_address_async(addr)
         .map_err(move |_| {
-            ArrowError::connection_error(
-                format!("failed to lookup Arrow Service {} address information", addr1)
-            )
+            ArrowError::connection_error(format!(
+                "failed to lookup Arrow Service {} address information",
+                addr1
+            ))
         })
         .and_then(|saddr| {
-            TcpStream::connect(&saddr)
-                .map_err(|err| ArrowError::connection_error(err))
+            TcpStream::connect(&saddr).map_err(|err| ArrowError::connection_error(err))
         })
         .and_then(move |socket| {
             app_context
                 .get_tls_connector()
                 .map(move |tls_connector| (socket, tls_connector))
-                .map_err(|err| ArrowError::other(
-                    format!("unable to get TLS context: {}", err)
-                ))
+                .map_err(|err| ArrowError::other(format!("unable to get TLS context: {}", err)))
         })
         .and_then(|(socket, tls_connector)| {
             tls_connector
@@ -671,9 +639,15 @@ pub fn connect(
     Timeout::new(connection, Duration::from_secs(CONNECTION_TIMEOUT))
         .map_err(move |err| {
             if err.is_elapsed() {
-                ArrowError::connection_error(format!("unable to connect to remote Arrow Service {} (connection timeout)", addr2))
+                ArrowError::connection_error(format!(
+                    "unable to connect to remote Arrow Service {} (connection timeout)",
+                    addr2
+                ))
             } else if let Some(inner) = err.into_inner() {
-                ArrowError::connection_error(format!("unable to connect to remote Arrow Service {} ({})", addr2, inner))
+                ArrowError::connection_error(format!(
+                    "unable to connect to remote Arrow Service {} ({})",
+                    addr2, inner
+                ))
             } else {
                 ArrowError::other("timer error")
             }
@@ -685,12 +659,12 @@ pub fn connect(
 
             let messages = stream.pipe(aclient);
 
-            sink.send_all(messages)
-                .and_then(|(_, pipe)| {
-                    let (_, _, context) = pipe.unpipe();
+            sink.send_all(messages).and_then(|(_, pipe)| {
+                let (_, _, context) = pipe.unpipe();
 
-                    context.get_redirect()
-                        .ok_or(ArrowError::connection_error("connection to Arrow Service lost"))
-                })
+                context.get_redirect().ok_or(ArrowError::connection_error(
+                    "connection to Arrow Service lost",
+                ))
+            })
         })
 }

@@ -14,22 +14,18 @@
 
 //! PCAP network scanner definitions.
 
-use std::ptr;
 use std::fmt;
-use std::thread;
+use std::ptr;
 use std::result;
 use std::slice;
+use std::thread;
 
 use std::error::Error;
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::ffi::CString;
 use std::fmt::{Display, Formatter};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-use net::raw::ether::packet::EtherPacket;
-
-use utils;
 
 use bytes::Bytes;
 
@@ -37,7 +33,11 @@ use libc;
 
 use libc::pollfd;
 use libc::POLLIN;
-use libc::{c_int, c_uint, c_long, c_char, c_uchar, c_void, size_t};
+use libc::{c_char, c_int, c_long, c_uchar, c_uint, c_void, size_t};
+
+use crate::utils;
+
+use crate::net::raw::ether::packet::EtherPacket;
 
 /// PCAP module error.
 #[derive(Debug)]
@@ -47,7 +47,9 @@ pub struct PcapError {
 
 impl PcapError {
     unsafe fn from_cstr(msg: *const c_char) -> PcapError {
-        PcapError { msg: utils::cstr_to_string(msg as *const _) }
+        PcapError {
+            msg: utils::cstr_to_string(msg as *const _),
+        }
     }
 
     fn from_pcap(p: pcap_t) -> PcapError {
@@ -72,18 +74,20 @@ impl Display for PcapError {
 
 impl<'a> From<&'a str> for PcapError {
     fn from(msg: &'a str) -> PcapError {
-        PcapError { msg: msg.to_string() }
+        PcapError {
+            msg: msg.to_string(),
+        }
     }
 }
 
 pub type Result<T> = result::Result<T, PcapError>;
 
 #[allow(non_camel_case_types)]
-type pcap_t      = *mut c_void;
+type pcap_t = *mut c_void;
 #[allow(non_camel_case_types)]
 type bpf_u_int32 = c_uint;
 #[allow(non_camel_case_types)]
-type time_t      = c_long;
+type time_t = c_long;
 #[allow(non_camel_case_types)]
 type suseconds_t = c_long;
 
@@ -93,30 +97,30 @@ type pcap_handler = unsafe extern "C" fn(*mut c_uchar, *const pcap_pkthdr, *cons
 #[repr(C)]
 #[allow(non_camel_case_types)]
 struct timeval {
-    tv_sec:  time_t,
+    tv_sec: time_t,
     tv_usec: suseconds_t,
 }
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
 struct pcap_pkthdr {
-    ts:     timeval,
+    ts: timeval,
     caplen: bpf_u_int32,
-    len:    bpf_u_int32,
+    len: bpf_u_int32,
 }
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
 struct bpf_program {
-    bf_len:   c_uint,
+    bf_len: c_uint,
     bf_insns: *mut c_void,
 }
 
 impl bpf_program {
     fn new() -> bpf_program {
         bpf_program {
-            bf_len:   0,
-            bf_insns: ptr::null_mut()
+            bf_len: 0,
+            bf_insns: ptr::null_mut(),
         }
     }
 }
@@ -129,17 +133,14 @@ extern "C" {
     fn pcap_set_promisc(p: pcap_t, promisc: c_int) -> c_int;
     fn pcap_set_timeout(p: pcap_t, ms: c_int) -> c_int;
     fn pcap_setnonblock(p: pcap_t, nonblock: c_int, errbuf: *mut c_char) -> c_int;
-    fn pcap_dispatch(
-        p: pcap_t,
-        cnt: c_int,
-        callback: pcap_handler,
-        misc: *mut c_uchar) -> c_int;
+    fn pcap_dispatch(p: pcap_t, cnt: c_int, callback: pcap_handler, misc: *mut c_uchar) -> c_int;
     fn pcap_compile(
         p: pcap_t,
         prog: *mut bpf_program,
         pstr: *const c_char,
         optimize: c_int,
-        netmask: bpf_u_int32) -> c_int;
+        netmask: bpf_u_int32,
+    ) -> c_int;
     fn pcap_freecode(prog: *mut bpf_program) -> c_void;
     fn pcap_setfilter(p: pcap_t, prog: *mut bpf_program) -> c_int;
     fn pcap_inject(p: pcap_t, buf: *const c_void, size: size_t) -> c_int;
@@ -149,7 +150,7 @@ extern "C" {
 /// PCAP context for synchronizing thread unsafe calls.
 struct Context;
 
-lazy_static!{
+lazy_static! {
     /// PCAP context for synchronizing thread unsafe calls.
     static ref TC: Arc<Mutex<Context>> = {
         Arc::new(Mutex::new(Context))
@@ -167,16 +168,14 @@ impl CaptureBuilder {
         let mut result = CaptureBuilder {
             capture: Capture {
                 errbuf: Box::new([0; 4096]),
-                h:      ptr::null_mut()
-            }
+                h: ptr::null_mut(),
+            },
         };
 
         let dname_cstr = CString::new(dname).unwrap();
         let dname_ptr = dname_cstr.as_ptr() as *const c_char;
         let errbuf_ptr = result.capture.errbuf.as_mut_ptr();
-        result.capture.h = unsafe {
-            pcap_create(dname_ptr, errbuf_ptr as *mut c_char)
-        };
+        result.capture.h = unsafe { pcap_create(dname_ptr, errbuf_ptr as *mut c_char) };
 
         if result.capture.h.is_null() {
             Err(unsafe { PcapError::from_cstr(errbuf_ptr as *const c_char) })
@@ -187,13 +186,17 @@ impl CaptureBuilder {
 
     /// Set promiscuous mode.
     fn promisc(self, p: bool) -> CaptureBuilder {
-        unsafe { pcap_set_promisc(self.capture.h, p as c_int); }
+        unsafe {
+            pcap_set_promisc(self.capture.h, p as c_int);
+        }
         self
     }
 
     /// Set packet buffer timeout.
     fn timeout(self, ms: i32) -> CaptureBuilder {
-        unsafe { pcap_set_timeout(self.capture.h, ms as c_int); }
+        unsafe {
+            pcap_set_timeout(self.capture.h, ms as c_int);
+        }
         self
     }
 
@@ -202,7 +205,7 @@ impl CaptureBuilder {
         let ret = unsafe { pcap_activate(self.capture.h) };
         match ret {
             0 => Ok(self.capture),
-            _ => Err(PcapError::from_pcap(self.capture.h))
+            _ => Err(PcapError::from_pcap(self.capture.h)),
         }
     }
 }
@@ -210,13 +213,15 @@ impl CaptureBuilder {
 /// PCAP capture.
 struct Capture {
     errbuf: Box<[c_char; 4096]>,
-    h:      pcap_t,
+    h: pcap_t,
 }
 
 impl Capture {
     /// Start capturing packets (at most count) and pass them to a given callback.
     fn dispatch<F>(&mut self, count: usize, callback: F) -> Result<usize>
-        where F: FnMut(&[u8]) {
+    where
+        F: FnMut(&[u8]),
+    {
         let mut callback: Box<FnMut(&[u8])> = Box::new(callback);
 
         let misc = &mut callback as *mut Box<FnMut(&[u8])>;
@@ -226,7 +231,8 @@ impl Capture {
                 self.h,
                 count as c_int,
                 capture_packet_callback,
-                misc as *mut c_uchar)
+                misc as *mut c_uchar,
+            )
         };
 
         if res < 0 {
@@ -264,7 +270,7 @@ impl Capture {
         unsafe {
             let eb = errbuf.as_mut_ptr();
             let nb = match non_blocking {
-                true  => 1,
+                true => 1,
                 false => 0,
             };
 
@@ -287,7 +293,7 @@ impl Capture {
 
             match ret {
                 0 => Ok(()),
-                _ => Err(PcapError::from_pcap(self.h))
+                _ => Err(PcapError::from_pcap(self.h)),
             }
         }
     }
@@ -295,9 +301,7 @@ impl Capture {
     /// Inject a given raw packet.
     fn inject(&mut self, data: &[u8]) -> Result<usize> {
         let ptr = data.as_ptr() as *const c_void;
-        let ret = unsafe {
-            pcap_inject(self.h, ptr, data.len() as size_t)
-        };
+        let ret = unsafe { pcap_inject(self.h, ptr, data.len() as size_t) };
 
         if ret < 0 {
             Err(PcapError::from_pcap(self.h))
@@ -308,8 +312,7 @@ impl Capture {
 
     /// Compile a given filter string.
     unsafe fn compile_filter(&mut self, f: &str) -> Result<bpf_program> {
-        let _lock = TC.lock()
-            .unwrap();
+        let _lock = TC.lock().unwrap();
 
         let f_cstr = CString::new(f).unwrap();
         let f_ptr = f_cstr.as_ptr() as *const c_char;
@@ -318,7 +321,7 @@ impl Capture {
 
         match pcap_compile(self.h, &mut prog, f_ptr, 0, 0) {
             0 => Ok(prog),
-            _ => Err(PcapError::from_pcap(self.h))
+            _ => Err(PcapError::from_pcap(self.h)),
         }
     }
 }
@@ -326,24 +329,24 @@ impl Capture {
 impl Drop for Capture {
     fn drop(&mut self) {
         if !self.h.is_null() {
-            unsafe { pcap_close(self.h); }
+            unsafe {
+                pcap_close(self.h);
+            }
         }
     }
 }
 
-unsafe impl Send for Capture {
-}
+unsafe impl Send for Capture {}
 
 unsafe extern "C" fn capture_packet_callback(
     misc: *mut c_uchar,
     header: *const pcap_pkthdr,
-    data: *const c_uchar) {
+    data: *const c_uchar,
+) {
     let callback = misc as *mut Box<FnMut(&[u8])>;
-    let header   = &*header;
+    let header = &*header;
 
-    let data = slice::from_raw_parts(
-        data as *const u8,
-        header.caplen as usize);
+    let data = slice::from_raw_parts(data as *const u8, header.caplen as usize);
 
     (*callback)(data);
 }
@@ -367,7 +370,8 @@ impl Scanner {
         &mut self,
         filter: &str,
         packet_generator: F,
-        timeout: u64) -> Result<Vec<EtherPacket>>
+        timeout: u64,
+    ) -> Result<Vec<EtherPacket>>
     where
         F: FnMut() -> Option<Bytes>,
     {
@@ -377,9 +381,7 @@ impl Scanner {
         let filter = filter.to_string();
         let ei_handle = end_indicator.clone();
 
-        let t = thread::spawn(move || {
-            packet_listener(&device, &filter, ei_handle)
-        });
+        let t = thread::spawn(move || packet_listener(&device, &filter, ei_handle));
 
         send_packets(&self.device, packet_generator)?;
 
@@ -388,7 +390,8 @@ impl Scanner {
 
         end_indicator.store(true, Ordering::SeqCst);
 
-        t.join().map_err(|_| PcapError::from("listener thread panicked"))?
+        t.join()
+            .map_err(|_| PcapError::from("listener thread panicked"))?
     }
 }
 
@@ -397,7 +400,8 @@ impl Scanner {
 fn packet_listener(
     device: &str,
     filter: &str,
-    end_indicator: Arc<AtomicBool>) -> Result<Vec<EtherPacket>> {
+    end_indicator: Arc<AtomicBool>,
+) -> Result<Vec<EtherPacket>> {
     let mut cap = CaptureBuilder::new(device)?
         .timeout(100)
         .promisc(true)
@@ -432,8 +436,7 @@ fn send_packets<F>(device: &str, mut packet_generator: F) -> Result<()>
 where
     F: FnMut() -> Option<Bytes>,
 {
-    let mut cap = CaptureBuilder::new(device)?
-        .activate()?;
+    let mut cap = CaptureBuilder::new(device)?.activate()?;
 
     while let Some(pkt) = packet_generator() {
         cap.inject(pkt.as_ref())?;

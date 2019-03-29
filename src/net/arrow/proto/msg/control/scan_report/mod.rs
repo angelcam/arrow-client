@@ -18,16 +18,14 @@ use std::mem;
 
 use bytes::BytesMut;
 
-use utils;
+use crate::utils;
 
-use net::arrow::proto::codec::Encode;
-use net::arrow::proto::msg::MessageBody;
-use net::arrow::proto::msg::control::ControlMessageBody;
-use net::arrow::proto::msg::control::SimpleServiceTable;
-
-use scanner::ScanResult;
-
-use svc_table::ServiceTable;
+use crate::net::arrow::proto::codec::Encode;
+use crate::net::arrow::proto::msg::control::ControlMessageBody;
+use crate::net::arrow::proto::msg::control::SimpleServiceTable;
+use crate::net::arrow::proto::msg::MessageBody;
+use crate::scanner::ScanResult;
+use crate::svc_table::ServiceTable;
 
 use self::host_table::HostTable;
 
@@ -57,20 +55,18 @@ impl Encode for ScanReportMessageHeader {
 
 /// SCAN_REPORT message.
 pub struct ScanReportMessage {
-    request_id:  u16,
-    host_table:  HostTable,
-    svc_table:   SimpleServiceTable,
+    request_id: u16,
+    host_table: HostTable,
+    svc_table: SimpleServiceTable,
 }
 
 impl ScanReportMessage {
     /// Create a new SCAN_REPORT message.
-    pub fn new<T>(
-        request_id: u16,
-        scan_result: ScanResult,
-        svc_table: &T) -> ScanReportMessage
-        where T: ServiceTable {
-        let hosts = scan_result.hosts()
-            .map(|host| host.clone());
+    pub fn new<T>(request_id: u16, scan_result: ScanResult, svc_table: &T) -> ScanReportMessage
+    where
+        T: ServiceTable,
+    {
+        let hosts = scan_result.hosts().map(|host| host.clone());
 
         let host_table = HostTable::from(hosts);
 
@@ -87,15 +83,14 @@ impl ScanReportMessage {
         ScanReportMessage {
             request_id: request_id,
             host_table: host_table,
-            svc_table:  svc_table,
+            svc_table: svc_table,
         }
     }
 }
 
 impl Encode for ScanReportMessage {
     fn encode(&self, buf: &mut BytesMut) {
-        ScanReportMessageHeader::from(self)
-            .encode(buf);
+        ScanReportMessageHeader::from(self).encode(buf);
 
         self.host_table.encode(buf);
         self.svc_table.encode(buf);
@@ -104,11 +99,8 @@ impl Encode for ScanReportMessage {
 
 impl MessageBody for ScanReportMessage {
     fn len(&self) -> usize {
-        mem::size_of::<ScanReportMessageHeader>()
-            + self.host_table.len()
-            + self.svc_table.len()
+        mem::size_of::<ScanReportMessageHeader>() + self.host_table.len() + self.svc_table.len()
     }
 }
 
-impl ControlMessageBody for ScanReportMessage {
-}
+impl ControlMessageBody for ScanReportMessage {}

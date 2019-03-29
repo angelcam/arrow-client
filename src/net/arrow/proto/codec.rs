@@ -16,9 +16,9 @@ use bytes::{Bytes, BytesMut};
 
 use tokio::codec::{Decoder, Encoder};
 
-use net::arrow::error::{ArrowError, ConnectionError};
-use net::arrow::proto::error::DecodeError;
-use net::arrow::proto::msg::ArrowMessage;
+use crate::net::arrow::error::{ArrowError, ConnectionError};
+use crate::net::arrow::proto::error::DecodeError;
+use crate::net::arrow::proto::msg::ArrowMessage;
 
 /// Common trait for objects that can be encoded as a sequence of bytes.
 pub trait Encode {
@@ -33,13 +33,13 @@ impl<T: AsRef<[u8]>> Encode for T {
 }
 
 /// Common trait for types that can be decoded from a sequence of bytes.
-pub trait FromBytes : Sized {
+pub trait FromBytes: Sized {
     /// Deserialize an object from a given buffer if possible.
     fn from_bytes(bytes: &[u8]) -> Result<Option<Self>, DecodeError>;
 }
 
 /// Common trait for types that can be decoded from a sequence of bytes.
-pub trait Decode : Sized {
+pub trait Decode: Sized {
     /// Deserialize an object from a given buffer if possible and drop the used data.
     fn decode(buf: &mut BytesMut) -> Result<Option<Self>, DecodeError>;
 }
@@ -48,17 +48,16 @@ pub trait Decode : Sized {
 pub struct ArrowCodec;
 
 impl Decoder for ArrowCodec {
-    type Item  = ArrowMessage;
+    type Item = ArrowMessage;
     type Error = ArrowError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        ArrowMessage::decode(src)
-            .map_err(|err| ArrowError::from(err))
+        ArrowMessage::decode(src).map_err(|err| ArrowError::from(err))
     }
 }
 
 impl Encoder for ArrowCodec {
-    type Item  = ArrowMessage;
+    type Item = ArrowMessage;
     type Error = ArrowError;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
@@ -75,8 +74,7 @@ impl Decoder for RawCodec {
     type Error = ConnectionError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let bytes = src.take()
-            .freeze();
+        let bytes = src.take().freeze();
 
         if bytes.len() > 0 {
             Ok(Some(bytes))

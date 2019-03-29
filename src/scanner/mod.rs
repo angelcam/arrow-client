@@ -17,10 +17,4 @@ pub mod discovery;
 
 pub mod result;
 
-pub use self::result::{
-    HostRecord,
-    ScanResult,
-
-    HR_FLAG_ARP,
-    HR_FLAG_ICMP,
-};
+pub use self::result::{HostRecord, ScanResult, HR_FLAG_ARP, HR_FLAG_ICMP};

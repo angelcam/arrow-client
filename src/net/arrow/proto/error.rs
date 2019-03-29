@@ -42,9 +42,7 @@ impl Display for DecodeError {
 impl From<String> for DecodeError {
     /// Create a new DecodeError from a given error string.
     fn from(msg: String) -> DecodeError {
-        DecodeError {
-            msg: msg
-        }
+        DecodeError { msg: msg }
     }
 }
 

@@ -20,22 +20,17 @@ use std::fs::File;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-use config::ApplicationConfig;
-
-use svc_table::{Service, SharedServiceTableRef};
-
-use net::tls::TlsConnector;
-use net::raw::ether::MacAddr;
-
-use scanner::ScanResult;
-
-use utils;
-
-use utils::RuntimeError;
-
-use utils::logger::{BoxLogger, Severity};
-
 use uuid::Uuid;
+
+use crate::utils;
+
+use crate::config::ApplicationConfig;
+use crate::net::raw::ether::MacAddr;
+use crate::net::tls::TlsConnector;
+use crate::scanner::ScanResult;
+use crate::svc_table::{Service, SharedServiceTableRef};
+use crate::utils::logger::{BoxLogger, Severity};
+use crate::utils::RuntimeError;
 
 /// Arrow service connection state.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -49,7 +44,7 @@ impl ConnectionState {
     /// Get string representation of the state.
     fn as_str(&self) -> &str {
         match self {
-            &ConnectionState::Connected    => "connected",
+            &ConnectionState::Connected => "connected",
             &ConnectionState::Disconnected => "disconnected",
             &ConnectionState::Unauthorized => "unauthorized",
         }
@@ -64,22 +59,22 @@ impl Display for ConnectionState {
 
 /// Internal data of the application context.
 struct ApplicationContextData {
-    logger:      BoxLogger,
-    config:      ApplicationConfig,
-    scanning:    bool,
+    logger: BoxLogger,
+    config: ApplicationConfig,
+    scanning: bool,
     scan_result: ScanResult,
-    conn_state:  ConnectionState,
+    conn_state: ConnectionState,
 }
 
 impl ApplicationContextData {
     /// Take a given application config and create application context data.
     fn new(config: ApplicationConfig) -> ApplicationContextData {
         ApplicationContextData {
-            logger:      config.get_logger(),
-            config:      config,
-            scanning:    false,
+            logger: config.get_logger(),
+            config: config,
+            scanning: false,
             scan_result: ScanResult::new(),
-            conn_state:  ConnectionState::Disconnected,
+            conn_state: ConnectionState::Disconnected,
         }
     }
 
@@ -128,7 +123,8 @@ impl ApplicationContextData {
             &mut self.logger,
             Severity::DEBUG,
             "unable to save current connection state",
-            res);
+            res,
+        );
     }
 
     /// Save connection state into the file.
@@ -151,13 +147,14 @@ impl ApplicationContext {
     /// Take a given application config and create a new application context.
     pub fn new(config: ApplicationConfig) -> ApplicationContext {
         ApplicationContext {
-            data: Arc::new(Mutex::new(ApplicationContextData::new(config)))
+            data: Arc::new(Mutex::new(ApplicationContextData::new(config))),
         }
     }
 
     /// Get address of the remote Arrow Service.
     pub fn get_arrow_service_address(&self) -> String {
-        self.data.lock()
+        self.data
+            .lock()
             .unwrap()
             .get_config()
             .get_arrow_service_address()
@@ -166,47 +163,33 @@ impl ApplicationContext {
 
     /// Get Arrow Client UUID.
     pub fn get_arrow_uuid(&self) -> Uuid {
-        self.data.lock()
-            .unwrap()
-            .get_config()
-            .get_uuid()
+        self.data.lock().unwrap().get_config().get_uuid()
     }
 
     /// Get Arrow Client password.
     pub fn get_arrow_password(&self) -> Uuid {
-        self.data.lock()
-            .unwrap()
-            .get_config()
-            .get_password()
+        self.data.lock().unwrap().get_config().get_password()
     }
 
     /// Get Arrow Client MAC address.
     pub fn get_arrow_mac_address(&self) -> MacAddr {
-        self.data.lock()
-            .unwrap()
-            .get_config()
-            .get_mac_address()
+        self.data.lock().unwrap().get_config().get_mac_address()
     }
 
     /// Get network discovery settings.
     pub fn get_discovery(&self) -> bool {
-        self.data.lock()
-            .unwrap()
-            .get_config()
-            .get_discovery()
+        self.data.lock().unwrap().get_config().get_discovery()
     }
 
     /// Check if the application is in the diagnostic mode.
     pub fn get_diagnostic_mode(&self) -> bool {
-        self.data.lock()
-            .unwrap()
-            .get_config()
-            .get_diagnostic_mode()
+        self.data.lock().unwrap().get_config().get_diagnostic_mode()
     }
 
     /// Get path to a file containing RTSP paths for the network scanner.
     pub fn get_rtsp_paths_file(&self) -> String {
-        self.data.lock()
+        self.data
+            .lock()
             .unwrap()
             .get_config()
             .get_rtsp_paths_file()
@@ -215,7 +198,8 @@ impl ApplicationContext {
 
     /// Get path to a file containing MJPEG paths for the network scanner.
     pub fn get_mjpeg_paths_file(&self) -> String {
-        self.data.lock()
+        self.data
+            .lock()
             .unwrap()
             .get_config()
             .get_mjpeg_paths_file()
@@ -224,59 +208,46 @@ impl ApplicationContext {
 
     /// Get application logger.
     pub fn get_logger(&self) -> BoxLogger {
-        self.data.lock()
-            .unwrap()
-            .get_logger()
+        self.data.lock().unwrap().get_logger()
     }
 
     /// Get TLS connector for a given server hostname.
     pub fn get_tls_connector(&self) -> Result<TlsConnector, RuntimeError> {
-        self.data.lock()
-            .unwrap()
-            .get_config()
-            .get_tls_connector()
+        self.data.lock().unwrap().get_config().get_tls_connector()
     }
 
     /// Set the state of the network scanner thread.
     pub fn set_scanning(&mut self, scanning: bool) {
-        self.data.lock()
-            .unwrap()
-            .set_scanning(scanning)
+        self.data.lock().unwrap().set_scanning(scanning)
     }
 
     /// Check if the network scanner thread is running right now.
     pub fn is_scanning(&self) -> bool {
-        self.data.lock()
-            .unwrap()
-            .is_scanning()
+        self.data.lock().unwrap().is_scanning()
     }
 
     /// Get the last scan result.
     pub fn get_scan_result(&self) -> ScanResult {
-        self.data.lock()
-            .unwrap()
-            .get_scan_result()
+        self.data.lock().unwrap().get_scan_result()
     }
 
     /// Set last scan result.
     pub fn set_scan_result(&mut self, result: ScanResult) {
-        self.data.lock()
-            .unwrap()
-            .set_scan_result(result)
+        self.data.lock().unwrap().set_scan_result(result)
     }
 
     /// Get read-only reference to the service table.
     pub fn get_service_table(&self) -> SharedServiceTableRef {
-        self.data.lock()
-            .unwrap()
-            .get_config()
-            .get_service_table()
+        self.data.lock().unwrap().get_config().get_service_table()
     }
 
     /// Update service table. Add all given services into the table and update active services.
     pub fn update_service_table<I>(&mut self, services: I)
-        where I: IntoIterator<Item=Service> {
-        self.data.lock()
+    where
+        I: IntoIterator<Item = Service>,
+    {
+        self.data
+            .lock()
             .unwrap()
             .get_config_mut()
             .update_service_table(services)
@@ -284,7 +255,8 @@ impl ApplicationContext {
 
     /// Reset service table.
     pub fn reset_service_table(&mut self) {
-        self.data.lock()
+        self.data
+            .lock()
             .unwrap()
             .get_config_mut()
             .reset_service_table()
@@ -292,8 +264,6 @@ impl ApplicationContext {
 
     /// Set connection state.
     pub fn set_connection_state(&mut self, state: ConnectionState) {
-        self.data.lock()
-            .unwrap()
-            .set_connection_state(state)
+        self.data.lock().unwrap().set_connection_state(state)
     }
 }

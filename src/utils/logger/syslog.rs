@@ -19,19 +19,19 @@ use std::ptr;
 use std::ffi::CString;
 use std::sync::{Once, ONCE_INIT};
 
-use utils::logger::{Logger, Severity};
-
 use libc::{c_char, c_int, c_void};
 
-const LOG_PID:     c_int = 0x01;
-const LOG_CONS:    c_int = 0x02;
+use crate::utils::logger::{Logger, Severity};
 
-const LOG_USER:    c_int = 0x08;
+const LOG_PID: c_int = 0x01;
+const LOG_CONS: c_int = 0x02;
 
-const LOG_ERR:     c_int = 3;
+const LOG_USER: c_int = 0x08;
+
+const LOG_ERR: c_int = 3;
 const LOG_WARNING: c_int = 4;
-const LOG_INFO:    c_int = 6;
-const LOG_DEBUG:   c_int = 7;
+const LOG_INFO: c_int = 6;
+const LOG_DEBUG: c_int = 7;
 
 static SYSLOG_INIT: Once = ONCE_INIT;
 
@@ -54,7 +54,7 @@ pub fn new() -> Syslog {
     });
 
     Syslog {
-        level: Severity::INFO
+        level: Severity::INFO,
     }
 }
 
@@ -69,10 +69,10 @@ impl Logger for Syslog {
         if s >= self.level {
             unsafe {
                 match s {
-                    Severity::DEBUG => syslog(LOG_DEBUG,   fmt_ptr, msg_ptr),
-                    Severity::INFO  => syslog(LOG_INFO,    fmt_ptr, msg_ptr),
-                    Severity::WARN  => syslog(LOG_WARNING, fmt_ptr, msg_ptr),
-                    Severity::ERROR => syslog(LOG_ERR,     fmt_ptr, msg_ptr)
+                    Severity::DEBUG => syslog(LOG_DEBUG, fmt_ptr, msg_ptr),
+                    Severity::INFO => syslog(LOG_INFO, fmt_ptr, msg_ptr),
+                    Severity::WARN => syslog(LOG_WARNING, fmt_ptr, msg_ptr),
+                    Severity::ERROR => syslog(LOG_ERR, fmt_ptr, msg_ptr),
                 }
             };
         }

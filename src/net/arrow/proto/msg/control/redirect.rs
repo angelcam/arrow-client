@@ -16,10 +16,10 @@ use std::str;
 
 use bytes::BytesMut;
 
-use net::arrow::proto::codec::{FromBytes, Encode};
-use net::arrow::proto::msg::MessageBody;
-use net::arrow::proto::msg::control::ControlMessageBody;
-use net::arrow::proto::error::DecodeError;
+use crate::net::arrow::proto::codec::{Encode, FromBytes};
+use crate::net::arrow::proto::error::DecodeError;
+use crate::net::arrow::proto::msg::control::ControlMessageBody;
+use crate::net::arrow::proto::msg::MessageBody;
 
 /// REDIRECT message.
 pub struct RedirectMessage {
@@ -35,23 +35,23 @@ impl Encode for RedirectMessage {
 
 impl MessageBody for RedirectMessage {
     fn len(&self) -> usize {
-        self.target.as_bytes()
-            .len() + 1
+        self.target.as_bytes().len() + 1
     }
 }
 
-impl ControlMessageBody for RedirectMessage {
-}
+impl ControlMessageBody for RedirectMessage {}
 
 impl FromBytes for RedirectMessage {
     fn from_bytes(bytes: &[u8]) -> Result<Option<RedirectMessage>, DecodeError> {
         let length = bytes.len();
 
         if length == 0 || bytes[length - 1] != 0 {
-            return Err(DecodeError::from("malformed Arrow Control Protocol REDIRECT message"));
+            return Err(DecodeError::from(
+                "malformed Arrow Control Protocol REDIRECT message",
+            ));
         }
 
-        let bytes  = &bytes[..length - 1];
+        let bytes = &bytes[..length - 1];
         let target = str::from_utf8(bytes)
             .map_err(|_| DecodeError::from("malformed Arrow Control Protocol REDIRECT message"))?;
 

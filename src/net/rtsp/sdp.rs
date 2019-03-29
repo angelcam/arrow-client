@@ -17,13 +17,13 @@
 use std::fmt;
 use std::result;
 
-use std::str::FromStr;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::str::FromStr;
 
-use utils::string::reader;
+use crate::utils::string::reader;
 
-use utils::string::reader::Reader;
+use crate::utils::string::reader::Reader;
 
 /// SDP parsing error.
 #[derive(Debug, Clone)]
@@ -51,7 +51,9 @@ impl From<String> for ParseError {
 
 impl<'a> From<&'a str> for ParseError {
     fn from(msg: &'a str) -> ParseError {
-        ParseError { msg: msg.to_string() }
+        ParseError {
+            msg: msg.to_string(),
+        }
     }
 }
 
@@ -66,7 +68,7 @@ pub type Result<T> = result::Result<T, ParseError>;
 #[derive(Debug, Clone)]
 pub struct SessionDescription {
     /// SDP version.
-    pub version:            i32,
+    pub version: i32,
     /// Media descriptions.
     pub media_descriptions: Vec<MediaDescription>,
     // XXX: we ignore everything else as wo do not need it
@@ -76,8 +78,8 @@ impl SessionDescription {
     /// Create a new session description.
     fn new() -> SessionDescription {
         SessionDescription {
-            version:            0,
-            media_descriptions: Vec::new()
+            version: 0,
+            media_descriptions: Vec::new(),
         }
     }
 
@@ -95,18 +97,18 @@ pub enum MediaType {
     Text,
     Application,
     Message,
-    Other(String)
+    Other(String),
 }
 
 impl<'a> From<&'a str> for MediaType {
     fn from(s: &'a str) -> MediaType {
         match &s.to_lowercase() as &str {
-            "audio"       => MediaType::Audio,
-            "video"       => MediaType::Video,
-            "text"        => MediaType::Text,
+            "audio" => MediaType::Audio,
+            "video" => MediaType::Video,
+            "text" => MediaType::Text,
             "application" => MediaType::Application,
-            "message"     => MediaType::Message,
-            _             => MediaType::Other(s.to_string())
+            "message" => MediaType::Message,
+            _ => MediaType::Other(s.to_string()),
         }
     }
 }
@@ -117,13 +119,13 @@ pub struct MediaDescription {
     /// Media type.
     pub media_type: MediaType,
     /// Port.
-    pub port:       u16,
+    pub port: u16,
     /// Number of ports.
-    pub nb_ports:   Option<u16>,
+    pub nb_ports: Option<u16>,
     /// Protocol.
-    pub protocol:   String,
+    pub protocol: String,
     /// Formats.
-    pub formats:    Vec<String>,
+    pub formats: Vec<String>,
     /// Attributes.
     pub attributes: Vec<Attribute>,
     // XXX: we ignore the i, c, b and k lines as we don't need them
@@ -136,11 +138,12 @@ impl FromStr for MediaDescription {
         let mut reader = Reader::new(val.trim());
 
         let mtype = reader.read_word();
-        let port  = reader.read_decimal_u32()?;
+        let port = reader.read_decimal_u32()?;
 
         reader.skip_whitespace();
 
-        let c = reader.current_char()
+        let c = reader
+            .current_char()
             .ok_or(reader::ParseError::from("empty input"))?;
 
         let np;
@@ -160,18 +163,17 @@ impl FromStr for MediaDescription {
         let mut formats = Vec::new();
 
         while !reader.is_empty() {
-            let format = reader.read_word()
-                .to_string();
+            let format = reader.read_word().to_string();
 
             formats.push(format);
         }
 
         let res = MediaDescription {
             media_type: MediaType::from(mtype),
-            port:       port as u16,
-            nb_ports:   np,
-            protocol:   protocol.to_string(),
-            formats:    formats,
+            port: port as u16,
+            nb_ports: np,
+            protocol: protocol.to_string(),
+            formats: formats,
             attributes: Vec::new(),
         };
 
@@ -183,17 +185,17 @@ impl FromStr for MediaDescription {
 #[derive(Debug, Clone)]
 pub struct Attribute {
     /// Attribute name.
-    pub name:  String,
+    pub name: String,
     /// Attribute value.
-    pub value: Option<String>
+    pub value: Option<String>,
 }
 
 impl Attribute {
     /// Create a new attribute.
     pub fn new(name: &str, value: Option<&str>) -> Attribute {
         Attribute {
-            name:  name.to_string(),
-            value: value.map(|v| v.to_string())
+            name: name.to_string(),
+            value: value.map(|v| v.to_string()),
         }
     }
 }
@@ -205,9 +207,8 @@ impl FromStr for Attribute {
         let mut val = val.splitn(2, ':');
 
         if let Some(name) = val.next() {
-            let name  = name.trim();
-            let value = val.next()
-                .map(|v| v.trim());
+            let name = name.trim();
+            let value = val.next().map(|v| v.trim());
 
             Ok(Attribute::new(name, value))
         } else {
@@ -217,7 +218,7 @@ impl FromStr for Attribute {
 }
 
 /// Common trait for types that can be parsed from a given attribute.
-pub trait FromAttribute : Sized {
+pub trait FromAttribute: Sized {
     type Err;
 
     fn from_attr(attr: &Attribute) -> result::Result<Self, Self::Err>;
@@ -227,13 +228,13 @@ pub trait FromAttribute : Sized {
 #[derive(Debug, Clone)]
 pub struct RTPMap {
     /// Payload type (corresponding to one of the media formats).
-    pub payload_type:    u32,
+    pub payload_type: u32,
     /// Payload encoding.
-    pub encoding:        String,
+    pub encoding: String,
     /// Clock rate.
-    pub clock_rate:      u32,
+    pub clock_rate: u32,
     /// Encoding parameters.
-    pub encoding_params: Option<String>
+    pub encoding_params: Option<String>,
 }
 
 impl FromStr for RTPMap {
@@ -242,10 +243,8 @@ impl FromStr for RTPMap {
     fn from_str(val: &str) -> result::Result<Self, Self::Err> {
         let mut reader = Reader::new(val.trim());
 
-        let pt  = reader.read_decimal_u32()?;
-        let enc = reader.read_until(|c| c == '/')
-            .trim()
-            .to_string();
+        let pt = reader.read_decimal_u32()?;
+        let enc = reader.read_until(|c| c == '/').trim().to_string();
 
         reader.match_char('/')?;
 
@@ -259,8 +258,7 @@ impl FromStr for RTPMap {
             reader.match_char('/')?;
             reader.skip_whitespace();
 
-            let params = reader.as_str()
-                .to_string();
+            let params = reader.as_str().to_string();
 
             eps = Some(params);
         } else {
@@ -268,9 +266,9 @@ impl FromStr for RTPMap {
         }
 
         let res = RTPMap {
-            payload_type:    pt,
-            encoding:        enc,
-            clock_rate:      cr,
+            payload_type: pt,
+            encoding: enc,
+            clock_rate: cr,
             encoding_params: eps,
         };
 
@@ -286,8 +284,7 @@ impl FromAttribute for RTPMap {
 
         if key == "rtpmap" {
             if let Some(ref val) = attr.value {
-                RTPMap::from_str(val)
-                    .map_err(|_| ParseError::from("invalid attribute"))
+                RTPMap::from_str(val).map_err(|_| ParseError::from("invalid attribute"))
             } else {
                 Err(ParseError::from("invalid attribute"))
             }
@@ -299,20 +296,20 @@ impl FromAttribute for RTPMap {
 
 /// Incremental line reader. It takes both CR and LF as line separators.
 struct LineReader {
-    buffer:   Vec<u8>,
+    buffer: Vec<u8>,
     capacity: usize,
     complete: bool,
-    partial:  bool,
+    partial: bool,
 }
 
 impl LineReader {
     /// Create a new line reader with a given line length limit.
     fn new(limit: usize) -> LineReader {
         LineReader {
-            buffer:   Vec::new(),
+            buffer: Vec::new(),
             capacity: limit,
             complete: false,
-            partial:  false
+            partial: false,
         }
     }
 
@@ -335,7 +332,7 @@ impl LineReader {
         self.buffer.clear();
 
         self.complete = false;
-        self.partial  = false;
+        self.partial = false;
     }
 
     /// Append given data and return number of consumed bytes or error in case
@@ -363,18 +360,18 @@ impl LineReader {
 
 /// Line iterator (it uses the line reader).
 struct LineIterator<'a> {
-    reader:  LineReader,
+    reader: LineReader,
     content: &'a [u8],
-    offset:  usize,
+    offset: usize,
 }
 
 impl<'a> LineIterator<'a> {
     /// Create a new line iterator for a given reader and content.
     fn new(reader: LineReader, content: &'a [u8]) -> LineIterator<'a> {
         LineIterator {
-            reader:  reader,
+            reader: reader,
             content: content,
-            offset:  0,
+            offset: 0,
         }
     }
 
@@ -383,7 +380,7 @@ impl<'a> LineIterator<'a> {
     fn next(&mut self) -> Result<Option<Vec<u8>>> {
         self.reader.clear();
 
-        let content    = self.content;
+        let content = self.content;
         let mut offset = self.offset;
 
         while !self.reader.is_complete() && offset < content.len() {
@@ -392,8 +389,7 @@ impl<'a> LineIterator<'a> {
 
         self.offset = offset;
 
-        let line = self.reader.line()
-            .map(|slice| slice.to_vec());
+        let line = self.reader.line().map(|slice| slice.to_vec());
 
         Ok(line)
     }
@@ -401,17 +397,17 @@ impl<'a> LineIterator<'a> {
 
 /// Session description parser.
 struct SessionDescriptionParser {
-    sdp:  SessionDescription,
+    sdp: SessionDescription,
 }
 
 impl SessionDescriptionParser {
     /// Parse session description from a given string.
     fn parse(sdp: &[u8]) -> Result<SessionDescription> {
         let mut parser = SessionDescriptionParser {
-            sdp:  SessionDescription::new(),
+            sdp: SessionDescription::new(),
         };
 
-        let reader    = LineReader::new(4096);
+        let reader = LineReader::new(4096);
         let mut lines = LineIterator::new(reader, sdp);
 
         parser.process_lines(&mut lines)?;
@@ -420,9 +416,7 @@ impl SessionDescriptionParser {
     }
 
     /// Process SDP lines.
-    fn process_lines<'a>(
-        &mut self,
-        lines: &mut LineIterator<'a>) -> Result<()> {
+    fn process_lines<'a>(&mut self, lines: &mut LineIterator<'a>) -> Result<()> {
         while let Some(line) = lines.next()? {
             self.process_line(&line, lines)?;
         }
@@ -431,10 +425,7 @@ impl SessionDescriptionParser {
     }
 
     /// Process a given SDP line.
-    fn process_line<'a>(
-        &mut self,
-        line: &[u8],
-        lines: &mut LineIterator<'a>) -> Result<()> {
+    fn process_line<'a>(&mut self, line: &[u8], lines: &mut LineIterator<'a>) -> Result<()> {
         if let Some(first) = trim_left(line).first() {
             match *first as char {
                 'v' => self.process_version(line),
@@ -451,7 +442,7 @@ impl SessionDescriptionParser {
                 'k' => Ok(()),
                 'a' => Ok(()),
                 'm' => self.process_media_description(line, lines),
-                _   => Ok(()) // ignore unknown line types
+                _ => Ok(()), // ignore unknown line types
             }
         } else {
             Ok(())
@@ -465,13 +456,16 @@ impl SessionDescriptionParser {
         let mut reader = Reader::new(line.as_ref());
 
         reader.skip_whitespace();
-        reader.match_char('v')
+        reader
+            .match_char('v')
             .map_err(|_| ParseError::from("invalid version line"))?;
         reader.skip_whitespace();
-        reader.match_char('=')
+        reader
+            .match_char('=')
             .map_err(|_| ParseError::from("invalid version line"))?;
 
-        let val = reader.read_decimal_u32()
+        let val = reader
+            .read_decimal_u32()
             .map_err(|_| ParseError::from("invalid version line"))?;
 
         self.sdp.version = val as i32;
@@ -481,13 +475,15 @@ impl SessionDescriptionParser {
 
     /// Process SDP time description.
     fn process_time_description<'a>(
-        &mut self, _: &[u8],
-        lines: &mut LineIterator<'a>) -> Result<()> {
+        &mut self,
+        _: &[u8],
+        lines: &mut LineIterator<'a>,
+    ) -> Result<()> {
         while let Some(ref line) = lines.next()? {
             if let Some(first) = trim_left(line).first() {
                 match *first as char {
                     'r' => (),
-                    _   => self.process_line(line, lines)?
+                    _ => self.process_line(line, lines)?,
                 }
             }
         }
@@ -497,17 +493,21 @@ impl SessionDescriptionParser {
 
     /// Process SDP media description.
     fn process_media_description<'a>(
-        &mut self, line: &[u8],
-        lines: &mut LineIterator<'a>) -> Result<()> {
+        &mut self,
+        line: &[u8],
+        lines: &mut LineIterator<'a>,
+    ) -> Result<()> {
         let line = String::from_utf8_lossy(line);
 
         let mut reader = Reader::new(line.as_ref());
 
         reader.skip_whitespace();
-        reader.match_char('m')
+        reader
+            .match_char('m')
             .map_err(|_| ParseError::from("invalid media description line"))?;
         reader.skip_whitespace();
-        reader.match_char('=')
+        reader
+            .match_char('=')
             .map_err(|_| ParseError::from("invalid media description line"))?;
         reader.skip_whitespace();
 
@@ -524,7 +524,7 @@ impl SessionDescriptionParser {
                     'b' => (),
                     'k' => (),
                     'a' => self.process_media_attribute(line)?,
-                    _   => self.process_line(line, lines)?
+                    _ => self.process_line(line, lines)?,
                 }
             }
         }
@@ -539,18 +539,19 @@ impl SessionDescriptionParser {
         let mut reader = Reader::new(line.as_ref());
 
         reader.skip_whitespace();
-        reader.match_char('a')
+        reader
+            .match_char('a')
             .map_err(|_| ParseError::from("invalid media attribute line"))?;
         reader.skip_whitespace();
-        reader.match_char('=')
+        reader
+            .match_char('=')
             .map_err(|_| ParseError::from("invalid media attribute line"))?;
         reader.skip_whitespace();
 
         let attr = Attribute::from_str(reader.as_str())
             .map_err(|_| ParseError::from("invalid media attribute line"))?;
 
-        let last_md = self.sdp.media_descriptions.last_mut()
-            .unwrap();
+        let last_md = self.sdp.media_descriptions.last_mut().unwrap();
 
         last_md.attributes.push(attr);
 
@@ -590,8 +591,7 @@ mod test {
             + "a=rtpmap:96 H264/90000\n"
             + "a=recvonly";
 
-        let sdp = SessionDescription::parse(sdp.as_bytes())
-            .unwrap();
+        let sdp = SessionDescription::parse(sdp.as_bytes()).unwrap();
 
         assert_eq!(sdp.version, 0);
         assert_eq!(sdp.media_descriptions.len(), 4);
@@ -605,16 +605,14 @@ mod test {
         assert_eq!(&md1.formats as &[String], &["0"]);
         assert_eq!(md1.attributes.len(), 1);
 
-        let attr = RTPMap::from_attr(&md1.attributes[0])
-            .unwrap();
+        let attr = RTPMap::from_attr(&md1.attributes[0]).unwrap();
 
         assert_eq!(attr.payload_type, 0);
         assert_eq!(&attr.encoding, "PCMU");
         assert_eq!(attr.clock_rate, 8000);
 
-        let md2  = &sdp.media_descriptions[1];
-        let attr = RTPMap::from_attr(&md2.attributes[0])
-            .unwrap();
+        let md2 = &sdp.media_descriptions[1];
+        let attr = RTPMap::from_attr(&md2.attributes[0]).unwrap();
 
         assert_eq!(&attr.encoding_params, &Some("2".to_string()));
 
@@ -627,8 +625,7 @@ mod test {
         assert_eq!(&md3.formats as &[String], &["96"]);
         assert_eq!(md3.attributes.len(), 2);
 
-        let attr = RTPMap::from_attr(&md3.attributes[0])
-            .unwrap();
+        let attr = RTPMap::from_attr(&md3.attributes[0]).unwrap();
 
         assert_eq!(attr.payload_type, 96);
         assert_eq!(&attr.encoding, "H264");
@@ -646,8 +643,7 @@ mod test {
             + " m\t=\taudio 51372 / 9 RTP/AVP 0 1   2 \t3 \n\n\n"
             + " a = RTPmap : 96 H264 / 90000 / 7 \n";
 
-        let sdp = SessionDescription::parse(sdp.as_bytes())
-            .unwrap();
+        let sdp = SessionDescription::parse(sdp.as_bytes()).unwrap();
 
         assert_eq!(sdp.version, 5);
         assert_eq!(sdp.media_descriptions.len(), 1);
@@ -661,8 +657,7 @@ mod test {
         assert_eq!(&md.formats as &[String], &["0", "1", "2", "3"]);
         assert_eq!(md.attributes.len(), 1);
 
-        let attr = RTPMap::from_attr(&md.attributes[0])
-            .unwrap();
+        let attr = RTPMap::from_attr(&md.attributes[0]).unwrap();
 
         assert_eq!(attr.payload_type, 96);
         assert_eq!(&attr.encoding, "H264");

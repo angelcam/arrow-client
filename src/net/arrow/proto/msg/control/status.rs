@@ -16,11 +16,11 @@ use std::mem;
 
 use bytes::BytesMut;
 
-use utils;
+use crate::utils;
 
-use net::arrow::proto::codec::Encode;
-use net::arrow::proto::msg::MessageBody;
-use net::arrow::proto::msg::control::ControlMessageBody;
+use crate::net::arrow::proto::codec::Encode;
+use crate::net::arrow::proto::msg::control::ControlMessageBody;
+use crate::net::arrow::proto::msg::MessageBody;
 
 /// Status flag indicating that there is a network scan currently in progress.
 pub const STATUS_FLAG_SCAN: u32 = 0x00000001;
@@ -28,21 +28,18 @@ pub const STATUS_FLAG_SCAN: u32 = 0x00000001;
 /// STATUS message.
 #[repr(packed)]
 pub struct StatusMessage {
-    request_id:      u16,
-    status_flags:    u32,
+    request_id: u16,
+    status_flags: u32,
     active_sessions: u32,
 }
 
 impl StatusMessage {
     /// Create a new STATUS message for a given request ID, status flags and
     /// number of active sessions.
-    pub fn new(
-        request_id: u16,
-        status_flags: u32,
-        active_sessions: u32) -> StatusMessage {
+    pub fn new(request_id: u16, status_flags: u32, active_sessions: u32) -> StatusMessage {
         StatusMessage {
-            request_id:      request_id,
-            status_flags:    status_flags,
+            request_id: request_id,
+            status_flags: status_flags,
             active_sessions: active_sessions,
         }
     }
@@ -51,9 +48,9 @@ impl StatusMessage {
 impl Encode for StatusMessage {
     fn encode(&self, buf: &mut BytesMut) {
         let be_msg = StatusMessage {
-            request_id:      self.request_id.to_be(),
-            status_flags:    self.status_flags.to_be(),
-            active_sessions: self.active_sessions.to_be()
+            request_id: self.request_id.to_be(),
+            status_flags: self.status_flags.to_be(),
+            active_sessions: self.active_sessions.to_be(),
         };
 
         buf.extend_from_slice(utils::as_bytes(&be_msg))
@@ -66,5 +63,4 @@ impl MessageBody for StatusMessage {
     }
 }
 
-impl ControlMessageBody for StatusMessage {
-}
+impl ControlMessageBody for StatusMessage {}

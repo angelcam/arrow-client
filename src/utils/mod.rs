@@ -21,16 +21,16 @@ pub mod logger;
 
 pub mod string;
 
-use std::mem;
 use std::fmt;
+use std::mem;
 use std::slice;
 
 use std::any::Any;
-use std::ffi::CStr;
 use std::error::Error;
+use std::ffi::CStr;
 use std::fmt::{Debug, Display, Formatter};
 
-use utils::logger::{Logger, Severity};
+use crate::utils::logger::{Logger, Severity};
 
 /// Helper trait for getting Any reference to an object.
 pub trait AsAny {
@@ -83,33 +83,26 @@ impl<'a> From<&'a str> for RuntimeError {
 
 /// Get slice of bytes representing a given object.
 pub fn as_bytes<'a, T: Sized>(val: &'a T) -> &'a [u8] {
-    let ptr  = val as *const T;
+    let ptr = val as *const T;
     let size = mem::size_of::<T>();
-    unsafe {
-        slice::from_raw_parts(ptr as *const u8, size)
-    }
+    unsafe { slice::from_raw_parts(ptr as *const u8, size) }
 }
 
 /// Convert a given slice of Sized type instances to a slice of bytes.
 pub fn slice_as_bytes<'a, T: Sized>(data: &'a [T]) -> &'a [u8] {
-    let ptr  = data.as_ptr();
+    let ptr = data.as_ptr();
     let size = mem::size_of::<T>();
-    unsafe {
-        slice::from_raw_parts(ptr as *const u8, size * data.len())
-    }
+    unsafe { slice::from_raw_parts(ptr as *const u8, size * data.len()) }
 }
 
 /// Convert a given typed pointer into a new vector (copying the dats).
-pub unsafe fn vec_from_raw_parts<T: Clone>(
-    ptr: *const T,
-    len: usize) -> Vec<T> {
-    slice::from_raw_parts(ptr, len)
-        .to_vec()
+pub unsafe fn vec_from_raw_parts<T: Clone>(ptr: *const T, len: usize) -> Vec<T> {
+    slice::from_raw_parts(ptr, len).to_vec()
 }
 
 /// Convert a given C-string pointer to a new instance of String.
 pub unsafe fn cstr_to_string(ptr: *const i8) -> String {
-    let cstr  = CStr::from_ptr(ptr as *const _);
+    let cstr = CStr::from_ptr(ptr as *const _);
     let slice = String::from_utf8_lossy(cstr.to_bytes());
     slice.to_string()
 }
@@ -119,24 +112,27 @@ pub fn result_or_log<L, T, E, M>(
     logger: &mut L,
     severity: Severity,
     msg: M,
-    res: Result<T, E>) -> Option<T>
-    where E: Error + Debug,
-          L: Logger,
-          M: Display {
+    res: Result<T, E>,
+) -> Option<T>
+where
+    E: Error + Debug,
+    L: Logger,
+    M: Display,
+{
     match res {
         Err(err) => {
             log!(logger, severity, "{} ({})", msg, err);
             None
-        },
-        Ok(res)  => Some(res)
+        }
+        Ok(res) => Some(res),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::logger::*;
     use std::ffi::CString;
-    use utils::logger::*;
 
     /// This logger does nothing but holds the severity level.
     #[derive(Debug, Copy, Clone)]
@@ -148,14 +144,13 @@ mod tests {
         /// Create a new dummy logger.
         pub fn new() -> DummyLogger {
             DummyLogger {
-                level: Severity::INFO
+                level: Severity::INFO,
             }
         }
     }
 
     impl Logger for DummyLogger {
-        fn log(&mut self, _: &str, _: u32, _: Severity, _: &str) {
-        }
+        fn log(&mut self, _: &str, _: u32, _: Severity, _: &str) {}
 
         fn set_level(&mut self, s: Severity) {
             self.level = s;
@@ -175,9 +170,9 @@ mod tests {
 
     #[test]
     fn test_vec_from_raw_parts() {
-        let val  = TestType { b1: 1, b2: 2 };
-        let vec  = vec![val, val];
-        let ptr  = vec.as_ptr();
+        let val = TestType { b1: 1, b2: 2 };
+        let vec = vec![val, val];
+        let ptr = vec.as_ptr();
         let vec2 = unsafe { vec_from_raw_parts(ptr, vec.len()) };
 
         assert_eq!(vec, vec2);
@@ -196,13 +191,24 @@ mod tests {
     fn test_result_or_log() {
         let mut logger = DummyLogger::new();
 
-        assert_eq!(Some(1),
+        assert_eq!(
+            Some(1),
             result_or_log::<DummyLogger, i32, RuntimeError, &'static str>(
-            &mut logger, Severity::WARN, "", Ok(1)));
+                &mut logger,
+                Severity::WARN,
+                "",
+                Ok(1)
+            )
+        );
 
-        assert_eq!(None,
+        assert_eq!(
+            None,
             result_or_log::<DummyLogger, i32, RuntimeError, &'static str>(
-            &mut logger, Severity::WARN, "",
-            Err(RuntimeError::from("foo"))));
+                &mut logger,
+                Severity::WARN,
+                "",
+                Err(RuntimeError::from("foo"))
+            )
+        );
     }
 }

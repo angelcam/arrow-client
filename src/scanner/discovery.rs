@@ -12,17 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-///! Network scanner for RTSP streams.
-
-use std::io;
 use std::fmt;
+///! Network scanner for RTSP streams.
+use std::io;
 use std::result;
 
-use std::fs::File;
-use std::error::Error;
 use std::collections::{HashMap, HashSet};
-use std::io::{BufReader, BufRead};
+use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -34,40 +33,28 @@ use futures::{Future, Poll, Stream};
 
 use tokio;
 
-use net::raw::pcap;
+use crate::net::raw::pcap;
 
-use net::http::Request as HttpRequest;
-use net::http::Response as HttpResponse;
-use net::rtsp::Request as RtspRequest;
-use net::rtsp::Response as RtspResponse;
-use net::rtsp::sdp::{SessionDescription, MediaType, RTPMap, FromAttribute};
-use net::raw::arp::scanner::Ipv4ArpScanner;
-use net::raw::devices::EthernetDevice;
-use net::raw::ether::MacAddr;
-use net::raw::icmp::scanner::IcmpScanner;
-use net::raw::tcp::scanner::{TcpPortScanner, PortCollection};
-
-use scanner::result::{
-    ScanResult,
-
-    HR_FLAG_ARP,
-    HR_FLAG_ICMP,
-};
-
-use svc_table::{Service, ServiceType};
-
-use utils::logger::{BoxLogger, Logger};
+use crate::net::http::Request as HttpRequest;
+use crate::net::http::Response as HttpResponse;
+use crate::net::raw::arp::scanner::Ipv4ArpScanner;
+use crate::net::raw::devices::EthernetDevice;
+use crate::net::raw::ether::MacAddr;
+use crate::net::raw::icmp::scanner::IcmpScanner;
+use crate::net::raw::tcp::scanner::{PortCollection, TcpPortScanner};
+use crate::net::rtsp::sdp::{FromAttribute, MediaType, RTPMap, SessionDescription};
+use crate::net::rtsp::Request as RtspRequest;
+use crate::net::rtsp::Response as RtspResponse;
+use crate::scanner::result::{ScanResult, HR_FLAG_ARP, HR_FLAG_ICMP};
+use crate::svc_table::{Service, ServiceType};
+use crate::utils::logger::{BoxLogger, Logger};
 
 /// RTSP port candidates.
-static RTSP_PORT_CANDIDATES: &'static [u16] = &[
-      554,    88,    81,   555,  7447,
-     8554,  7070, 10554,    80,  6667
-];
+static RTSP_PORT_CANDIDATES: &'static [u16] =
+    &[554, 88, 81, 555, 7447, 8554, 7070, 10554, 80, 6667];
 
 /// HTTP port candidates.
-static HTTP_PORT_CANDIDATES: &'static [u16] = &[
-       80,    81,  8080,  8081,  8090
-];
+static HTTP_PORT_CANDIDATES: &'static [u16] = &[80, 81, 8080, 8081, 8090];
 
 /// Discovery error.
 #[derive(Debug, Clone)]
@@ -119,65 +106,52 @@ pub type Result<T> = result::Result<T, DiscoveryError>;
 pub fn scan_network(
     logger: BoxLogger,
     rtsp_paths_file: &str,
-    mjpeg_paths_file: &str) -> Result<ScanResult> {
+    mjpeg_paths_file: &str,
+) -> Result<ScanResult> {
     let mut runtime = tokio::runtime::current_thread::Runtime::new()
-        .map_err(|err| DiscoveryError::from(
-            format!("Asyn IO error: {}", err)
-        ))?;
+        .map_err(|err| DiscoveryError::from(format!("Asyn IO error: {}", err)))?;
 
-    let context = Context::new(
-        logger.clone(),
-        rtsp_paths_file,
-        mjpeg_paths_file)?;
+    let context = Context::new(logger.clone(), rtsp_paths_file, mjpeg_paths_file)?;
 
     let rtsp_port_priorities = context.get_rtsp_port_priorities();
     let http_port_priorities = context.get_http_port_priorities();
 
     let mut report = find_open_ports(context.clone());
 
-    let rtsp_services = runtime.block_on(
-        find_rtsp_services(
-            context.clone(),
-            report.socket_addrs()))?;
+    let rtsp_services =
+        runtime.block_on(find_rtsp_services(context.clone(), report.socket_addrs()))?;
 
-    let rtsp_services = filter_duplicit_services(
-        rtsp_services,
-        rtsp_port_priorities);
+    let rtsp_services = filter_duplicit_services(rtsp_services, rtsp_port_priorities);
 
-    let rtsp_streams = runtime.block_on(
-        find_rtsp_streams(
-            context.clone(),
-            rtsp_services.into_iter()))?;
+    let rtsp_streams = runtime.block_on(find_rtsp_streams(
+        context.clone(),
+        rtsp_services.into_iter(),
+    ))?;
 
-    let http_services = runtime.block_on(
-        find_http_services(
-            context.clone(),
-            report.socket_addrs()))?;
+    let http_services =
+        runtime.block_on(find_http_services(context.clone(), report.socket_addrs()))?;
 
-    let http_services = filter_duplicit_services(
-            http_services,
-            http_port_priorities);
+    let http_services = filter_duplicit_services(http_services, http_port_priorities);
 
     let mjpeg_services = http_services.clone();
 
-    let mjpeg_streams = runtime.block_on(
-        find_mjpeg_streams(
-            context.clone(),
-            mjpeg_services.into_iter()))?;
+    let mjpeg_streams = runtime.block_on(find_mjpeg_streams(
+        context.clone(),
+        mjpeg_services.into_iter(),
+    ))?;
 
     let mut hosts = HashSet::new();
 
     hosts.extend(get_hosts(&rtsp_streams));
     hosts.extend(get_hosts(&mjpeg_streams));
 
-    let http_services = http_services.into_iter()
-        .filter_map(|(mac, saddr)| {
-            if hosts.contains(&saddr.ip()) {
-                Some(Service::http(mac, saddr))
-            } else {
-                None
-            }
-        });
+    let http_services = http_services.into_iter().filter_map(|(mac, saddr)| {
+        if hosts.contains(&saddr.ip()) {
+            Some(Service::http(mac, saddr))
+        } else {
+            None
+        }
+    });
 
     for svc in rtsp_streams {
         report.add_service(svc);
@@ -196,15 +170,15 @@ pub fn scan_network(
 
 /// Internal data for the network scanner context.
 struct ContextData {
-    logger:               BoxLogger,
-    port_candidates:      HashSet<u16>,
+    logger: BoxLogger,
+    port_candidates: HashSet<u16>,
     rtsp_port_candidates: HashSet<u16>,
     http_port_candidates: HashSet<u16>,
     rtsp_port_priorities: HashMap<u16, usize>,
     http_port_priorities: HashMap<u16, usize>,
-    rtsp_paths:           Arc<Vec<String>>,
-    mjpeg_paths:          Arc<Vec<String>>,
-    request_timeout:      Duration,
+    rtsp_paths: Arc<Vec<String>>,
+    mjpeg_paths: Arc<Vec<String>>,
+    request_timeout: Duration,
 }
 
 impl ContextData {
@@ -212,8 +186,9 @@ impl ContextData {
     fn new(
         logger: BoxLogger,
         rtsp_paths_file: &str,
-        mjpeg_paths_file: &str) -> Result<ContextData> {
-        let rtsp_paths  = load_paths(rtsp_paths_file)?;
+        mjpeg_paths_file: &str,
+    ) -> Result<ContextData> {
+        let rtsp_paths = load_paths(rtsp_paths_file)?;
         let mjpeg_paths = load_paths(mjpeg_paths_file)?;
 
         let mut port_candidates = HashSet::<u16>::new();
@@ -236,9 +211,9 @@ impl ContextData {
             http_port_candidates: http_port_candidates,
             rtsp_port_priorities: rtsp_port_priorities,
             http_port_priorities: http_port_priorities,
-            rtsp_paths:           Arc::new(rtsp_paths),
-            mjpeg_paths:          Arc::new(mjpeg_paths),
-            request_timeout:      Duration::from_millis(2000),
+            rtsp_paths: Arc::new(rtsp_paths),
+            mjpeg_paths: Arc::new(mjpeg_paths),
+            request_timeout: Duration::from_millis(2000),
         };
 
         Ok(cdata)
@@ -247,8 +222,8 @@ impl ContextData {
 
 /// Helper function for loading all path variants from a given file.
 fn load_paths(file: &str) -> Result<Vec<String>> {
-    let file      = File::open(file)?;
-    let breader   = BufReader::new(file);
+    let file = File::open(file)?;
+    let breader = BufReader::new(file);
     let mut paths = Vec::new();
 
     for line in breader.lines() {
@@ -284,14 +259,8 @@ struct Context {
 
 impl Context {
     /// Create a new network scanner context.
-    fn new(
-        logger: BoxLogger,
-        rtsp_paths_file: &str,
-        mjpeg_paths_file: &str) -> Result<Context> {
-        let data = ContextData::new(
-            logger,
-            rtsp_paths_file,
-            mjpeg_paths_file)?;
+    fn new(logger: BoxLogger, rtsp_paths_file: &str, mjpeg_paths_file: &str) -> Result<Context> {
+        let data = ContextData::new(logger, rtsp_paths_file, mjpeg_paths_file)?;
 
         let context = Context {
             data: Arc::new(data),
@@ -359,7 +328,12 @@ fn find_open_ports(scanner: Context) -> ScanResult {
         let res = find_open_ports_in_network(scanner.clone(), &dev);
 
         if let Err(err) = res {
-            log_warn!(&mut logger, "unable to find open ports in local network on interface {}: {}", dev.name, err);
+            log_warn!(
+                &mut logger,
+                "unable to find open ports in local network on interface {}: {}",
+                dev.name,
+                err
+            );
         } else if let Ok(res) = res {
             report.merge(res);
         }
@@ -369,19 +343,25 @@ fn find_open_ports(scanner: Context) -> ScanResult {
 }
 
 /// Find open ports on all available hosts within a given network.
-fn find_open_ports_in_network(
-    context: Context,
-    device: &EthernetDevice) -> Result<ScanResult> {
+fn find_open_ports_in_network(context: Context, device: &EthernetDevice) -> Result<ScanResult> {
     let mut logger = context.get_logger();
 
     let mut report = ScanResult::new();
 
-    log_debug!(&mut logger, "running ARP scan in local network on interface {}", device.name);
+    log_debug!(
+        &mut logger,
+        "running ARP scan in local network on interface {}",
+        device.name
+    );
     for (mac, ip) in Ipv4ArpScanner::scan_device(device)? {
         report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ARP);
     }
 
-    log_debug!(&mut logger, "running ICMP echo scan in local network on interface {}", device.name);
+    log_debug!(
+        &mut logger,
+        "running ICMP echo scan in local network on interface {}",
+        device.name
+    );
     for (mac, ip) in IcmpScanner::scan_device(device)? {
         report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ICMP);
     }
@@ -389,8 +369,7 @@ fn find_open_ports_in_network(
     let open_ports;
 
     {
-        let hosts = report.hosts()
-            .map(|host| (host.mac, host.ip));
+        let hosts = report.hosts().map(|host| (host.mac, host.ip));
 
         open_ports = find_open_ports_on_hosts(context, device, hosts)?;
     }
@@ -406,24 +385,27 @@ fn find_open_ports_in_network(
 fn find_open_ports_on_hosts<I>(
     context: Context,
     device: &EthernetDevice,
-    hosts: I) -> Result<Vec<(MacAddr, SocketAddr)>>
-    where I: IntoIterator<Item=(MacAddr, IpAddr)> {
+    hosts: I,
+) -> Result<Vec<(MacAddr, SocketAddr)>>
+where
+    I: IntoIterator<Item = (MacAddr, IpAddr)>,
+{
     let mut logger = context.get_logger();
 
-    log_debug!(&mut logger, "running TCP port scan in local network on interface {}", device.name);
+    log_debug!(
+        &mut logger,
+        "running TCP port scan in local network on interface {}",
+        device.name
+    );
 
-    let hosts = hosts.into_iter()
-        .filter_map(|(mac, ip)| match ip {
-            IpAddr::V4(ip) => Some((mac, ip)),
-            _              => None
-        });
+    let hosts = hosts.into_iter().filter_map(|(mac, ip)| match ip {
+        IpAddr::V4(ip) => Some((mac, ip)),
+        _ => None,
+    });
 
-    let candidates = context.get_port_candidates()
-        .iter()
-        .map(|port| *port);
+    let candidates = context.get_port_candidates().iter().map(|port| *port);
 
-    let ports = PortCollection::new()
-        .add_all(candidates);
+    let ports = PortCollection::new().add_all(candidates);
 
     let res = TcpPortScanner::scan_ipv4_hosts(device, hosts, &ports)?
         .into_iter()
@@ -435,13 +417,15 @@ fn find_open_ports_on_hosts<I>(
 
 /// Wrapper around a boxed future.
 struct FutureResult<T> {
-    inner: Box<Future<Item=T, Error=DiscoveryError>>,
+    inner: Box<Future<Item = T, Error = DiscoveryError>>,
 }
 
 impl<T> FutureResult<T> {
     /// Create a new future result from a given future.
     fn new<F>(fut: F) -> FutureResult<T>
-        where F: 'static + Future<Item=T, Error=DiscoveryError> {
+    where
+        F: 'static + Future<Item = T, Error = DiscoveryError>,
+    {
         FutureResult {
             inner: Box::new(fut),
         }
@@ -458,7 +442,9 @@ impl<T> Future for FutureResult<T> {
 }
 
 impl<T> From<Result<T>> for FutureResult<T>
-    where T: 'static {
+where
+    T: 'static,
+{
     fn from(result: Result<T>) -> FutureResult<T> {
         FutureResult::new(future::result(result))
     }
@@ -471,7 +457,7 @@ enum StreamType {
     Locked,
     Unsupported,
     NotFound,
-    Error
+    Error,
 }
 
 impl From<RtspResponse> for StreamType {
@@ -479,7 +465,7 @@ impl From<RtspResponse> for StreamType {
         let status_code = response.status_code();
 
         if status_code == 200 {
-             if is_supported_rtsp_service(response.body()) {
+            if is_supported_rtsp_service(response.body()) {
                 StreamType::Supported
             } else {
                 StreamType::Unsupported
@@ -500,7 +486,7 @@ impl From<HttpResponse> for StreamType {
 
         if status_code == 200 {
             if is_supported_mjpeg_service(&response) {
-                    StreamType::Supported
+                StreamType::Supported
             } else {
                 StreamType::Unsupported
             }
@@ -520,7 +506,9 @@ fn is_supported_rtsp_service(sdp: &[u8]) -> bool {
     if let Ok(sdp) = SessionDescription::parse(sdp) {
         let mut vcodecs = HashSet::new();
 
-        let video_streams = sdp.media_descriptions.into_iter()
+        let video_streams = sdp
+            .media_descriptions
+            .into_iter()
             .filter(|md| md.media_type == MediaType::Video);
 
         for md in video_streams {
@@ -531,11 +519,11 @@ fn is_supported_rtsp_service(sdp: &[u8]) -> bool {
             }
         }
 
-        vcodecs.contains("H264") ||
-            vcodecs.contains("H264-RCDO") ||
-            vcodecs.contains("H264-SVC") ||
-            vcodecs.contains("MP4V-ES") ||
-            vcodecs.contains("MPEG4-GENERIC")
+        vcodecs.contains("H264")
+            || vcodecs.contains("H264-RCDO")
+            || vcodecs.contains("H264-SVC")
+            || vcodecs.contains("MP4V-ES")
+            || vcodecs.contains("MPEG4-GENERIC")
     } else {
         false
     }
@@ -543,13 +531,14 @@ fn is_supported_rtsp_service(sdp: &[u8]) -> bool {
 
 /// Check if a given HTTP response can be interpreted as an MJPEG stream.
 fn is_supported_mjpeg_service(response: &HttpResponse) -> bool {
-    let ctype = response.get_header_field_value("content-type")
+    let ctype = response
+        .get_header_field_value("content-type")
         .unwrap_or("")
         .to_lowercase();
 
-    ctype.starts_with("multipart/x-mixed-replace") ||
-        ctype.starts_with("image/jpeg") ||
-        ctype.starts_with("image/jpg")
+    ctype.starts_with("multipart/x-mixed-replace")
+        || ctype.starts_with("image/jpeg")
+        || ctype.starts_with("image/jpg")
 }
 
 /// Check if a given service is an RTSP service.
@@ -560,46 +549,36 @@ fn is_rtsp_service(context: Context, addr: SocketAddr) -> FutureResult<bool> {
         return FutureResult::from(Ok(false));
     }
 
-    let check = request.unwrap()
+    let check = request
+        .unwrap()
         .set_request_timeout(Some(context.get_request_timeout()))
         .send()
-        .then(|result| {
-            Ok(result.is_ok())
-        });
+        .then(|result| Ok(result.is_ok()));
 
     FutureResult::new(check)
 }
 
 /// Check if a given service is an HTTP service.
 fn is_http_service(context: Context, addr: SocketAddr) -> FutureResult<bool> {
-    let check = get_http_response(context, addr, "/")
-        .then(|result| {
-            Ok(result.is_ok())
-        });
+    let check = get_http_response(context, addr, "/").then(|result| Ok(result.is_ok()));
 
     FutureResult::new(check)
 }
 
 /// Get HTTP response for a given path from a given HTTP server.
-fn get_http_response(
-    context: Context,
-    addr: SocketAddr,
-    path: &str) -> FutureResult<HttpResponse> {
+fn get_http_response(context: Context, addr: SocketAddr, path: &str) -> FutureResult<HttpResponse> {
     let request = HttpRequest::get_header(&format!("http://{}{}", addr, path))
-        .map_err(|err| DiscoveryError::from(
-            format!("HTTP client error: {}", err)
-        ));
+        .map_err(|err| DiscoveryError::from(format!("HTTP client error: {}", err)));
 
     if let Err(err) = request {
         return FutureResult::from(Err(err));
     }
 
-    let response = request.unwrap()
+    let response = request
+        .unwrap()
         .set_request_timeout(Some(context.get_request_timeout()))
         .send()
-        .map_err(|err| DiscoveryError::from(
-            format!("HTTP client error: {}", err)
-        ));
+        .map_err(|err| DiscoveryError::from(format!("HTTP client error: {}", err)));
 
     FutureResult::new(response)
 }
@@ -607,42 +586,42 @@ fn get_http_response(
 /// Find all RTSP services.
 fn find_rtsp_services<I>(
     context: Context,
-    open_ports: I) -> FutureResult<Vec<(MacAddr, SocketAddr)>>
-    where I: IntoIterator<Item=(MacAddr, SocketAddr)> {
+    open_ports: I,
+) -> FutureResult<Vec<(MacAddr, SocketAddr)>>
+where
+    I: IntoIterator<Item = (MacAddr, SocketAddr)>,
+{
     let mut logger = context.get_logger();
 
     log_debug!(&mut logger, "looking for RTSP services");
 
-    filter_services(
-        context.clone(),
-        open_ports,
-        |context, saddr| {
-            if context.is_rtsp_port_candidate(saddr.port()) {
-                is_rtsp_service(context, saddr)
-            } else {
-                FutureResult::from(Ok(false))
-            }
+    filter_services(context.clone(), open_ports, |context, saddr| {
+        if context.is_rtsp_port_candidate(saddr.port()) {
+            is_rtsp_service(context, saddr)
+        } else {
+            FutureResult::from(Ok(false))
+        }
     })
 }
 
 /// Find all HTTP services.
 fn find_http_services<I>(
     context: Context,
-    open_ports: I) -> FutureResult<Vec<(MacAddr, SocketAddr)>>
-    where I: IntoIterator<Item=(MacAddr, SocketAddr)> {
+    open_ports: I,
+) -> FutureResult<Vec<(MacAddr, SocketAddr)>>
+where
+    I: IntoIterator<Item = (MacAddr, SocketAddr)>,
+{
     let mut logger = context.get_logger();
 
     log_debug!(&mut logger, "looking for HTTP services");
 
-    filter_services(
-        context.clone(),
-        open_ports,
-        |context, saddr| {
-            if context.is_http_port_candidate(saddr.port()) {
-                is_http_service(context, saddr)
-            } else {
-                FutureResult::from(Ok(false))
-            }
+    filter_services(context.clone(), open_ports, |context, saddr| {
+        if context.is_http_port_candidate(saddr.port()) {
+            is_http_service(context, saddr)
+        } else {
+            FutureResult::from(Ok(false))
+        }
     })
 }
 
@@ -650,26 +629,29 @@ fn find_http_services<I>(
 fn filter_services<I, P>(
     context: Context,
     candidates: I,
-    predicate: P) -> FutureResult<Vec<(MacAddr, SocketAddr)>>
-    where I: IntoIterator<Item=(MacAddr, SocketAddr)>,
-          P: Fn(Context, SocketAddr) -> FutureResult<bool> {
-    let futures = candidates.into_iter()
-        .map(|(mac, saddr)| {
-            predicate(context.clone(), saddr)
-                .then(move |res| match res {
-                    Ok(res) => Ok((mac, saddr, res)),
-                    Err(_)  => Ok((mac, saddr, false)),
-                })
-        });
+    predicate: P,
+) -> FutureResult<Vec<(MacAddr, SocketAddr)>>
+where
+    I: IntoIterator<Item = (MacAddr, SocketAddr)>,
+    P: Fn(Context, SocketAddr) -> FutureResult<bool>,
+{
+    let futures = candidates.into_iter().map(|(mac, saddr)| {
+        predicate(context.clone(), saddr).then(move |res| match res {
+            Ok(res) => Ok((mac, saddr, res)),
+            Err(_) => Ok((mac, saddr, false)),
+        })
+    });
 
     let filtered = stream::futures_unordered(futures)
-        .filter_map(|(mac, saddr, res)| {
-            if res {
-                Some((mac, saddr))
-            } else {
-                None
-            }
-        })
+        .filter_map(
+            |(mac, saddr, res)| {
+                if res {
+                    Some((mac, saddr))
+                } else {
+                    None
+                }
+            },
+        )
         .collect();
 
     FutureResult::new(filtered)
@@ -678,22 +660,25 @@ fn filter_services<I, P>(
 /// Filter out duplicit services from a given list using given priorities.
 fn filter_duplicit_services<I>(
     services: I,
-    port_priorities: &HashMap<u16, usize>) -> Vec<(MacAddr, SocketAddr)>
-    where I: IntoIterator<Item=(MacAddr, SocketAddr)> {
+    port_priorities: &HashMap<u16, usize>,
+) -> Vec<(MacAddr, SocketAddr)>
+where
+    I: IntoIterator<Item = (MacAddr, SocketAddr)>,
+{
     let mut svc_map = HashMap::new();
 
     for (mac, saddr) in services {
-        let ip   = saddr.ip();
+        let ip = saddr.ip();
         let port = saddr.port();
 
         if svc_map.contains_key(&ip) {
-            let old_port = svc_map.get(&ip)
-                .map(|&(_, _, port)| port)
-                .unwrap_or(0);
-            let old_priority = port_priorities.get(&old_port)
+            let old_port = svc_map.get(&ip).map(|&(_, _, port)| port).unwrap_or(0);
+            let old_priority = port_priorities
+                .get(&old_port)
                 .map(|priority| *priority)
                 .unwrap_or(0);
-            let new_priority = port_priorities.get(&port)
+            let new_priority = port_priorities
+                .get(&port)
                 .map(|priority| *priority)
                 .unwrap_or(0);
 
@@ -705,27 +690,27 @@ fn filter_duplicit_services<I>(
         }
     }
 
-    svc_map.into_iter()
+    svc_map
+        .into_iter()
         .map(|(_, (mac, ip, port))| match ip {
             IpAddr::V4(ip) => (mac, SocketAddr::V4(SocketAddrV4::new(ip, port))),
-            IpAddr::V6(ip) => (mac, SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)))
+            IpAddr::V6(ip) => (mac, SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0))),
         })
         .collect::<_>()
 }
 
 /// Find all RTSP streams.
-fn find_rtsp_streams<I>(
-    context: Context,
-    rtsp_services: I) -> FutureResult<Vec<Service>>
-    where I: IntoIterator<Item=(MacAddr, SocketAddr)> {
+fn find_rtsp_streams<I>(context: Context, rtsp_services: I) -> FutureResult<Vec<Service>>
+where
+    I: IntoIterator<Item = (MacAddr, SocketAddr)>,
+{
     let mut logger = context.get_logger();
 
     log_debug!(&mut logger, "looking for RTSP streams");
 
-    let futures = rtsp_services.into_iter()
-        .map(|(mac, addr)| {
-            find_rtsp_stream(context.clone(), mac, addr)
-        });
+    let futures = rtsp_services
+        .into_iter()
+        .map(|(mac, addr)| find_rtsp_stream(context.clone(), mac, addr));
 
     let streams = stream::futures_unordered(futures);
 
@@ -733,10 +718,7 @@ fn find_rtsp_streams<I>(
 }
 
 /// Find the first available RTSP stream for a given RTSP service.
-fn find_rtsp_stream(
-    context: Context,
-    mac: MacAddr,
-    addr: SocketAddr) -> FutureResult<Service> {
+fn find_rtsp_stream(context: Context, mac: MacAddr, addr: SocketAddr) -> FutureResult<Service> {
     let paths = context.get_rtsp_paths();
 
     let result = Arc::new(Mutex::new(Service::unknown_rtsp(mac, addr)));
@@ -746,7 +728,7 @@ fn find_rtsp_stream(
     let stream = stream::iter_ok::<_, DiscoveryError>(0..paths.len())
         .and_then(move |index| match paths.get(index) {
             Some(path) => get_rtsp_stream(context.clone(), mac, addr, path),
-            None       => FutureResult::from(Ok(None)),
+            None => FutureResult::from(Ok(None)),
         })
         .filter_map(|svc| svc)
         .skip_while(move |svc| {
@@ -755,7 +737,7 @@ fn find_rtsp_stream(
             }
 
             match svc.service_type() {
-                ServiceType::RTSP       => Ok(false),
+                ServiceType::RTSP => Ok(false),
                 ServiceType::LockedRTSP => Ok(false),
                 _ => Ok(true),
             }
@@ -768,9 +750,7 @@ fn find_rtsp_stream(
                 Ok(Service::unknown_rtsp(mac, addr))
             }
         })
-        .or_else(move |_| {
-            Ok(Service::unknown_rtsp(mac, addr))
-        });
+        .or_else(move |_| Ok(Service::unknown_rtsp(mac, addr)));
 
     FutureResult::new(stream)
 }
@@ -780,20 +760,17 @@ fn get_rtsp_stream(
     context: Context,
     mac: MacAddr,
     addr: SocketAddr,
-    path: &str) -> FutureResult<Option<Service>> {
+    path: &str,
+) -> FutureResult<Option<Service>> {
     let path = path.to_string();
 
-    let service = get_rtsp_stream_type(context, addr, &path)
-        .map(move |status| match status {
-            StreamType::Supported =>
-                Some(Service::rtsp(mac, addr, path)),
-            StreamType::Unsupported =>
-                Some(Service::unsupported_rtsp(mac, addr, path)),
-            StreamType::Locked =>
-                Some(Service::locked_rtsp(mac, addr, None)),
+    let service = get_rtsp_stream_type(context, addr, &path).map(move |status| match status {
+        StreamType::Supported => Some(Service::rtsp(mac, addr, path)),
+        StreamType::Unsupported => Some(Service::unsupported_rtsp(mac, addr, path)),
+        StreamType::Locked => Some(Service::locked_rtsp(mac, addr, None)),
 
-            _ => None
-        });
+        _ => None,
+    });
 
     FutureResult::new(service)
 }
@@ -802,7 +779,8 @@ fn get_rtsp_stream(
 fn get_rtsp_stream_type(
     context: Context,
     addr: SocketAddr,
-    path: &str) -> FutureResult<StreamType> {
+    path: &str,
+) -> FutureResult<StreamType> {
     let path = path.to_string();
 
     let request = RtspRequest::describe(&format!("rtsp://{}{}", addr, path));
@@ -811,20 +789,18 @@ fn get_rtsp_stream_type(
         return FutureResult::from(Ok(StreamType::Error));
     }
 
-    let status = request.unwrap()
+    let status = request
+        .unwrap()
         .set_request_timeout(Some(context.get_request_timeout()))
         .send()
         .and_then(move |response| {
-            if is_hipcam_rtsp_response(&response)
-                && path != "/11" && path != "/12" {
+            if is_hipcam_rtsp_response(&response) && path != "/11" && path != "/12" {
                 Ok(StreamType::NotFound)
             } else {
                 Ok(StreamType::from(response))
             }
         })
-        .or_else(|_| {
-            Ok(StreamType::Error)
-        });
+        .or_else(|_| Ok(StreamType::Error));
 
     FutureResult::new(status)
 }
@@ -833,27 +809,25 @@ fn get_rtsp_stream_type(
 fn is_hipcam_rtsp_response(response: &RtspResponse) -> bool {
     match response.get_header_field_value("server") {
         Some("HiIpcam/V100R003 VodServer/1.0.0") => true,
-        Some("Hipcam RealServer/V1.0")           => true,
+        Some("Hipcam RealServer/V1.0") => true,
         _ => false,
     }
 }
 
 /// Find all MJPEG streams.
-fn find_mjpeg_streams<I>(
-    context: Context,
-    mjpeg_services: I) -> FutureResult<Vec<Service>>
-    where I: IntoIterator<Item=(MacAddr, SocketAddr)> {
+fn find_mjpeg_streams<I>(context: Context, mjpeg_services: I) -> FutureResult<Vec<Service>>
+where
+    I: IntoIterator<Item = (MacAddr, SocketAddr)>,
+{
     let mut logger = context.get_logger();
 
     log_debug!(&mut logger, "looking for MJPEG streams");
 
-    let futures = mjpeg_services.into_iter()
-        .map(|(mac, addr)| {
-            find_mjpeg_path(context.clone(), mac, addr)
-        });
+    let futures = mjpeg_services
+        .into_iter()
+        .map(|(mac, addr)| find_mjpeg_path(context.clone(), mac, addr));
 
-    let streams = stream::futures_unordered(futures)
-        .filter_map(|svc| svc);
+    let streams = stream::futures_unordered(futures).filter_map(|svc| svc);
 
     FutureResult::new(streams.collect())
 }
@@ -862,22 +836,19 @@ fn find_mjpeg_streams<I>(
 fn find_mjpeg_path(
     context: Context,
     mac: MacAddr,
-    addr: SocketAddr) -> FutureResult<Option<Service>> {
+    addr: SocketAddr,
+) -> FutureResult<Option<Service>> {
     let paths = context.get_mjpeg_paths();
 
     let stream = stream::iter_ok::<_, DiscoveryError>(0..paths.len())
         .and_then(move |index| match paths.get(index) {
             Some(path) => get_mjpeg_stream(context.clone(), mac, addr, path),
-            None       => FutureResult::from(Ok(None)),
+            None => FutureResult::from(Ok(None)),
         })
         .filter_map(|svc| svc)
         .into_future()
-        .and_then(|(svc, _)| {
-            Ok(svc)
-        })
-        .or_else(|_| {
-            Ok(None)
-        });
+        .and_then(|(svc, _)| Ok(svc))
+        .or_else(|_| Ok(None));
 
     FutureResult::new(stream)
 }
@@ -887,21 +858,18 @@ fn get_mjpeg_stream(
     context: Context,
     mac: MacAddr,
     addr: SocketAddr,
-    path: &str) -> FutureResult<Option<Service>> {
+    path: &str,
+) -> FutureResult<Option<Service>> {
     let path = path.to_string();
 
     let service = get_http_response(context, addr, &path)
         .map(move |response| match StreamType::from(response) {
-            StreamType::Supported =>
-                Some(Service::mjpeg(mac, addr, path)),
-            StreamType::Locked =>
-                Some(Service::locked_mjpeg(mac, addr, None)),
+            StreamType::Supported => Some(Service::mjpeg(mac, addr, path)),
+            StreamType::Locked => Some(Service::locked_mjpeg(mac, addr, None)),
 
-            _ => None
+            _ => None,
         })
-        .or_else(|_| {
-            Ok(None)
-        });
+        .or_else(|_| Ok(None));
 
     FutureResult::new(service)
 }
@@ -916,8 +884,7 @@ fn get_hosts(services: &[Service]) -> Vec<IpAddr> {
         }
     }
 
-    hosts.into_iter()
-        .collect::<_>()
+    hosts.into_iter().collect::<_>()
 }
 
 #[cfg(test)]
@@ -928,8 +895,8 @@ use std::net::Ipv4Addr;
 /// Test the service priority filtering function.
 fn test_service_filtering() {
     let ports = [554, 80];
-    let mac   = MacAddr::new(0, 0, 0, 0, 0, 0);
-    let ip    = Ipv4Addr::new(0, 0, 0, 0);
+    let mac = MacAddr::new(0, 0, 0, 0, 0, 0);
+    let ip = Ipv4Addr::new(0, 0, 0, 0);
 
     let mut services = Vec::new();
 

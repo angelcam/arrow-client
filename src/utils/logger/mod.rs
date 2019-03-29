@@ -38,26 +38,26 @@ macro_rules! log_warn {
     };
 }
 
-pub mod syslog;
-pub mod stderr;
 pub mod file;
+pub mod stderr;
+pub mod syslog;
 
 /// Log message severity.
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Severity {
     DEBUG = 0,
-    INFO  = 1,
-    WARN  = 2,
-    ERROR = 3
+    INFO = 1,
+    WARN = 2,
+    ERROR = 3,
 }
 
 const DEBUG: Severity = Severity::DEBUG;
-const INFO: Severity  = Severity::INFO;
-const WARN: Severity  = Severity::WARN;
+const INFO: Severity = Severity::INFO;
+const WARN: Severity = Severity::WARN;
 const ERROR: Severity = Severity::ERROR;
 
 /// Common trait for application loggers.
-pub trait Logger : Send {
+pub trait Logger: Send {
     /// Log a given message with a given severity.
     fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str);
 
@@ -91,12 +91,15 @@ pub trait Logger : Send {
 }
 
 /// Helper trait for implementing Clone to the BoxLogger.
-pub trait CloneableLogger : Logger {
+pub trait CloneableLogger: Logger {
     /// Clone as trait object.
     fn clone(&self) -> Box<CloneableLogger + Send + Sync>;
 }
 
-impl<T> CloneableLogger for T where T: 'static + Logger + Clone + Send + Sync {
+impl<T> CloneableLogger for T
+where
+    T: 'static + Logger + Clone + Send + Sync,
+{
     fn clone(&self) -> Box<CloneableLogger + Send + Sync> {
         Box::new(<T as Clone>::clone(self))
     }
@@ -111,19 +114,16 @@ impl BoxLogger {
     /// Create a new boxed logger.
     pub fn new<L: 'static + CloneableLogger + Send + Sync>(logger: L) -> BoxLogger {
         BoxLogger {
-            logger: Box::new(logger)
+            logger: Box::new(logger),
         }
     }
 }
 
 impl Clone for BoxLogger {
     fn clone(&self) -> BoxLogger {
-        let logger = self.logger.as_ref()
-            .clone();
+        let logger = self.logger.as_ref().clone();
 
-        BoxLogger {
-            logger: logger
-        }
+        BoxLogger { logger: logger }
     }
 }
 
@@ -154,13 +154,17 @@ mod tests {
             self.last_severity = s;
         }
 
-        fn set_level(&mut self, _: Severity) { }
-        fn get_level(&self) -> Severity { Severity::DEBUG }
+        fn set_level(&mut self, _: Severity) {}
+        fn get_level(&self) -> Severity {
+            Severity::DEBUG
+        }
     }
 
     #[test]
     fn test_logger() {
-        let mut logger = TestLogger { last_severity: Severity::DEBUG };
+        let mut logger = TestLogger {
+            last_severity: Severity::DEBUG,
+        };
 
         log_warn!(logger, "msg");
         assert_eq!(Severity::WARN, logger.last_severity);

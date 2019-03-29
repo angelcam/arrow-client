@@ -37,7 +37,7 @@ fn lib_mode(lib: &str) -> &'static str {
 
     match kind.ok().as_ref().map(|v| v.as_str()) {
         Some("0") => "dylib",
-        Some(_)   => "static",
-        None      => "dylib",
-   }
+        Some(_) => "static",
+        None => "dylib",
+    }
 }

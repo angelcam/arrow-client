@@ -14,36 +14,36 @@
 
 pub mod generic;
 
-use std::io;
 use std::fmt;
+use std::io;
 
 use std::error::Error as ErrorTrait;
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use std::time::Duration;
 
-use net;
+use bytes::BytesMut;
 
-use net::url::Url;
+use futures::{Future, IntoFuture, Poll, Sink, Stream};
+
+use tokio::codec::{Decoder, Encoder};
+use tokio::net::TcpStream;
+use tokio::timer::Timeout;
+
+use crate::net;
+
+use crate::net::url::Url;
 
 use self::generic::ChunkedBodyDecoder;
 use self::generic::FixedSizeBodyDecoder;
 use self::generic::HeaderField;
 use self::generic::MessageBodyDecoder;
+use self::generic::Request as GenericRequest;
+use self::generic::RequestBuilder as GenericRequestBuilder;
 use self::generic::Response as GenericResponse;
 use self::generic::ResponseHeader as GenericResponseHeader;
 use self::generic::ResponseHeaderDecoder as GenericResponseHeaderDecoder;
-use self::generic::Request as GenericRequest;
-use self::generic::RequestBuilder as GenericRequestBuilder;
 use self::generic::SimpleBodyDecoder;
-
-use bytes::BytesMut;
-
-use futures::{IntoFuture, Future, Poll, Sink, Stream};
-
-use tokio::codec::{Decoder, Encoder};
-use tokio::net::TcpStream;
-use tokio::timer::Timeout;
 
 /// HTTP codec error.
 #[derive(Debug, Clone)]
@@ -105,12 +105,12 @@ impl Method {
     fn name(self) -> &'static str {
         match self {
             Method::OPTIONS => "OPTIONS",
-            Method::HEAD    => "HEAD",
-            Method::GET     => "GET",
-            Method::POST    => "POST",
-            Method::PUT     => "PUT",
-            Method::DELETE  => "DELETE",
-            Method::TRACE   => "TRACE",
+            Method::HEAD => "HEAD",
+            Method::GET => "GET",
+            Method::POST => "POST",
+            Method::PUT => "PUT",
+            Method::DELETE => "DELETE",
+            Method::TRACE => "TRACE",
             Method::CONNECT => "CONNECT",
         }
     }
@@ -126,7 +126,7 @@ impl Scheme {
     /// Get default port for this URL scheme.
     fn default_port(self) -> u16 {
         match self {
-            Scheme::HTTP  => 80,
+            Scheme::HTTP => 80,
         }
     }
 }
@@ -136,7 +136,7 @@ impl FromStr for Scheme {
 
     fn from_str(method: &str) -> Result<Scheme, Error> {
         match &method.to_lowercase() as &str {
-            "http"  => Ok(Scheme::HTTP),
+            "http" => Ok(Scheme::HTTP),
             _ => Err(Error::from("invalid URL scheme")),
         }
     }
@@ -145,29 +145,26 @@ impl FromStr for Scheme {
 /// HTTP request.
 #[derive(Clone)]
 pub struct Request {
-    host:                 String,
-    port:                 u16,
-    inner:                GenericRequestBuilder,
-    timeout:              Option<Duration>,
-    max_line_length:      usize,
-    max_header_lines:     usize,
+    host: String,
+    port: u16,
+    inner: GenericRequestBuilder,
+    timeout: Option<Duration>,
+    max_line_length: usize,
+    max_header_lines: usize,
     ignore_response_body: bool,
 }
 
 impl Request {
     /// Create a new HTTP request.
     pub fn new(method: Method, url: &str, ignore_response_body: bool) -> Result<Request, Error> {
-        let url = Url::from_str(url)
-            .map_err(|_| Error::from("malformed URL"))?;
+        let url = Url::from_str(url).map_err(|_| Error::from("malformed URL"))?;
 
         let scheme = Scheme::from_str(url.scheme())?;
 
         let host = url.host();
-        let port = url.port()
-            .unwrap_or(scheme.default_port());
+        let port = url.port().unwrap_or(scheme.default_port());
 
-        let mut path = url.path()
-            .to_string();
+        let mut path = url.path().to_string();
 
         if let Some(query) = url.query() {
             path += query;
@@ -177,21 +174,17 @@ impl Request {
 
         let uagent = format!("ArrowClient/{}", app_version);
 
-        let inner = GenericRequestBuilder::new(
-                "HTTP",
-                "1.0",
-                method.name(),
-                &path)
+        let inner = GenericRequestBuilder::new("HTTP", "1.0", method.name(), &path)
             .set_header_field(("Host", url.host()))
             .set_header_field(("User-Agent", uagent));
 
         let builder = Request {
-            host:                 host.to_string(),
-            port:                 port,
-            inner:                inner,
-            timeout:              Some(Duration::from_secs(20)),
-            max_line_length:      4096,
-            max_header_lines:     1024,
+            host: host.to_string(),
+            port: port,
+            inner: inner,
+            timeout: Some(Duration::from_secs(20)),
+            max_line_length: 4096,
+            max_header_lines: 1024,
             ignore_response_body: ignore_response_body,
         };
 
@@ -211,7 +204,9 @@ impl Request {
 
     /// Set a given header field.
     pub fn set_header_field<T>(mut self, field: T) -> Request
-        where HeaderField: From<T> {
+    where
+        HeaderField: From<T>,
+    {
         self.inner = self.inner.add_header_field(field);
         self
     }
@@ -248,17 +243,20 @@ impl Request {
         let codec = ClientCodec::new(
             self.max_line_length,
             self.max_header_lines,
-            self.ignore_response_body);
+            self.ignore_response_body,
+        );
 
         // single request-response cycle
         let response = TcpStream::connect(&addr.unwrap())
             .map_err(|err| Error::from(err))
             .and_then(move |stream| {
-                codec.framed(stream)
+                codec
+                    .framed(stream)
                     .send(self.inner.build())
                     .map_err(|err| Error::from(err))
                     .and_then(|stream| {
-                        stream.into_future()
+                        stream
+                            .into_future()
                             .map_err(|(err, _)| err)
                             .and_then(|(response, _)| {
                                 response.ok_or(Error::from("server closed connection unexpectedly"))
@@ -267,16 +265,15 @@ impl Request {
             });
 
         if let Some(timeout) = timeout {
-            let response = Timeout::new(response, timeout)
-                .map_err(|err| {
-                    if err.is_elapsed() {
-                        Error::from("request timeout")
-                    } else if let Some(inner) = err.into_inner() {
-                        inner
-                    } else {
-                        Error::from("timer error")
-                    }
-                });
+            let response = Timeout::new(response, timeout).map_err(|err| {
+                if err.is_elapsed() {
+                    Error::from("request timeout")
+                } else if let Some(inner) = err.into_inner() {
+                    inner
+                } else {
+                    Error::from("timer error")
+                }
+            });
 
             FutureResponse::new(response)
         } else {
@@ -307,29 +304,24 @@ impl Response {
             }
         }
 
-        let response = Response {
-            inner: response,
-        };
+        let response = Response { inner: response };
 
         Ok(response)
     }
 
     /// Get protocol version.
     pub fn version(&self) -> &str {
-        self.inner.header()
-            .version()
+        self.inner.header().version()
     }
 
     /// Get status code.
     pub fn status_code(&self) -> u16 {
-        self.inner.header()
-            .status_code()
+        self.inner.header().status_code()
     }
 
     /// Get status line.
     pub fn status_line(&self) -> &str {
-        self.inner.header()
-            .status_line()
+        self.inner.header().status_line()
     }
 
     /// Get response body.
@@ -339,32 +331,31 @@ impl Response {
 
     /// Get header fields corresponding to a given name.
     pub fn get_header_fields(&self, name: &str) -> &[HeaderField] {
-        self.inner.header()
-            .get_header_fields(name)
+        self.inner.header().get_header_fields(name)
     }
 
     /// Get last header field of a given name.
     pub fn get_header_field(&self, name: &str) -> Option<&HeaderField> {
-        self.inner.header()
-            .get_header_field(name)
+        self.inner.header().get_header_field(name)
     }
 
     /// Get value of the last header field with a given name.
     pub fn get_header_field_value(&self, name: &str) -> Option<&str> {
-        self.inner.header()
-            .get_header_field_value(name)
+        self.inner.header().get_header_field_value(name)
     }
 }
 
 /// Future response. This struct implements the Futere trait yielding Response.
 pub struct FutureResponse {
-    inner: Box<Future<Item=Response, Error=Error>>,
+    inner: Box<Future<Item = Response, Error = Error>>,
 }
 
 impl FutureResponse {
     /// Create a new future response.
     fn new<F>(future: F) -> FutureResponse
-        where F: 'static + IntoFuture<Item=Response, Error=Error> {
+    where
+        F: 'static + IntoFuture<Item = Response, Error = Error>,
+    {
         FutureResponse {
             inner: Box::new(future.into_future()),
         }
@@ -382,10 +373,10 @@ impl Future for FutureResponse {
 
 /// HTTP client codec.
 pub struct ClientCodec {
-    hdecoder:             GenericResponseHeaderDecoder,
-    bdecoder:             Option<Box<MessageBodyDecoder>>,
-    header:               Option<GenericResponseHeader>,
-    max_line_length:      usize,
+    hdecoder: GenericResponseHeaderDecoder,
+    bdecoder: Option<Box<MessageBodyDecoder>>,
+    header: Option<GenericResponseHeader>,
+    max_line_length: usize,
     ignore_response_body: bool,
 }
 
@@ -394,16 +385,15 @@ impl ClientCodec {
     pub fn new(
         max_line_length: usize,
         max_header_lines: usize,
-        ignore_response_body: bool) -> ClientCodec {
-        let hdecoder = GenericResponseHeaderDecoder::new(
-            max_line_length,
-            max_header_lines);
+        ignore_response_body: bool,
+    ) -> ClientCodec {
+        let hdecoder = GenericResponseHeaderDecoder::new(max_line_length, max_header_lines);
 
         ClientCodec {
-            hdecoder:             hdecoder,
-            bdecoder:             None,
-            header:               None,
-            max_line_length:      max_line_length,
+            hdecoder: hdecoder,
+            bdecoder: None,
+            header: None,
+            max_line_length: max_line_length,
             ignore_response_body: ignore_response_body,
         }
     }
@@ -427,22 +417,27 @@ impl Decoder for ClientCodec {
                 } else if status_code == 304 {
                     bdecoder = Box::new(FixedSizeBodyDecoder::new(0, self.ignore_response_body));
                 } else if let Some(tenc) = header.get_header_field("transfer-encoding") {
-                    let tenc = tenc.value()
-                        .unwrap_or("")
-                        .to_lowercase();
+                    let tenc = tenc.value().unwrap_or("").to_lowercase();
 
                     if tenc == "chunked" {
-                        bdecoder = Box::new(ChunkedBodyDecoder::new(self.max_line_length, self.ignore_response_body));
+                        bdecoder = Box::new(ChunkedBodyDecoder::new(
+                            self.max_line_length,
+                            self.ignore_response_body,
+                        ));
                     } else {
                         bdecoder = Box::new(SimpleBodyDecoder::new(self.ignore_response_body));
                     }
                 } else if let Some(clength) = header.get_header_field("content-length") {
-                    let clength = clength.value()
+                    let clength = clength
+                        .value()
                         .ok_or(Error::from("missing Content-Length value"))?;
                     let clength = usize::from_str(clength)
                         .map_err(|_| Error::from("unable to decode Content-Length"))?;
 
-                    bdecoder = Box::new(FixedSizeBodyDecoder::new(clength, self.ignore_response_body));
+                    bdecoder = Box::new(FixedSizeBodyDecoder::new(
+                        clength,
+                        self.ignore_response_body,
+                    ));
                 } else {
                     bdecoder = Box::new(SimpleBodyDecoder::new(self.ignore_response_body));
                 }
@@ -454,8 +449,7 @@ impl Decoder for ClientCodec {
 
         if let Some(mut bdecoder) = self.bdecoder.take() {
             if let Some(body) = bdecoder.decode(data)? {
-                let header = self.header.take()
-                    .expect("header is missing");
+                let header = self.header.take().expect("header is missing");
 
                 let response = GenericResponse::new(header, body);
                 let response = Response::new(response)?;
@@ -480,8 +474,7 @@ impl Decoder for ClientCodec {
 
         if let Some(mut bdecoder) = self.bdecoder.take() {
             if let Some(body) = bdecoder.decode_eof(data)? {
-                let header = self.header.take()
-                    .expect("header is missing");
+                let header = self.header.take().expect("header is missing");
 
                 let response = GenericResponse::new(header, body);
                 let response = Response::new(response)?;

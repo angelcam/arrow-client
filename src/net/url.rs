@@ -39,7 +39,9 @@ impl Display for UrlParseError {
 
 impl<'a> From<&'a str> for UrlParseError {
     fn from(msg: &'a str) -> UrlParseError {
-        UrlParseError { msg: msg.to_string() }
+        UrlParseError {
+            msg: msg.to_string(),
+        }
     }
 }
 
@@ -50,15 +52,15 @@ pub type Result<T> = result::Result<T, UrlParseError>;
 #[derive(Clone)]
 pub struct Url {
     serialized: String,
-    hier:       usize,
-    netloc:     usize,
-    username:   Option<usize>,
-    password:   Option<usize>,
-    portpos:    Option<usize>,
-    port:       Option<u16>,
-    path:       Option<usize>,
-    query:      Option<usize>,
-    fragment:   Option<usize>,
+    hier: usize,
+    netloc: usize,
+    username: Option<usize>,
+    password: Option<usize>,
+    portpos: Option<usize>,
+    port: Option<u16>,
+    path: Option<usize>,
+    query: Option<usize>,
+    fragment: Option<usize>,
 }
 
 impl Url {
@@ -114,7 +116,7 @@ impl Url {
                     .map_err(|_| UrlParseError::from("invalid port"))?;
 
                 self.portpos = Some(self.netloc + ppos);
-                self.port    = Some(port);
+                self.port = Some(port);
             }
         }
 
@@ -142,7 +144,9 @@ impl Url {
             self.fragment = Some(start + delim + 1);
         }
 
-        let end = self.fragment.map(|f| f - 1)
+        let end = self
+            .fragment
+            .map(|f| f - 1)
             .unwrap_or(self.serialized.len());
 
         let path = &self.serialized[start..end];
@@ -154,16 +158,16 @@ impl Url {
 
     /// Get URL scheme.
     pub fn scheme(&self) -> &str {
-        &self.serialized[..self.hier-1]
+        &self.serialized[..self.hier - 1]
     }
 
     /// Get username.
     pub fn username(&self) -> Option<&str> {
         if let Some(uname_pos) = self.username {
             if let Some(pwd_pos) = self.password {
-                Some(&self.serialized[uname_pos..pwd_pos-1])
+                Some(&self.serialized[uname_pos..pwd_pos - 1])
             } else {
-                Some(&self.serialized[uname_pos..self.netloc-1])
+                Some(&self.serialized[uname_pos..self.netloc - 1])
             }
         } else {
             None
@@ -173,7 +177,7 @@ impl Url {
     /// Get password.
     pub fn password(&self) -> Option<&str> {
         if let Some(pwd_pos) = self.password {
-            Some(&self.serialized[pwd_pos..self.netloc-1])
+            Some(&self.serialized[pwd_pos..self.netloc - 1])
         } else {
             None
         }
@@ -182,7 +186,7 @@ impl Url {
     /// Get host.
     pub fn host(&self) -> &str {
         if let Some(portpos) = self.portpos {
-            &self.serialized[self.netloc..portpos-1]
+            &self.serialized[self.netloc..portpos - 1]
         } else if let Some(path) = self.path {
             &self.serialized[self.netloc..path]
         } else {
@@ -199,9 +203,9 @@ impl Url {
     pub fn path(&self) -> &str {
         if let Some(path) = self.path {
             if let Some(query) = self.query {
-                &self.serialized[path..query-1]
+                &self.serialized[path..query - 1]
             } else if let Some(fragment) = self.fragment {
-                &self.serialized[path..fragment-1]
+                &self.serialized[path..fragment - 1]
             } else {
                 &self.serialized[path..]
             }
@@ -214,7 +218,7 @@ impl Url {
     pub fn query(&self) -> Option<&str> {
         if let Some(query) = self.query {
             if let Some(fragment) = self.fragment {
-                Some(&self.serialized[query..fragment-1])
+                Some(&self.serialized[query..fragment - 1])
             } else {
                 Some(&self.serialized[query..])
             }
@@ -251,15 +255,15 @@ impl FromStr for Url {
     fn from_str(s: &str) -> Result<Url> {
         let mut url = Url {
             serialized: s.to_string(),
-            hier:       0,
-            netloc:     0,
-            username:   None,
-            password:   None,
-            portpos:    None,
-            port:       None,
-            path:       None,
-            query:      None,
-            fragment:   None,
+            hier: 0,
+            netloc: 0,
+            username: None,
+            password: None,
+            portpos: None,
+            port: None,
+            path: None,
+            query: None,
+            fragment: None,
         };
 
         url.init()?;
@@ -295,8 +299,7 @@ mod test {
 
     #[test]
     fn test_minimal_url() {
-        let url = Url::from_str("http://foo")
-            .unwrap();
+        let url = Url::from_str("http://foo").unwrap();
 
         assert_eq!(url.scheme(), "http");
         assert_eq!(url.username(), None);
@@ -310,8 +313,7 @@ mod test {
 
     #[test]
     fn test_empty_port() {
-        let url = Url::from_str("http://foo:12")
-            .unwrap();
+        let url = Url::from_str("http://foo:12").unwrap();
 
         assert_eq!(url.scheme(), "http");
         assert_eq!(url.username(), None);
@@ -325,8 +327,7 @@ mod test {
 
     #[test]
     fn test_empty_username() {
-        let url = Url::from_str("http://@foo/some/path")
-            .unwrap();
+        let url = Url::from_str("http://@foo/some/path").unwrap();
 
         assert_eq!(url.scheme(), "http");
         assert_eq!(url.username(), Some(""));
@@ -340,8 +341,7 @@ mod test {
 
     #[test]
     fn test_no_password() {
-        let url = Url::from_str("http://user@foo/")
-            .unwrap();
+        let url = Url::from_str("http://user@foo/").unwrap();
 
         assert_eq!(url.scheme(), "http");
         assert_eq!(url.username(), Some("user"));
@@ -355,8 +355,7 @@ mod test {
 
     #[test]
     fn test_empty_password() {
-        let url = Url::from_str("http://user:@foo/")
-            .unwrap();
+        let url = Url::from_str("http://user:@foo/").unwrap();
 
         assert_eq!(url.scheme(), "http");
         assert_eq!(url.username(), Some("user"));
@@ -370,8 +369,7 @@ mod test {
 
     #[test]
     fn test_password() {
-        let url = Url::from_str("http://user:pass@foo/")
-            .unwrap();
+        let url = Url::from_str("http://user:pass@foo/").unwrap();
 
         assert_eq!(url.scheme(), "http");
         assert_eq!(url.username(), Some("user"));
@@ -385,8 +383,7 @@ mod test {
 
     #[test]
     fn test_fragment_and_query() {
-        let url = Url::from_str("http://foo/some/path?and=query&a=b#and-fragment")
-            .unwrap();
+        let url = Url::from_str("http://foo/some/path?and=query&a=b#and-fragment").unwrap();
 
         assert_eq!(url.scheme(), "http");
         assert_eq!(url.username(), None);
@@ -400,8 +397,7 @@ mod test {
 
     #[test]
     fn test_query_alone() {
-        let url = Url::from_str("http://foo/some/path?and=query&a=b")
-            .unwrap();
+        let url = Url::from_str("http://foo/some/path?and=query&a=b").unwrap();
 
         assert_eq!(url.scheme(), "http");
         assert_eq!(url.username(), None);
@@ -415,8 +411,7 @@ mod test {
 
     #[test]
     fn test_fragment_alone() {
-        let url = Url::from_str("http://foo/some/path#and-fragment")
-            .unwrap();
+        let url = Url::from_str("http://foo/some/path#and-fragment").unwrap();
 
         assert_eq!(url.scheme(), "http");
         assert_eq!(url.username(), None);
@@ -430,8 +425,8 @@ mod test {
 
     #[test]
     fn test_full_featured_url() {
-        let url = Url::from_str("http://user:pass@foo:123/some/path?and=query&a=b#and-fragment")
-            .unwrap();
+        let url =
+            Url::from_str("http://user:pass@foo:123/some/path?and=query&a=b#and-fragment").unwrap();
 
         assert_eq!(url.scheme(), "http");
         assert_eq!(url.username(), Some("user"));

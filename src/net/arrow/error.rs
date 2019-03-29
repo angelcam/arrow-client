@@ -12,17 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io;
 use std::fmt;
+use std::io;
 use std::result;
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-use net::arrow::proto::error::DecodeError;
-use net::tls::TlsError;
-
-use utils::RuntimeError;
+use crate::net::arrow::proto::error::DecodeError;
+use crate::net::tls::TlsError;
+use crate::utils::RuntimeError;
 
 /// Arrow error kinds.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -43,47 +42,59 @@ pub enum ErrorKind {
 #[derive(Debug, Clone)]
 pub struct ArrowError {
     kind: ErrorKind,
-    msg:  String,
+    msg: String,
 }
 
 impl ArrowError {
     /// Create a new ArrowError with a given ErrorKind.
     fn new<T>(kind: ErrorKind, val: T) -> ArrowError
-        where ArrowError: From<T> {
+    where
+        ArrowError: From<T>,
+    {
         let err = ArrowError::from(val);
         ArrowError {
             kind: kind,
-            msg:  err.msg
+            msg: err.msg,
         }
     }
 
     /// Create a new connection error.
     pub fn connection_error<T>(val: T) -> ArrowError
-        where ArrowError: From<T> {
+    where
+        ArrowError: From<T>,
+    {
         ArrowError::new(ErrorKind::ConnectionError, val)
     }
 
     /// Create a new unsupported protocol version error.
     pub fn unsupported_protocol_version<T>(val: T) -> ArrowError
-        where ArrowError: From<T> {
+    where
+        ArrowError: From<T>,
+    {
         ArrowError::new(ErrorKind::UnsupportedProtocolVersion, val)
     }
 
     /// Create a new unauthorized error.
     pub fn unauthorized<T>(val: T) -> ArrowError
-        where ArrowError: From<T> {
+    where
+        ArrowError: From<T>,
+    {
         ArrowError::new(ErrorKind::Unauthorized, val)
     }
 
     /// Create a new Arrow Server error.
     pub fn arrow_server_error<T>(val: T) -> ArrowError
-        where ArrowError: From<T> {
+    where
+        ArrowError: From<T>,
+    {
         ArrowError::new(ErrorKind::ArrowServerError, val)
     }
 
     /// Create another error.
     pub fn other<T>(val: T) -> ArrowError
-        where ArrowError: From<T> {
+    where
+        ArrowError: From<T>,
+    {
         ArrowError::new(ErrorKind::Other, val)
     }
 
@@ -109,7 +120,7 @@ impl From<String> for ArrowError {
     fn from(msg: String) -> ArrowError {
         ArrowError {
             kind: ErrorKind::Other,
-            msg:  msg
+            msg: msg,
         }
     }
 }
@@ -153,7 +164,7 @@ impl From<TlsError> for ArrowError {
 /// Connection error.
 #[derive(Debug, Clone)]
 pub struct ConnectionError {
-    msg:  String,
+    msg: String,
 }
 
 impl Error for ConnectionError {
@@ -170,9 +181,7 @@ impl Display for ConnectionError {
 
 impl From<String> for ConnectionError {
     fn from(msg: String) -> ConnectionError {
-        ConnectionError {
-            msg:  msg
-        }
+        ConnectionError { msg: msg }
     }
 }
 

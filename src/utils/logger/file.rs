@@ -17,22 +17,22 @@
 use std::fs;
 use std::io;
 
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::fs::{File, OpenOptions};
 
 use time;
 
-use utils::logger::{Logger, Severity};
+use crate::utils::logger::{Logger, Severity};
 
 /// Internal logger implementation.
 struct InternalFileLogger {
-    level:     Severity,
-    path:      String,
-    file:      File,
-    written:   usize,
-    limit:     usize,
+    level: Severity,
+    path: String,
+    file: File,
+    written: usize,
+    limit: usize,
     rotations: usize,
 }
 
@@ -59,7 +59,7 @@ impl InternalFileLogger {
     fn rotate(&mut self) -> io::Result<()> {
         for i in 0..self.rotations - 1 {
             let from = format!("{}.{}", &self.path, self.rotations - i - 1);
-            let to   = format!("{}.{}", &self.path, self.rotations - i);
+            let to = format!("{}.{}", &self.path, self.rotations - i);
 
             if Path::new(&from).exists() {
                 fs::rename(&from, &to)?;
@@ -80,19 +80,21 @@ impl InternalFileLogger {
 
 impl Logger for InternalFileLogger {
     fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str) {
-        let t = time::strftime("%F %T", &time::now())
-            .unwrap();
+        let t = time::strftime("%F %T", &time::now()).unwrap();
 
         let severity = match s {
             Severity::DEBUG => "DEBUG",
-            Severity::INFO  => "INFO",
-            Severity::WARN  => "WARNING",
-            Severity::ERROR => "ERROR"
+            Severity::INFO => "INFO",
+            Severity::WARN => "WARNING",
+            Severity::ERROR => "ERROR",
         };
 
         if s >= self.level {
-            self.write_line(&format!("{} {:<7} [{}:{}] {}\n", t, severity, file, line, msg))
-                .unwrap();
+            self.write_line(&format!(
+                "{} {:<7} [{}:{}] {}\n",
+                t, severity, file, line, msg
+            ))
+            .unwrap();
         }
     }
 
@@ -116,7 +118,7 @@ pub struct FileLogger {
 pub fn new(path: &str, limit: usize, rotations: usize) -> io::Result<FileLogger> {
     let written = match Path::new(path).metadata() {
         Ok(metadata) => metadata.len(),
-        Err(_) => 0
+        Err(_) => 0,
     };
 
     let file = OpenOptions::new()
@@ -126,16 +128,16 @@ pub fn new(path: &str, limit: usize, rotations: usize) -> io::Result<FileLogger>
         .open(path)?;
 
     let logger = InternalFileLogger {
-        level:     Severity::INFO,
-        path:      path.to_string(),
-        file:      file,
-        written:   written as usize,
-        limit:     limit,
-        rotations: rotations
+        level: Severity::INFO,
+        path: path.to_string(),
+        file: file,
+        written: written as usize,
+        limit: limit,
+        rotations: rotations,
     };
 
     let logger = FileLogger {
-        shared: Arc::new(Mutex::new(logger))
+        shared: Arc::new(Mutex::new(logger)),
     };
 
     Ok(logger)
@@ -143,21 +145,15 @@ pub fn new(path: &str, limit: usize, rotations: usize) -> io::Result<FileLogger>
 
 impl Logger for FileLogger {
     fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str) {
-        self.shared.lock()
-            .unwrap()
-            .log(file, line, s, msg)
+        self.shared.lock().unwrap().log(file, line, s, msg)
     }
 
     fn set_level(&mut self, s: Severity) {
-        self.shared.lock()
-            .unwrap()
-            .set_level(s)
+        self.shared.lock().unwrap().set_level(s)
     }
 
     fn get_level(&self) -> Severity {
-        self.shared.lock()
-            .unwrap()
-            .get_level()
+        self.shared.lock().unwrap().get_level()
     }
 }
 
@@ -165,20 +161,18 @@ impl Logger for FileLogger {
 mod test {
     use super::*;
 
-    use std::fs;
     use std::ffi::OsStr;
+    use std::fs;
     use std::path::Path;
 
-    use utils::logger::Logger;
+    use crate::utils::logger::Logger;
 
     fn file_exists<P: AsRef<OsStr> + ?Sized>(file: &P) -> bool {
-        Path::new(file)
-            .exists()
+        Path::new(file).exists()
     }
 
     fn remove_file<P: AsRef<Path>>(file: P) {
-        fs::remove_file(file)
-            .ok();
+        fs::remove_file(file).ok();
     }
 
     fn remove_files() {
@@ -194,8 +188,7 @@ mod test {
     fn test_file_logger() {
         remove_files();
 
-        let mut logger = new("testlog", 100, 5)
-            .unwrap();
+        let mut logger = new("testlog", 100, 5).unwrap();
 
         log_debug!(logger, "foo");
 

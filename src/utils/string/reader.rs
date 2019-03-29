@@ -39,34 +39,35 @@ impl Display for ParseError {
 
 impl<'a> From<&'a str> for ParseError {
     fn from(msg: &'a str) -> ParseError {
-        ParseError { msg: msg.to_string() }
+        ParseError {
+            msg: msg.to_string(),
+        }
     }
 }
 
 /// Result.
 pub type Result<T> = result::Result<T, ParseError>;
 
-
 /// Custom string reader.
 pub struct Reader<'a> {
-    input:   Chars<'a>,
+    input: Chars<'a>,
     current: Option<char>,
 }
 
 impl<'a> Reader<'a> {
     /// Create a new reader for a given input.
     pub fn new<T>(input: &'a T) -> Reader<'a>
-        where T: AsRef<str> + ?Sized {
-        let input = input.as_ref()
-            .chars();
+    where
+        T: AsRef<str> + ?Sized,
+    {
+        let input = input.as_ref().chars();
 
         // We do not want to advance the input just yet. If did that the string
         // matching methods would not work.
-        let current = input.clone()
-            .next();
+        let current = input.clone().next();
 
         Reader {
-            input:   input,
+            input: input,
             current: current,
         }
     }
@@ -78,19 +79,21 @@ impl<'a> Reader<'a> {
 
     /// Get the next character or return an error if the input is empty.
     pub fn read_char(&mut self) -> Result<char> {
-        let res = self.input.next()
+        let res = self
+            .input
+            .next()
             .ok_or(ParseError::from("input is empty"))?;
 
         // Peek for the next character without advancing the input.
-        self.current = self.input.clone()
-            .next();
+        self.current = self.input.clone().next();
 
         Ok(res)
     }
 
     /// Match a given character to the input.
     pub fn match_char(&mut self, expected: char) -> Result<()> {
-        let c = self.current_char()
+        let c = self
+            .current_char()
             .ok_or(ParseError::from("input is empty"))?;
 
         if c != expected {
@@ -108,8 +111,7 @@ impl<'a> Reader<'a> {
         self.input.next();
 
         // Peek for the next character without advancing the input.
-        self.current = self.input.clone()
-            .next();
+        self.current = self.input.clone().next();
     }
 
     /// Skip whitespace characters.
@@ -133,8 +135,7 @@ impl<'a> Reader<'a> {
             self.input = rest.chars();
 
             // Peek for the next character without advancing the input.
-            self.current = self.input.clone()
-                .next();
+            self.current = self.input.clone().next();
 
             Ok(())
         } else {
@@ -171,19 +172,19 @@ impl<'a> Reader<'a> {
 
     /// Read until a given condition is true or until the end of the input.
     pub fn read_until<F>(&mut self, cnd: F) -> &'a str
-        where F: FnMut(char) -> bool {
+    where
+        F: FnMut(char) -> bool,
+    {
         let rest = self.input.as_str();
 
-        let index = rest.find(cnd)
-            .unwrap_or(rest.len());
+        let index = rest.find(cnd).unwrap_or(rest.len());
 
         let (word, rest) = rest.split_at(index);
 
         self.input = rest.chars();
 
         // Peek for the next character without advancing the input.
-        self.current = self.input.clone()
-            .next();
+        self.current = self.input.clone().next();
 
         word
     }
@@ -198,8 +199,7 @@ impl<'a> Reader<'a> {
 
     /// Check if the reader is empty.
     pub fn is_empty(&mut self) -> bool {
-        self.current_char()
-            .is_none()
+        self.current_char().is_none()
     }
 
     /// Get the rest of the input.

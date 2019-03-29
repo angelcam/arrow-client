@@ -12,30 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[cfg(feature="discovery")]
+#[cfg(feature = "discovery")]
 use std::thread;
 
 use std::thread::JoinHandle;
 
-use context::ApplicationContext;
-
-#[cfg(feature = "discovery")]
-use scanner::discovery;
-
-#[cfg(feature="discovery")]
-use utils;
-
-use utils::logger::{BoxLogger, Logger};
-
-#[cfg(feature="discovery")]
-use utils::logger::Severity;
-
 use futures::{Future, Poll, Stream};
 
 use futures::sync::mpsc;
+
 use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use time;
+
+#[cfg(feature = "discovery")]
+use crate::scanner::discovery;
+
+#[cfg(feature = "discovery")]
+use crate::utils;
+
+use crate::context::ApplicationContext;
+use crate::utils::logger::{BoxLogger, Logger};
+
+#[cfg(feature = "discovery")]
+use crate::utils::logger::Severity;
 
 /// Network scan period.
 const NETWORK_SCAN_PERIOD: f64 = 300.0;
@@ -69,25 +69,24 @@ pub struct CommandChannel {
 impl CommandChannel {
     /// Create a new command channel.
     fn new(tx: CommandSender) -> CommandChannel {
-        CommandChannel {
-            tx: tx,
-        }
+        CommandChannel { tx: tx }
     }
 
     /// Send a given command.
     pub fn send(&self, cmd: Command) {
-        self.tx.unbounded_send(Event::Command(cmd))
+        self.tx
+            .unbounded_send(Event::Command(cmd))
             .expect("broken command channel");
     }
 }
 
 /// Command handler context.
 struct CommandHandlerContext {
-    app_context:  ApplicationContext,
-    logger:       BoxLogger,
-    cmd_sender:   CommandSender,
+    app_context: ApplicationContext,
+    logger: BoxLogger,
+    cmd_sender: CommandSender,
     last_nw_scan: f64,
-    scanner:      Option<JoinHandle<()>>,
+    scanner: Option<JoinHandle<()>>,
 }
 
 impl CommandHandlerContext {
@@ -98,18 +97,18 @@ impl CommandHandlerContext {
         let t = time::precise_time_s();
 
         CommandHandlerContext {
-            app_context:  app_context,
-            logger:       logger,
-            cmd_sender:   cmd_sender,
+            app_context: app_context,
+            logger: logger,
+            cmd_sender: cmd_sender,
             last_nw_scan: t - 300.0,
-            scanner:      None,
+            scanner: None,
         }
     }
 
     /// Process a given command handler event.
     fn proces_event(&mut self, event: Event) {
         match event {
-            Event::Command(cmd)  => self.process_command(cmd),
+            Event::Command(cmd) => self.process_command(cmd),
             Event::ScanCompleted => self.scan_completed(),
         }
     }
@@ -117,8 +116,8 @@ impl CommandHandlerContext {
     /// Process a given command.
     fn process_command(&mut self, cmd: Command) {
         match cmd {
-            Command::ResetServiceTable   => self.reset_service_table(),
-            Command::ScanNetwork         => self.scan_network(),
+            Command::ResetServiceTable => self.reset_service_table(),
+            Command::ScanNetwork => self.scan_network(),
             Command::PeriodicNetworkScan => self.periodic_network_scan(),
         }
     }
@@ -137,31 +136,30 @@ impl CommandHandlerContext {
         }
     }
 
-    #[cfg(feature="discovery")]
+    #[cfg(feature = "discovery")]
     /// Trigger a network scan.
     fn scan_network(&mut self) {
-        if !self.app_context.get_discovery() ||
-            self.scanner.is_some() {
+        if !self.app_context.get_discovery() || self.scanner.is_some() {
             return;
         }
 
         let app_context = self.app_context.clone();
-        let cmd_sender  = self.cmd_sender.clone();
+        let cmd_sender = self.cmd_sender.clone();
 
         let handle = thread::spawn(move || {
             network_scanner_thread(app_context);
 
-            cmd_sender.unbounded_send(Event::ScanCompleted)
-                .unwrap();
+            cmd_sender.unbounded_send(Event::ScanCompleted).unwrap();
         });
 
         self.scanner = Some(handle);
     }
 
-    #[cfg(not(feature="discovery"))]
+    #[cfg(not(feature = "discovery"))]
     /// Dummy network scan.
     fn scan_network(&mut self) {
-        self.cmd_sender.unbounded_send(Event::ScanCompleted)
+        self.cmd_sender
+            .unbounded_send(Event::ScanCompleted)
             .unwrap();
     }
 
@@ -180,7 +178,7 @@ impl CommandHandlerContext {
 /// Command handler. It implements the future trait and it's designed to be used in combination
 /// with tokio event loop.
 pub struct CommandHandler {
-    handler: Box<Future<Item=(), Error=()> + Send + Sync>,
+    handler: Box<Future<Item = (), Error = ()> + Send + Sync>,
 }
 
 impl CommandHandler {
@@ -188,7 +186,8 @@ impl CommandHandler {
     fn new(
         app_context: ApplicationContext,
         rx: CommandReceiver,
-        tx: CommandSender) -> CommandHandler {
+        tx: CommandSender,
+    ) -> CommandHandler {
         let mut context = CommandHandlerContext::new(app_context, tx);
 
         let handler = rx.for_each(move |event| {
@@ -235,25 +234,27 @@ fn network_scanner_thread(mut app_context: ApplicationContext) {
 
     log_info!(logger, "looking for local services...");
 
-    let result = utils::result_or_log(&mut logger, Severity::WARN,
+    let result = utils::result_or_log(
+        &mut logger,
+        Severity::WARN,
         "network scanner error",
-        discovery::scan_network(
-            slogger,
-            &rtsp_paths_file,
-            &mjpeg_paths_file));
+        discovery::scan_network(slogger, &rtsp_paths_file, &mjpeg_paths_file),
+    );
 
     if let Some(result) = result {
-        let services = result.services()
-            .map(|svc| svc.clone())
-            .collect::<Vec<_>>();
+        let services = result.services().map(|svc| svc.clone()).collect::<Vec<_>>();
 
         let count = services.len();
 
         app_context.update_service_table(services);
         app_context.set_scan_result(result);
 
-        log_info!(logger, "{} services found, current service table: {}",
-            count, app_context.get_service_table());
+        log_info!(
+            logger,
+            "{} services found, current service table: {}",
+            count,
+            app_context.get_service_table()
+        );
     }
 
     app_context.set_scanning(false);

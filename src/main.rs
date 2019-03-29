@@ -14,65 +14,36 @@
 
 //! Arrow Client definitions.
 
-extern crate bytes;
-extern crate farmhash;
-extern crate libc;
-extern crate openssl;
-extern crate time;
-extern crate uuid;
-
-#[macro_use]
-extern crate json;
-
-#[cfg(feature = "discovery")]
-#[macro_use]
-extern crate lazy_static;
-
-#[macro_use]
-extern crate futures;
-
-extern crate tokio;
-
-#[cfg(feature = "threads")]
-extern crate tokio_threadpool;
-
-pub mod futures_ex;
-
-#[macro_use]
-pub mod utils;
-
-pub mod net;
-
+pub mod cmd_handler;
 pub mod config;
 pub mod context;
-pub mod cmd_handler;
+pub mod futures_ex;
+pub mod net;
 pub mod runtime;
 pub mod scanner;
 pub mod svc_table;
+pub mod utils;
 
 use std::process;
 
 use std::error::Error;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 use futures::{Future, Stream};
 
 use tokio::timer::{Delay, Interval};
 
-use config::usage;
+use crate::net::arrow;
 
-use config::ApplicationConfig;
-use context::{ApplicationContext, ConnectionState};
+use crate::cmd_handler::{Command, CommandChannel};
+use crate::config::ApplicationConfig;
+use crate::context::{ApplicationContext, ConnectionState};
+use crate::net::arrow::{ArrowError, ErrorKind};
+use crate::utils::logger::{BoxLogger, Logger};
 
-use cmd_handler::{Command, CommandChannel};
-
-use net::arrow;
-
-use net::arrow::{ArrowError, ErrorKind};
-
-use utils::logger::{BoxLogger, Logger};
+use crate::config::usage;
 
 /// Connectionn retry timeout.
 const RETRY_TIMEOUT: f64 = 60.0;
@@ -83,9 +54,11 @@ const PAIRING_MODE_TIMEOUT: f64 = 1200.0;
 /// Unwrap a given result (if possible) or print the error message and exit
 /// the process printing application usage.
 fn result_or_usage<T, E>(res: Result<T, E>) -> T
-    where E: Error + Debug {
+where
+    E: Error + Debug,
+{
     match res {
-        Ok(res)  => res,
+        Ok(res) => res,
         Err(err) => {
             println!("ERROR: {}\n", err);
             usage(1);
@@ -107,7 +80,10 @@ struct ArrowMainTask {
 
 impl ArrowMainTask {
     /// Create a new task.
-    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel) -> impl Future<Item = (), Error = ()> {
+    fn new(
+        app_context: ApplicationContext,
+        cmd_channel: CommandChannel,
+    ) -> impl Future<Item = (), Error = ()> {
         let logger = app_context.get_logger();
         let addr = app_context.get_arrow_service_address();
         let diagnostic_mode = app_context.get_diagnostic_mode();
@@ -140,20 +116,29 @@ impl ArrowMainTask {
 
     /// Connect to the Arrow service.
     fn connect(&mut self) -> impl Future<Item = String, Error = ArrowError> {
-        log_info!(&mut self.logger, "connecting to remote Arrow Service {}", self.current_addr);
+        log_info!(
+            &mut self.logger,
+            "connecting to remote Arrow Service {}",
+            self.current_addr
+        );
 
         self.last_attempt = time::precise_time_s();
 
-        self.app_context.set_connection_state(ConnectionState::Connected);
+        self.app_context
+            .set_connection_state(ConnectionState::Connected);
 
         arrow::connect(
             self.app_context.clone(),
             self.cmd_channel.clone(),
-            &self.current_addr)
+            &self.current_addr,
+        )
     }
 
     /// Process a given connection result.
-    fn process_result(&mut self, res: Result<String, ArrowError>) -> impl Future<Item = (), Error = ()> {
+    fn process_result(
+        &mut self,
+        res: Result<String, ArrowError>,
+    ) -> impl Future<Item = (), Error = ()> {
         if self.diagnostic_mode {
             diagnose_connection_result(&res);
         } else if let Ok(addr) = res {
@@ -163,22 +148,23 @@ impl ArrowMainTask {
             Box::new(futures::future::ok(()))
         } else if let Err(err) = res {
             if err.kind() == ErrorKind::Unauthorized {
-                log_info!(&mut self.logger, "connection rejected by the remote service {}; is the client paired?", self.current_addr);
+                log_info!(
+                    &mut self.logger,
+                    "connection rejected by the remote service {}; is the client paired?",
+                    self.current_addr
+                );
             } else {
                 log_warn!(&mut self.logger, "{}", err.description());
             }
 
             let cstate = match err.kind() {
                 ErrorKind::Unauthorized => ConnectionState::Unauthorized,
-                _                       => ConnectionState::Disconnected,
+                _ => ConnectionState::Disconnected,
             };
 
             self.app_context.set_connection_state(cstate);
 
-            let retry = process_connection_error(
-                err,
-                self.last_attempt,
-                self.pairing_mode_timeout);
+            let retry = process_connection_error(err, self.last_attempt, self.pairing_mode_timeout);
 
             self.current_addr = self.default_addr.clone();
 
@@ -208,10 +194,8 @@ enum SuspendReason {
 impl SuspendReason {
     fn to_string(&self) -> &str {
         match *self {
-            SuspendReason::NotInPairingMode =>
-                "pairing window timeout",
-            SuspendReason::UnsupportedProtocolVersion =>
-                "unsupported protocol version",
+            SuspendReason::NotInPairingMode => "pairing window timeout",
+            SuspendReason::UnsupportedProtocolVersion => "unsupported protocol version",
         }
     }
 }
@@ -220,7 +204,8 @@ impl SuspendReason {
 fn process_connection_error(
     connection_error: ArrowError,
     last_attempt: f64,
-    pairing_mode_timeout: f64) -> ConnectionRetry {
+    pairing_mode_timeout: f64,
+) -> ConnectionRetry {
     let t = time::precise_time_s();
 
     match connection_error.kind() {
@@ -239,63 +224,65 @@ fn process_connection_error(
         },
         // suspend the thread if the version of the Arrow Protocol is not
         // supported by either side
-        ErrorKind::UnsupportedProtocolVersion =>
-            ConnectionRetry::Suspend(SuspendReason::UnsupportedProtocolVersion),
+        ErrorKind::UnsupportedProtocolVersion => {
+            ConnectionRetry::Suspend(SuspendReason::UnsupportedProtocolVersion)
+        }
         // in all other cases
         _ => ConnectionRetry::Timeout(RETRY_TIMEOUT + last_attempt - t),
     }
 }
 
 /// Process a given connection retry object.
-fn wait_for_retry(logger: &mut Logger, connection_retry: ConnectionRetry) -> Box<Future<Item = (), Error = ()> + Send + Sync> {
+fn wait_for_retry(
+    logger: &mut Logger,
+    connection_retry: ConnectionRetry,
+) -> Box<Future<Item = (), Error = ()> + Send + Sync> {
     match connection_retry {
         ConnectionRetry::Timeout(t) if t > 0.5 => {
             log_info!(logger, "retrying in {:.3} seconds", t);
 
             let time = Duration::from_millis((t * 1000.0) as u64);
-            let sleep = Delay::new(Instant::now() + time)
-                .map_err(|_| ());
+            let sleep = Delay::new(Instant::now() + time).map_err(|_| ());
 
             Box::new(sleep)
-        },
-        ConnectionRetry::Timeout(_) => {
-            Box::new(futures::future::ok(()))
-        },
+        }
+        ConnectionRetry::Timeout(_) => Box::new(futures::future::ok(())),
         ConnectionRetry::Suspend(reason) => {
             log_info!(logger, "{}", reason.to_string());
             log_info!(logger, "suspending the connection thread");
 
             Box::new(futures::future::empty())
-        },
+        }
     }
 }
 
 /// Diagnose a given connection result and exit with exit code 0 if the
 /// connection was successful or the server responded with UNAUTHORIZED,
 /// otherwise exit with exit code 1.
-fn diagnose_connection_result(
-    connection_result: &Result<String, ArrowError>) -> ! {
+fn diagnose_connection_result(connection_result: &Result<String, ArrowError>) -> ! {
     match connection_result {
-        &Ok(_)        => process::exit(0),
+        &Ok(_) => process::exit(0),
         &Err(ref err) => match err.kind() {
             ErrorKind::Unauthorized => process::exit(0),
-            _ => process::exit(1)
-        }
+            _ => process::exit(1),
+        },
     }
 }
 
 /// Arrow Client main function.
 fn main() {
-    let config = result_or_usage(
-        ApplicationConfig::create());
+    let config = result_or_usage(ApplicationConfig::create());
 
     let context = ApplicationContext::new(config);
 
     let mut logger = context.get_logger();
 
-    log_info!(&mut logger,
+    log_info!(
+        &mut logger,
         "application started (uuid: {}, mac: {})",
-        context.get_arrow_uuid(), context.get_arrow_mac_address());
+        context.get_arrow_uuid(),
+        context.get_arrow_mac_address()
+    );
 
     // create command handler
     let (tx, rx) = cmd_handler::new(context.clone());

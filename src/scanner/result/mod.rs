@@ -14,13 +14,12 @@
 
 pub mod host;
 
-use std::net::{IpAddr, SocketAddr};
-use std::collections::HashMap;
 use std::collections::hash_map::Iter as HashMapIterator;
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 
-use svc_table::{Service, ServiceIdentifier};
-
-use net::raw::ether::MacAddr;
+use crate::net::raw::ether::MacAddr;
+use crate::svc_table::{Service, ServiceIdentifier};
 
 pub use self::host::HR_FLAG_ARP;
 pub use self::host::HR_FLAG_ICMP;
@@ -32,7 +31,7 @@ type HostRecordIdentifier = (MacAddr, IpAddr);
 /// Scan report.
 #[derive(Clone)]
 pub struct ScanResult {
-    hosts:    HashMap<HostRecordIdentifier, HostRecord>,
+    hosts: HashMap<HostRecordIdentifier, HostRecord>,
     services: HashMap<ServiceIdentifier, Service>,
 }
 
@@ -40,7 +39,7 @@ impl ScanResult {
     /// Create a new network scan report.
     pub fn new() -> ScanResult {
         ScanResult {
-            hosts:    HashMap::new(),
+            hosts: HashMap::new(),
             services: HashMap::new(),
         }
     }
@@ -114,7 +113,7 @@ impl<'a> HostRecordIterator<'a> {
     /// Create a new host record iterator for a given scan report.
     fn new(report: &'a ScanResult) -> HostRecordIterator<'a> {
         HostRecordIterator {
-            inner: report.hosts.iter()
+            inner: report.hosts.iter(),
         }
     }
 }
@@ -123,8 +122,7 @@ impl<'a> Iterator for HostRecordIterator<'a> {
     type Item = &'a HostRecord;
 
     fn next(&mut self) -> Option<&'a HostRecord> {
-        self.inner.next()
-            .map(|(_, host)| host)
+        self.inner.next().map(|(_, host)| host)
     }
 }
 
@@ -143,7 +141,7 @@ impl<'a> ServiceIterator<'a> {
     /// Create a new service iterator for a given scan report.
     fn new(report: &'a ScanResult) -> ServiceIterator<'a> {
         ServiceIterator {
-            inner: report.services.iter()
+            inner: report.services.iter(),
         }
     }
 }
@@ -152,8 +150,7 @@ impl<'a> Iterator for ServiceIterator<'a> {
     type Item = &'a Service;
 
     fn next(&mut self) -> Option<&'a Service> {
-        self.inner.next()
-            .map(|(_, service)| service)
+        self.inner.next().map(|(_, service)| service)
     }
 }
 
@@ -165,7 +162,7 @@ impl<'a> ExactSizeIterator for ServiceIterator<'a> {
 
 /// Socket address iterator.
 pub struct SocketAddrIterator<'a> {
-    host_iterator:  HostRecordIterator<'a>,
+    host_iterator: HostRecordIterator<'a>,
     saddr_iterator: Option<self::host::SocketAddrIterator<'a>>,
 }
 
@@ -174,12 +171,11 @@ impl<'a> SocketAddrIterator<'a> {
     fn new(report: &'a ScanResult) -> SocketAddrIterator<'a> {
         let mut host_iterator = report.hosts();
 
-        let saddr_iterator = host_iterator.next()
-            .map(|host| host.socket_addrs());
+        let saddr_iterator = host_iterator.next().map(|host| host.socket_addrs());
 
         SocketAddrIterator {
-            host_iterator:  host_iterator,
-            saddr_iterator: saddr_iterator
+            host_iterator: host_iterator,
+            saddr_iterator: saddr_iterator,
         }
     }
 }
@@ -189,15 +185,16 @@ impl<'a> Iterator for SocketAddrIterator<'a> {
 
     fn next(&mut self) -> Option<(MacAddr, SocketAddr)> {
         while self.saddr_iterator.is_some() {
-            let saddr = self.saddr_iterator.as_mut()
+            let saddr = self
+                .saddr_iterator
+                .as_mut()
                 .and_then(|saddr_iterator| saddr_iterator.next());
 
             if saddr.is_some() {
                 return saddr;
             }
 
-            self.saddr_iterator = self.host_iterator.next()
-                .map(|host| host.socket_addrs());
+            self.saddr_iterator = self.host_iterator.next().map(|host| host.socket_addrs());
         }
 
         None

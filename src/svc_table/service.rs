@@ -14,17 +14,17 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use net::raw::ether::MacAddr;
+use crate::net::raw::ether::MacAddr;
 
 pub const SVC_TYPE_CONTROL_PROTOCOL: u16 = 0x0000;
-pub const SVC_TYPE_RTSP:             u16 = 0x0001;
-pub const SVC_TYPE_LOCKED_RTSP:      u16 = 0x0002;
-pub const SVC_TYPE_UNKNOWN_RTSP:     u16 = 0x0003;
+pub const SVC_TYPE_RTSP: u16 = 0x0001;
+pub const SVC_TYPE_LOCKED_RTSP: u16 = 0x0002;
+pub const SVC_TYPE_UNKNOWN_RTSP: u16 = 0x0003;
 pub const SVC_TYPE_UNSUPPORTED_RTSP: u16 = 0x0004;
-pub const SVC_TYPE_HTTP:             u16 = 0x0005;
-pub const SVC_TYPE_MJPEG:            u16 = 0x0006;
-pub const SVC_TYPE_LOCKED_MJPEG:     u16 = 0x0007;
-pub const SVC_TYPE_TCP:              u16 = 0xffff;
+pub const SVC_TYPE_HTTP: u16 = 0x0005;
+pub const SVC_TYPE_MJPEG: u16 = 0x0006;
+pub const SVC_TYPE_LOCKED_MJPEG: u16 = 0x0007;
+pub const SVC_TYPE_TCP: u16 = 0xffff;
 
 /// Service type.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -54,14 +54,14 @@ impl ServiceType {
     pub fn code(&self) -> u16 {
         match self {
             &ServiceType::ControlProtocol => SVC_TYPE_CONTROL_PROTOCOL,
-            &ServiceType::RTSP            => SVC_TYPE_RTSP,
-            &ServiceType::LockedRTSP      => SVC_TYPE_LOCKED_RTSP,
-            &ServiceType::UnknownRTSP     => SVC_TYPE_UNKNOWN_RTSP,
+            &ServiceType::RTSP => SVC_TYPE_RTSP,
+            &ServiceType::LockedRTSP => SVC_TYPE_LOCKED_RTSP,
+            &ServiceType::UnknownRTSP => SVC_TYPE_UNKNOWN_RTSP,
             &ServiceType::UnsupportedRTSP => SVC_TYPE_UNSUPPORTED_RTSP,
-            &ServiceType::HTTP            => SVC_TYPE_HTTP,
-            &ServiceType::MJPEG           => SVC_TYPE_MJPEG,
-            &ServiceType::LockedMJPEG     => SVC_TYPE_LOCKED_MJPEG,
-            &ServiceType::TCP             => SVC_TYPE_TCP,
+            &ServiceType::HTTP => SVC_TYPE_HTTP,
+            &ServiceType::MJPEG => SVC_TYPE_MJPEG,
+            &ServiceType::LockedMJPEG => SVC_TYPE_LOCKED_MJPEG,
+            &ServiceType::TCP => SVC_TYPE_TCP,
         }
     }
 }
@@ -70,9 +70,9 @@ impl ServiceType {
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct ServiceIdentifier {
     svc_type: ServiceType,
-    mac:      Option<MacAddr>,
-    port:     Option<u16>,
-    path:     Option<String>,
+    mac: Option<MacAddr>,
+    port: Option<u16>,
+    path: Option<String>,
 }
 
 impl ServiceIdentifier {
@@ -86,9 +86,9 @@ impl ServiceIdentifier {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Service {
     svc_type: ServiceType,
-    mac:      Option<MacAddr>,
-    address:  Option<SocketAddr>,
-    path:     Option<String>,
+    mac: Option<MacAddr>,
+    address: Option<SocketAddr>,
+    path: Option<String>,
 }
 
 impl Service {
@@ -96,9 +96,9 @@ impl Service {
     pub fn control() -> Service {
         Service {
             svc_type: ServiceType::ControlProtocol,
-            mac:      None,
-            address:  None,
-            path:     None,
+            mac: None,
+            address: None,
+            path: None,
         }
     }
 
@@ -106,9 +106,9 @@ impl Service {
     pub fn rtsp(mac: MacAddr, address: SocketAddr, path: String) -> Service {
         Service {
             svc_type: ServiceType::RTSP,
-            mac:      Some(mac),
-            address:  Some(address),
-            path:     Some(path),
+            mac: Some(mac),
+            address: Some(address),
+            path: Some(path),
         }
     }
 
@@ -116,9 +116,9 @@ impl Service {
     pub fn locked_rtsp(mac: MacAddr, address: SocketAddr, path: Option<String>) -> Service {
         Service {
             svc_type: ServiceType::LockedRTSP,
-            mac:      Some(mac),
-            address:  Some(address),
-            path:     path,
+            mac: Some(mac),
+            address: Some(address),
+            path: path,
         }
     }
 
@@ -126,9 +126,9 @@ impl Service {
     pub fn unknown_rtsp(mac: MacAddr, address: SocketAddr) -> Service {
         Service {
             svc_type: ServiceType::UnknownRTSP,
-            mac:      Some(mac),
-            address:  Some(address),
-            path:     None,
+            mac: Some(mac),
+            address: Some(address),
+            path: None,
         }
     }
 
@@ -136,9 +136,9 @@ impl Service {
     pub fn unsupported_rtsp(mac: MacAddr, address: SocketAddr, path: String) -> Service {
         Service {
             svc_type: ServiceType::UnsupportedRTSP,
-            mac:      Some(mac),
-            address:  Some(address),
-            path:     Some(path),
+            mac: Some(mac),
+            address: Some(address),
+            path: Some(path),
         }
     }
 
@@ -146,9 +146,9 @@ impl Service {
     pub fn http(mac: MacAddr, address: SocketAddr) -> Service {
         Service {
             svc_type: ServiceType::HTTP,
-            mac:      Some(mac),
-            address:  Some(address),
-            path:     None,
+            mac: Some(mac),
+            address: Some(address),
+            path: None,
         }
     }
 
@@ -156,9 +156,9 @@ impl Service {
     pub fn mjpeg(mac: MacAddr, address: SocketAddr, path: String) -> Service {
         Service {
             svc_type: ServiceType::MJPEG,
-            mac:      Some(mac),
-            address:  Some(address),
-            path:     Some(path),
+            mac: Some(mac),
+            address: Some(address),
+            path: Some(path),
         }
     }
 
@@ -166,9 +166,9 @@ impl Service {
     pub fn locked_mjpeg(mac: MacAddr, address: SocketAddr, path: Option<String>) -> Service {
         Service {
             svc_type: ServiceType::LockedMJPEG,
-            mac:      Some(mac),
-            address:  Some(address),
-            path:     path,
+            mac: Some(mac),
+            address: Some(address),
+            path: path,
         }
     }
 
@@ -176,9 +176,9 @@ impl Service {
     pub fn tcp(mac: MacAddr, address: SocketAddr) -> Service {
         Service {
             svc_type: ServiceType::TCP,
-            mac:      Some(mac),
-            address:  Some(address),
-            path:     None,
+            mac: Some(mac),
+            address: Some(address),
+            path: None,
         }
     }
 
@@ -214,17 +214,16 @@ impl Service {
 
     /// Get service path.
     pub fn path(&self) -> Option<&str> {
-        self.path.as_ref()
-            .map(|v| v as &str)
+        self.path.as_ref().map(|v| v as &str)
     }
 
     /// Convert service to service identifier.
     pub fn to_service_identifier(&self) -> ServiceIdentifier {
         ServiceIdentifier {
             svc_type: self.service_type(),
-            mac:      self.mac(),
-            port:     self.port(),
-            path:     self.path.clone(),
+            mac: self.mac(),
+            port: self.port(),
+            path: self.path.clone(),
         }
     }
 }

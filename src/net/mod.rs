@@ -18,8 +18,8 @@ pub mod rtsp;
 #[cfg(feature = "discovery")]
 pub mod http;
 
-pub mod raw;
 pub mod arrow;
+pub mod raw;
 pub mod tls;
 pub mod url;
 pub mod utils;

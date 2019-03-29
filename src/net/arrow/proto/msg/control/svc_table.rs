@@ -19,24 +19,23 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use bytes::BytesMut;
 
-use utils;
+use crate::utils;
 
-use svc_table::{BoxServiceTable, Service, ServiceIdentifier, ServiceTable};
-
-use net::arrow::proto::codec::Encode;
-use net::arrow::proto::msg::MessageBody;
-use net::raw::ether::MacAddr;
-use net::utils::IpAddrEx;
+use crate::net::arrow::proto::codec::Encode;
+use crate::net::arrow::proto::msg::MessageBody;
+use crate::net::raw::ether::MacAddr;
+use crate::net::utils::IpAddrEx;
+use crate::svc_table::{BoxServiceTable, Service, ServiceIdentifier, ServiceTable};
 
 /// Service Table element header.
 #[repr(packed)]
 struct ElementHeader {
-    svc_id:     u16,
-    svc_type:   u16,
-    mac_addr:   [u8; 6],
+    svc_id: u16,
+    svc_type: u16,
+    mac_addr: [u8; 6],
     ip_version: u8,
-    ip_addr:    [u8; 16],
-    port:       u16,
+    ip_addr: [u8; 16],
+    port: u16,
 }
 
 impl<'a> From<&'a Element> for ElementHeader {
@@ -44,23 +43,19 @@ impl<'a> From<&'a Element> for ElementHeader {
         let service_type = element.service.service_type();
 
         let null_maddress = MacAddr::new(0, 0, 0, 0, 0, 0);
-        let null_saddress = SocketAddr::V4(
-            SocketAddrV4::new(
-                Ipv4Addr::new(0, 0, 0, 0), 0));
+        let null_saddress = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
 
-        let maddress = element.service.mac()
-            .unwrap_or(null_maddress);
-        let saddress = element.service.address()
-            .unwrap_or(null_saddress);
+        let maddress = element.service.mac().unwrap_or(null_maddress);
+        let saddress = element.service.address().unwrap_or(null_saddress);
         let iaddress = saddress.ip();
 
         ElementHeader {
-            svc_id:     element.id,
-            svc_type:   service_type.code(),
-            mac_addr:   maddress.octets(),
+            svc_id: element.id,
+            svc_type: service_type.code(),
+            mac_addr: maddress.octets(),
             ip_version: iaddress.version(),
-            ip_addr:    iaddress.bytes(),
-            port:       saddress.port(),
+            ip_addr: iaddress.bytes(),
+            port: saddress.port(),
         }
     }
 }
@@ -68,12 +63,12 @@ impl<'a> From<&'a Element> for ElementHeader {
 impl Encode for ElementHeader {
     fn encode(&self, buf: &mut BytesMut) {
         let be_header = ElementHeader {
-            svc_id:     self.svc_id.to_be(),
-            svc_type:   self.svc_type.to_be(),
-            mac_addr:   self.mac_addr,
+            svc_id: self.svc_id.to_be(),
+            svc_type: self.svc_type.to_be(),
+            mac_addr: self.mac_addr,
             ip_version: self.ip_version,
-            ip_addr:    self.ip_addr,
-            port:       self.port.to_be(),
+            ip_addr: self.ip_addr,
+            port: self.port.to_be(),
         };
 
         buf.extend_from_slice(utils::as_bytes(&be_header))
@@ -83,7 +78,7 @@ impl Encode for ElementHeader {
 /// Simple service table element.
 #[derive(Clone)]
 struct Element {
-    id:      u16,
+    id: u16,
     service: Service,
 }
 
@@ -91,7 +86,7 @@ impl Element {
     /// Create a new element for the simple service table.
     fn new(id: u16, service: Service) -> Element {
         Element {
-            id:      id,
+            id: id,
             service: service,
         }
     }
@@ -99,11 +94,9 @@ impl Element {
 
 impl Encode for Element {
     fn encode(&self, buf: &mut BytesMut) {
-        ElementHeader::from(self)
-            .encode(buf);
+        ElementHeader::from(self).encode(buf);
 
-        let path = self.service.path()
-            .unwrap_or("");
+        let path = self.service.path().unwrap_or("");
 
         buf.extend_from_slice(path.as_bytes());
         buf.extend_from_slice(&[0]);
@@ -112,10 +105,7 @@ impl Encode for Element {
 
 impl MessageBody for Element {
     fn len(&self) -> usize {
-        let plen = self.service.path()
-            .unwrap_or("")
-            .as_bytes()
-            .len() + 1;
+        let plen = self.service.path().unwrap_or("").as_bytes().len() + 1;
 
         mem::size_of::<ElementHeader>() + plen
     }
@@ -128,26 +118,24 @@ pub struct SimpleServiceTable {
 }
 
 impl<I> From<I> for SimpleServiceTable
-    where I: IntoIterator<Item=(u16, Service)> {
+where
+    I: IntoIterator<Item = (u16, Service)>,
+{
     fn from(services: I) -> SimpleServiceTable {
         let mut map = HashMap::new();
 
         for (id, service) in services {
-            map.insert(
-                id,
-                Element::new(id, service));
+            map.insert(id, Element::new(id, service));
         }
 
-        SimpleServiceTable {
-            map: map,
-        }
+        SimpleServiceTable { map: map }
     }
 }
 
 impl ServiceTable for SimpleServiceTable {
     fn get(&self, id: u16) -> Option<Service> {
         if id == 0 {
-            return Some(Service::control())
+            return Some(Service::control());
         }
 
         if let Some(elem) = self.map.get(&id) {
@@ -182,8 +170,7 @@ impl Encode for SimpleServiceTable {
             elem.encode(buf);
         }
 
-        Element::new(0, Service::control())
-            .encode(buf)
+        Element::new(0, Service::control()).encode(buf)
     }
 }
 

@@ -15,15 +15,15 @@
 //! stderr logger definitions.
 
 use std;
-use std::io::{Write, Stderr};
+use std::io::{Stderr, Write};
 
 use time;
 
-use utils::logger::{Logger, Severity};
+use crate::utils::logger::{Logger, Severity};
 
 /// stderr logger structure.
 pub struct StderrLogger {
-    level:  Severity,
+    level: Severity,
     stderr: Stderr,
     pretty: bool,
 }
@@ -31,59 +31,64 @@ pub struct StderrLogger {
 /// Create a new stderr logger with log level set to INFO.
 pub fn new() -> StderrLogger {
     StderrLogger {
-        level:  Severity::INFO,
+        level: Severity::INFO,
         stderr: std::io::stderr(),
-        pretty: false
+        pretty: false,
     }
 }
 
 /// Create a new stderr logger with color formatted messages.
 pub fn new_pretty() -> StderrLogger {
     StderrLogger {
-        level:  Severity::INFO,
+        level: Severity::INFO,
         stderr: std::io::stderr(),
-        pretty: true
+        pretty: true,
     }
 }
 
 impl Clone for StderrLogger {
     fn clone(&self) -> StderrLogger {
         StderrLogger {
-            level:  self.level,
+            level: self.level,
             stderr: std::io::stderr(),
-            pretty: self.pretty
+            pretty: self.pretty,
         }
     }
 }
 
 impl Logger for StderrLogger {
     fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str) {
-        let t = time::strftime("%F %T", &time::now())
-            .unwrap();
+        let t = time::strftime("%F %T", &time::now()).unwrap();
 
         let severity = match s {
             Severity::DEBUG => "DEBUG",
-            Severity::INFO  => "INFO",
-            Severity::WARN  => "WARNING",
-            Severity::ERROR => "ERROR"
+            Severity::INFO => "INFO",
+            Severity::WARN => "WARNING",
+            Severity::ERROR => "ERROR",
         };
 
         let color = match s {
             Severity::DEBUG => "1;30",
-            Severity::INFO  => "0;37",
-            Severity::WARN  => "0;33",
-            Severity::ERROR => "0;31"
+            Severity::INFO => "0;37",
+            Severity::WARN => "0;33",
+            Severity::ERROR => "0;31",
         };
 
         if s >= self.level {
             if self.pretty {
-                writeln!(&mut self.stderr, "\x1b[{}m{} {:<7} [{}:{}] {}\x1b[m",
-                    color, t, severity, file, line, msg)
-                    .unwrap();
+                writeln!(
+                    &mut self.stderr,
+                    "\x1b[{}m{} {:<7} [{}:{}] {}\x1b[m",
+                    color, t, severity, file, line, msg
+                )
+                .unwrap();
             } else {
-                writeln!(&mut self.stderr, "{} {:<7} [{}:{}] {}",
-                    t, severity, file, line, msg)
-                    .unwrap();
+                writeln!(
+                    &mut self.stderr,
+                    "{} {:<7} [{}:{}] {}",
+                    t, severity, file, line, msg
+                )
+                .unwrap();
             }
         }
     }

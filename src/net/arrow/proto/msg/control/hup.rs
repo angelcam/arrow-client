@@ -16,12 +16,12 @@ use std::mem;
 
 use bytes::BytesMut;
 
-use utils;
+use crate::utils;
 
-use net::arrow::proto::codec::{FromBytes, Encode};
-use net::arrow::proto::msg::MessageBody;
-use net::arrow::proto::msg::control::ControlMessageBody;
-use net::arrow::proto::error::DecodeError;
+use crate::net::arrow::proto::codec::{Encode, FromBytes};
+use crate::net::arrow::proto::error::DecodeError;
+use crate::net::arrow::proto::msg::control::ControlMessageBody;
+use crate::net::arrow::proto::msg::MessageBody;
 
 /// HUP message.
 #[repr(packed)]
@@ -37,7 +37,7 @@ impl HupMessage {
     pub fn new(session_id: u32, error_code: u32) -> HupMessage {
         HupMessage {
             session_id: session_id & ((1 << 24) - 1),
-            error_code: error_code
+            error_code: error_code,
         }
     }
 }
@@ -59,13 +59,14 @@ impl MessageBody for HupMessage {
     }
 }
 
-impl ControlMessageBody for HupMessage {
-}
+impl ControlMessageBody for HupMessage {}
 
 impl FromBytes for HupMessage {
     fn from_bytes(bytes: &[u8]) -> Result<Option<HupMessage>, DecodeError> {
         if bytes.len() != mem::size_of::<HupMessage>() {
-            return Err(DecodeError::from("malformed Arrow Control Protocol HUP message"));
+            return Err(DecodeError::from(
+                "malformed Arrow Control Protocol HUP message",
+            ));
         }
 
         let ptr = bytes.as_ptr() as *const HupMessage;
@@ -73,7 +74,7 @@ impl FromBytes for HupMessage {
 
         let res = HupMessage {
             session_id: u32::from_be(msg.session_id),
-            error_code: u32::from_be(msg.error_code)
+            error_code: u32::from_be(msg.error_code),
         };
 
         Ok(Some(res))

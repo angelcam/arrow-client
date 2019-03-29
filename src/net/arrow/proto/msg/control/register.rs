@@ -16,35 +16,28 @@ use std::mem;
 
 use bytes::BytesMut;
 
-use utils;
+use crate::utils;
 
-use net::arrow::proto::codec::Encode;
-use net::arrow::proto::msg::MessageBody;
-use net::arrow::proto::msg::control::{
-    ControlMessageBody,
-    SimpleServiceTable,
-};
-
-use net::raw::ether::MacAddr;
+use crate::net::arrow::proto::codec::Encode;
+use crate::net::arrow::proto::msg::control::{ControlMessageBody, SimpleServiceTable};
+use crate::net::arrow::proto::msg::MessageBody;
+use crate::net::raw::ether::MacAddr;
 
 /// REGISTER message header.
 #[repr(packed)]
 #[allow(dead_code)]
 struct RegisterMessageHeader {
-    uuid:   [u8; 16],
-    mac:    [u8; 6],
+    uuid: [u8; 16],
+    mac: [u8; 6],
     passwd: [u8; 16],
 }
 
 impl RegisterMessageHeader {
     /// Create a new REGISTER message header.
-    fn new(
-        mac: MacAddr,
-        uuid: [u8; 16],
-        password: [u8; 16]) -> RegisterMessageHeader {
+    fn new(mac: MacAddr, uuid: [u8; 16], password: [u8; 16]) -> RegisterMessageHeader {
         RegisterMessageHeader {
-            uuid:   uuid,
-            mac:    mac.octets(),
+            uuid: uuid,
+            mac: mac.octets(),
             passwd: password,
         }
     }
@@ -58,7 +51,7 @@ impl Encode for RegisterMessageHeader {
 
 /// REGISTER message.
 pub struct RegisterMessage {
-    header:    RegisterMessageHeader,
+    header: RegisterMessageHeader,
     svc_table: SimpleServiceTable,
 }
 
@@ -68,11 +61,12 @@ impl RegisterMessage {
         mac: MacAddr,
         uuid: [u8; 16],
         password: [u8; 16],
-        svc_table: SimpleServiceTable) -> RegisterMessage {
+        svc_table: SimpleServiceTable,
+    ) -> RegisterMessage {
         let header = RegisterMessageHeader::new(mac, uuid, password);
 
         RegisterMessage {
-            header:    header,
+            header: header,
             svc_table: svc_table,
         }
     }
@@ -91,5 +85,4 @@ impl MessageBody for RegisterMessage {
     }
 }
 
-impl ControlMessageBody for RegisterMessage {
-}
+impl ControlMessageBody for RegisterMessage {}

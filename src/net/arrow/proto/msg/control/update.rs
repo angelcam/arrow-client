@@ -14,12 +14,9 @@
 
 use bytes::BytesMut;
 
-use net::arrow::proto::codec::Encode;
-use net::arrow::proto::msg::MessageBody;
-use net::arrow::proto::msg::control::{
-    ControlMessageBody,
-    SimpleServiceTable,
-};
+use crate::net::arrow::proto::codec::Encode;
+use crate::net::arrow::proto::msg::control::{ControlMessageBody, SimpleServiceTable};
+use crate::net::arrow::proto::msg::MessageBody;
 
 /// UPDATE message.
 pub struct UpdateMessage {
@@ -30,7 +27,7 @@ impl UpdateMessage {
     /// Create a new UPDATE message.
     pub fn new(svc_table: SimpleServiceTable) -> UpdateMessage {
         UpdateMessage {
-            svc_table: svc_table
+            svc_table: svc_table,
         }
     }
 }
@@ -47,5 +44,4 @@ impl MessageBody for UpdateMessage {
     }
 }
 
-impl ControlMessageBody for UpdateMessage {
-}
+impl ControlMessageBody for UpdateMessage {}

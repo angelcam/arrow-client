@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use std;
-use std::io;
 use std::fmt;
+use std::io;
 use std::mem;
 
 use std::collections::HashMap;
@@ -23,11 +23,11 @@ use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use std::string::FromUtf8Error;
 
-use utils::string::reader::Reader as StringReader;
-
 use bytes::BytesMut;
 
 use tokio::codec::Decoder;
+
+use crate::utils::string::reader::Reader as StringReader;
 
 /// Codec error.
 #[derive(Debug, Clone)]
@@ -75,25 +75,27 @@ impl From<FromUtf8Error> for Error {
 #[derive(Clone)]
 pub struct HeaderField {
     nname: String,
-    name:  String,
+    name: String,
     value: Option<String>,
 }
 
 impl HeaderField {
     /// Create a new HTTP-like header field.
     pub fn new<N, V>(name: N, value: Option<V>) -> HeaderField
-        where N: ToString,
-              V: ToString {
+    where
+        N: ToString,
+        V: ToString,
+    {
         let name = name.to_string();
 
         let value = match value {
             Some(v) => Some(v.to_string()),
-            None    => None,
+            None => None,
         };
 
         HeaderField {
             nname: name.to_lowercase(),
-            name:  name,
+            name: name,
             value: value,
         }
     }
@@ -112,7 +114,7 @@ impl HeaderField {
     pub fn value(&self) -> Option<&str> {
         match &self.value {
             &Some(ref v) => Some(v),
-            &None        => None,
+            &None => None,
         }
     }
 }
@@ -131,20 +133,24 @@ impl Display for HeaderField {
 }
 
 impl<N> From<(N,)> for HeaderField
-    where N: ToString {
+where
+    N: ToString,
+{
     fn from(tuple: (N,)) -> HeaderField {
         match tuple {
-            (name,) => HeaderField::new(name, None as Option<String>)
+            (name,) => HeaderField::new(name, None as Option<String>),
         }
     }
 }
 
 impl<N, V> From<(N, V)> for HeaderField
-    where N: ToString,
-          V: ToString {
+where
+    N: ToString,
+    V: ToString,
+{
     fn from(tuple: (N, V)) -> HeaderField {
         match tuple {
-            (name, value) => HeaderField::new(name, Some(value))
+            (name, value) => HeaderField::new(name, Some(value)),
         }
     }
 }
@@ -158,12 +164,12 @@ impl FromStr for HeaderField {
 
         if let Some(separator) = s.find(':') {
             let n = &s[..separator];
-            let v = &s[separator+1..];
+            let v = &s[separator + 1..];
 
             name = n.trim();
             value = Some(v.trim());
         } else {
-            name  = s.trim();
+            name = s.trim();
             value = None;
         }
 
@@ -177,7 +183,7 @@ impl FromStr for HeaderField {
 #[derive(Clone)]
 pub struct HeaderFields {
     fields: Vec<HeaderField>,
-    map:    HashMap<String, Vec<HeaderField>>,
+    map: HashMap<String, Vec<HeaderField>>,
 }
 
 impl HeaderFields {
@@ -185,19 +191,17 @@ impl HeaderFields {
     pub fn new() -> HeaderFields {
         HeaderFields {
             fields: Vec::new(),
-            map:    HashMap::new(),
+            map: HashMap::new(),
         }
     }
 
     /// Add a given header field into the collection.
     pub fn add(&mut self, field: HeaderField) {
-        let name = field.lowercase_name()
-            .to_string();
+        let name = field.lowercase_name().to_string();
 
         self.fields.push(field.clone());
 
-        let mut fields = self.map.remove(&name)
-            .unwrap_or(Vec::with_capacity(1));
+        let mut fields = self.map.remove(&name).unwrap_or(Vec::with_capacity(1));
 
         fields.push(field);
 
@@ -209,12 +213,9 @@ impl HeaderFields {
     pub fn set(&mut self, field: HeaderField) {
         let current_length = self.fields.len();
 
-        let fields = mem::replace(
-            &mut self.fields,
-            Vec::with_capacity(current_length));
+        let fields = mem::replace(&mut self.fields, Vec::with_capacity(current_length));
 
-        let name = field.lowercase_name()
-            .to_string();
+        let name = field.lowercase_name().to_string();
 
         for f in fields {
             if name != f.lowercase_name() {
@@ -235,7 +236,7 @@ impl HeaderFields {
     pub fn get(&self, name: &str) -> &[HeaderField] {
         match self.map.get(&name.to_lowercase()) {
             Some(fields) => fields.as_ref(),
-            None         => &[],
+            None => &[],
         }
     }
 }
@@ -276,10 +277,10 @@ pub type MessageBody = Box<[u8]>;
 /// HTTP-like request header.
 #[derive(Clone)]
 pub struct RequestHeader {
-    method:        String,
-    path:          String,
-    protocol:      String,
-    version:       String,
+    method: String,
+    path: String,
+    protocol: String,
+    version: String,
     header_fields: HeaderFields,
 }
 
@@ -287,10 +288,10 @@ impl RequestHeader {
     /// Create a new HTTP-like request header.
     fn new(protocol: &str, version: &str, method: &str, path: &str) -> RequestHeader {
         RequestHeader {
-            method:        method.to_string(),
-            path:          path.to_string(),
-            protocol:      protocol.to_string(),
-            version:       version.to_string(),
+            method: method.to_string(),
+            path: path.to_string(),
+            protocol: protocol.to_string(),
+            version: version.to_string(),
             header_fields: HeaderFields::new(),
         }
     }
@@ -322,7 +323,7 @@ impl Display for RequestHeader {
 #[derive(Clone)]
 pub struct Request {
     header: RequestHeader,
-    body:   MessageBody,
+    body: MessageBody,
 }
 
 impl Request {
@@ -330,7 +331,7 @@ impl Request {
     fn new(protocol: &str, version: &str, method: &str, path: &str) -> Request {
         Request {
             header: RequestHeader::new(protocol, version, method, path),
-            body:   Box::new([]),
+            body: Box::new([]),
         }
     }
 
@@ -356,9 +357,7 @@ impl RequestBuilder {
     pub fn new(protocol: &str, version: &str, method: &str, path: &str) -> RequestBuilder {
         let request = Request::new(protocol, version, method, path);
 
-        RequestBuilder {
-            request: request,
-        }
+        RequestBuilder { request: request }
     }
 
     /// Set protocol version.
@@ -370,24 +369,34 @@ impl RequestBuilder {
     /// Replace the current list of header fields having the same name (if any)
     /// with the given one.
     pub fn set_header_field<T>(mut self, field: T) -> RequestBuilder
-        where HeaderField: From<T> {
-        self.request.header.header_fields.set(HeaderField::from(field));
+    where
+        HeaderField: From<T>,
+    {
+        self.request
+            .header
+            .header_fields
+            .set(HeaderField::from(field));
         self
     }
 
     /// Add a given header field.
     pub fn add_header_field<T>(mut self, field: T) -> RequestBuilder
-        where HeaderField: From<T> {
-        self.request.header.header_fields.add(HeaderField::from(field));
+    where
+        HeaderField: From<T>,
+    {
+        self.request
+            .header
+            .header_fields
+            .add(HeaderField::from(field));
         self
     }
 
     /// Set request body.
     pub fn set_body<T>(mut self, body: T) -> RequestBuilder
-        where T: AsRef<[u8]> {
-        let body = body.as_ref()
-            .to_vec()
-            .into_boxed_slice();
+    where
+        T: AsRef<[u8]>,
+    {
+        let body = body.as_ref().to_vec().into_boxed_slice();
 
         self.request.body = body;
 
@@ -403,10 +412,10 @@ impl RequestBuilder {
 /// HTTP-like response header.
 #[derive(Clone)]
 pub struct ResponseHeader {
-    protocol:      String,
-    version:       String,
-    status_code:   u16,
-    status_line:   String,
+    protocol: String,
+    version: String,
+    status_code: u16,
+    status_line: String,
     header_fields: HeaderFields,
 }
 
@@ -438,20 +447,21 @@ impl ResponseHeader {
 
     /// Get last header field of a given name.
     pub fn get_header_field(&self, name: &str) -> Option<&HeaderField> {
-        self.header_fields.get(name)
-            .last()
+        self.header_fields.get(name).last()
     }
 
     /// Get value of the last header field with a given name.
     pub fn get_header_field_value(&self, name: &str) -> Option<&str> {
-        let value = self.header_fields.get(name)
+        let value = self
+            .header_fields
+            .get(name)
             .last()
             .map(|field| field.value());
 
         match value {
             Some(Some(v)) => Some(v),
-            Some(None)    => None,
-            None          => None,
+            Some(None) => None,
+            None => None,
         }
     }
 }
@@ -464,23 +474,24 @@ impl FromStr for ResponseHeader {
 
         let protocol = reader.read_until(|c| c == '/');
 
-        reader.match_char('/')
+        reader
+            .match_char('/')
             .map_err(|_| Error::from("invalid response header"))?;
 
         let version = reader.read_word();
         let status_code = reader.read_word();
         let status_line = reader.as_str();
 
-        let status_code = u16::from_str(status_code)
-            .map_err(|_| Error::from("invalid response header"))?;
+        let status_code =
+            u16::from_str(status_code).map_err(|_| Error::from("invalid response header"))?;
 
         let status_line = status_line.trim();
 
         let header = ResponseHeader {
-            protocol:      protocol.to_string(),
-            version:       version.to_string(),
-            status_code:   status_code,
-            status_line:   status_line.to_string(),
+            protocol: protocol.to_string(),
+            version: version.to_string(),
+            status_code: status_code,
+            status_line: status_line.to_string(),
             header_fields: HeaderFields::new(),
         };
 
@@ -492,7 +503,7 @@ impl FromStr for ResponseHeader {
 #[derive(Clone)]
 pub struct Response {
     header: ResponseHeader,
-    body:   MessageBody,
+    body: MessageBody,
 }
 
 impl Response {
@@ -500,7 +511,7 @@ impl Response {
     pub fn new(header: ResponseHeader, body: MessageBody) -> Response {
         Response {
             header: header,
-            body:   body,
+            body: body,
         }
     }
 
@@ -517,8 +528,8 @@ impl Response {
 
 /// Line decoder.
 pub struct LineDecoder {
-    separator:  Box<[u8]>,
-    buffer:     Vec<u8>,
+    separator: Box<[u8]>,
+    buffer: Vec<u8>,
     max_length: usize,
 }
 
@@ -528,8 +539,8 @@ impl LineDecoder {
         let separator = separator.to_vec();
 
         LineDecoder {
-            separator:  separator.into_boxed_slice(),
-            buffer:     Vec::new(),
+            separator: separator.into_boxed_slice(),
+            buffer: Vec::new(),
             max_length: max_length,
         }
     }
@@ -545,7 +556,7 @@ impl Decoder for LineDecoder {
     type Error = Error;
 
     fn decode(&mut self, data: &mut BytesMut) -> Result<Option<String>, Error> {
-        let separator_length  = self.separator.len();
+        let separator_length = self.separator.len();
         let old_buffer_length = self.buffer.len();
 
         let search_start;
@@ -575,7 +586,7 @@ impl Decoder for LineDecoder {
 
         if new_buffer_length >= separator_length {
             search_end = new_buffer_length - separator_length + 1;
-        } else  {
+        } else {
             search_end = 0;
         }
 
@@ -583,8 +594,7 @@ impl Decoder for LineDecoder {
             let line_length = index + separator_length;
 
             if &self.buffer[index..line_length] == self.separator.as_ref() {
-                let line = self.buffer[..index]
-                    .to_vec();
+                let line = self.buffer[..index].to_vec();
 
                 let line = String::from_utf8(line)?;
 
@@ -611,10 +621,10 @@ impl Decoder for LineDecoder {
 
 /// Decoder for HTTP-like response headers.
 pub struct ResponseHeaderDecoder {
-    ldecoder:  LineDecoder,
-    header:    Option<ResponseHeader>,
-    field:     String,
-    lines:     usize,
+    ldecoder: LineDecoder,
+    header: Option<ResponseHeader>,
+    field: String,
+    lines: usize,
     max_lines: usize,
 }
 
@@ -622,10 +632,10 @@ impl ResponseHeaderDecoder {
     /// Create a new decoder for HTTP-like response headers.
     pub fn new(max_line_length: usize, max_lines: usize) -> ResponseHeaderDecoder {
         ResponseHeaderDecoder {
-            ldecoder:  LineDecoder::new(b"\r\n", max_line_length),
-            header:    None,
-            field:     String::new(),
-            lines:     0,
+            ldecoder: LineDecoder::new(b"\r\n", max_line_length),
+            header: None,
+            field: String::new(),
+            lines: 0,
             max_lines: max_lines,
         }
     }
@@ -655,14 +665,14 @@ impl Decoder for ResponseHeaderDecoder {
 
             if let Some(mut header) = self.header.take() {
                 // check if the current header field should be processed
-                let commit_header_field = line.chars()
+                let commit_header_field = line
+                    .chars()
                     .next()
                     .map(|c| !c.is_whitespace())
                     .unwrap_or(true);
 
                 if commit_header_field && !self.field.is_empty() {
-                    header.header_fields.add(
-                        self.field.parse()?);
+                    header.header_fields.add(self.field.parse()?);
 
                     self.field.clear();
                 }
@@ -698,7 +708,9 @@ pub trait MessageBodyDecoder {
 }
 
 impl<T> MessageBodyDecoder for T
-    where T: Decoder<Item=MessageBody, Error=Error> {
+where
+    T: Decoder<Item = MessageBody, Error = Error>,
+{
     fn decode(&mut self, data: &mut BytesMut) -> Result<Option<MessageBody>, Error> {
         Decoder::decode(self, data)
     }
@@ -711,7 +723,7 @@ impl<T> MessageBodyDecoder for T
 /// Simple HTTP-like message body decoder that consumes all data until EOF is
 /// received.
 pub struct SimpleBodyDecoder {
-    body:   Vec<u8>,
+    body: Vec<u8>,
     ignore: bool,
 }
 
@@ -719,7 +731,7 @@ impl SimpleBodyDecoder {
     /// Create a new simple body decoder.
     pub fn new(ignore_data: bool) -> SimpleBodyDecoder {
         SimpleBodyDecoder {
-            body:   Vec::new(),
+            body: Vec::new(),
             ignore: ignore_data,
         }
     }
@@ -752,9 +764,9 @@ impl Decoder for SimpleBodyDecoder {
 /// illegal to pass any more data to the decoder after a message body is
 /// returned.
 pub struct FixedSizeBodyDecoder {
-    body:     Option<Vec<u8>>,
+    body: Option<Vec<u8>>,
     expected: usize,
-    ignore:   bool,
+    ignore: bool,
 }
 
 impl FixedSizeBodyDecoder {
@@ -769,9 +781,9 @@ impl FixedSizeBodyDecoder {
         }
 
         FixedSizeBodyDecoder {
-            body:     Some(body),
+            body: Some(body),
             expected: expected,
-            ignore:   ignore_data,
+            ignore: ignore_data,
         }
     }
 }
@@ -833,22 +845,22 @@ enum ChunkedDecoderState {
 
 /// Decoder for HTTP-like chunked bodies.
 pub struct ChunkedBodyDecoder {
-    state:    ChunkedDecoderState,
+    state: ChunkedDecoderState,
     ldecoder: LineDecoder,
-    body:     Vec<u8>,
+    body: Vec<u8>,
     expected: usize,
-    ignore:   bool,
+    ignore: bool,
 }
 
 impl ChunkedBodyDecoder {
     /// Create a new decoder for HTTP-like chunked bodies.
     pub fn new(max_line_length: usize, ignore_data: bool) -> ChunkedBodyDecoder {
         ChunkedBodyDecoder {
-            state:    ChunkedDecoderState::ChunkHeader,
+            state: ChunkedDecoderState::ChunkHeader,
             ldecoder: LineDecoder::new(b"\r\n", max_line_length),
-            body:     Vec::new(),
+            body: Vec::new(),
             expected: 0,
-            ignore:   ignore_data,
+            ignore: ignore_data,
         }
     }
 
@@ -870,8 +882,8 @@ impl ChunkedBodyDecoder {
 
             let size = reader.read_until(|c| c == ';');
 
-            let size = usize::from_str_radix(size, 16)
-                .map_err(|_| Error::from("invalid chunk size"))?;
+            let size =
+                usize::from_str_radix(size, 16).map_err(|_| Error::from("invalid chunk size"))?;
 
             self.expected = size;
 
@@ -912,7 +924,10 @@ impl ChunkedBodyDecoder {
 
     /// Decode chunk body delimiter (i.e. the new line between chunk body and
     /// and chunk header).
-    fn decode_chunk_body_delimiter(&mut self, data: &mut BytesMut) -> Result<Option<MessageBody>, Error> {
+    fn decode_chunk_body_delimiter(
+        &mut self,
+        data: &mut BytesMut,
+    ) -> Result<Option<MessageBody>, Error> {
         if let Some(_) = self.ldecoder.decode(data)? {
             self.state = ChunkedDecoderState::ChunkHeader;
         }
@@ -929,7 +944,7 @@ impl ChunkedBodyDecoder {
                 // take the body without allocation
                 let body = mem::replace(&mut self.body, Vec::new());
 
-                return Ok(Some(body.into_boxed_slice()))
+                return Ok(Some(body.into_boxed_slice()));
             }
         }
 

@@ -14,22 +14,22 @@
 
 pub mod pipe;
 
-use futures::stream::Stream;
 use futures::sink::Sink;
+use futures::stream::Stream;
 
 use self::pipe::Pipe;
 
 /// Extension to the Stream trait.
-pub trait StreamEx : Stream {
+pub trait StreamEx: Stream {
     fn pipe<T>(self, other: T) -> Pipe<Self, T>
-        where T: Stream + Sink<SinkItem=Self::Item>,
-              T::SinkError: From<Self::Error>,
-              T::Error: From<T::SinkError>,
-              Self: Sized,
+    where
+        T: Stream + Sink<SinkItem = Self::Item>,
+        T::SinkError: From<Self::Error>,
+        T::Error: From<T::SinkError>,
+        Self: Sized,
     {
         pipe::new(self, other)
     }
 }
 
-impl<T: Stream> StreamEx for T {
-}
+impl<T: Stream> StreamEx for T {}

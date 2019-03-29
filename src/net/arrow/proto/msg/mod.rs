@@ -18,26 +18,24 @@ use std::mem;
 
 use bytes::{Bytes, BytesMut};
 
-use utils;
+use crate::utils;
 
-use utils::AsAny;
+use crate::net::arrow::proto::codec::{Decode, Encode, FromBytes};
+use crate::net::arrow::proto::error::DecodeError;
+use crate::net::arrow::proto::ARROW_PROTOCOL_VERSION;
+use crate::utils::AsAny;
 
-use net::arrow::proto::ARROW_PROTOCOL_VERSION;
-use net::arrow::proto::codec::{FromBytes, Decode, Encode};
-use net::arrow::proto::error::DecodeError;
-
-pub use net::arrow::proto::msg::control::ControlMessage;
+pub use crate::net::arrow::proto::msg::control::ControlMessage;
 
 /// Common trait for message body types.
-pub trait MessageBody : Encode {
+pub trait MessageBody: Encode {
     /// Get size of the body in bytes.
     fn len(&self) -> usize;
 }
 
 impl<T: AsRef<[u8]>> MessageBody for T {
     fn len(&self) -> usize {
-        self.as_ref()
-            .len()
+        self.as_ref().len()
     }
 }
 
@@ -52,7 +50,7 @@ pub struct ArrowMessageHeader {
     /// Session ID (note: the upper 8 bits are reserved).
     pub session: u32,
     /// Payload size.
-    size:        u32,
+    size: u32,
 }
 
 impl ArrowMessageHeader {
@@ -63,7 +61,7 @@ impl ArrowMessageHeader {
             version: ARROW_PROTOCOL_VERSION,
             service: service,
             session: session & ((1 << 24) - 1),
-            size:    size
+            size: size,
         }
     }
 }
@@ -74,7 +72,7 @@ impl Encode for ArrowMessageHeader {
             version: self.version,
             service: self.service.to_be(),
             session: self.session.to_be(),
-            size:    self.size.to_be()
+            size: self.size.to_be(),
         };
 
         buf.extend_from_slice(utils::as_bytes(&be_header))
@@ -85,14 +83,14 @@ impl FromBytes for ArrowMessageHeader {
     fn from_bytes(bytes: &[u8]) -> Result<Option<ArrowMessageHeader>, DecodeError> {
         assert_eq!(bytes.len(), mem::size_of::<ArrowMessageHeader>());
 
-        let ptr    = bytes.as_ptr() as *const ArrowMessageHeader;
+        let ptr = bytes.as_ptr() as *const ArrowMessageHeader;
         let header = unsafe { &*ptr };
 
         let res = ArrowMessageHeader {
             version: header.version,
             service: u16::from_be(header.service),
             session: u32::from_be(header.session) & ((1 << 24) - 1),
-            size:    u32::from_be(header.size)
+            size: u32::from_be(header.size),
         };
 
         if res.version == ARROW_PROTOCOL_VERSION {
@@ -104,16 +102,14 @@ impl FromBytes for ArrowMessageHeader {
 }
 
 /// Common trait for Arrow Message body implementations.
-pub trait ArrowMessageBody : MessageBody + AsAny + Send {
-}
+pub trait ArrowMessageBody: MessageBody + AsAny + Send {}
 
-impl ArrowMessageBody for Bytes {
-}
+impl ArrowMessageBody for Bytes {}
 
 /// Arrow Message.
 pub struct ArrowMessage {
     /// Message header.
-    header:  ArrowMessageHeader,
+    header: ArrowMessageHeader,
     /// Encoded message body.
     payload: Bytes,
 }
@@ -121,13 +117,15 @@ pub struct ArrowMessage {
 impl ArrowMessage {
     /// Create a new Arrow Message with a given service ID, session ID and payload.
     pub fn new<B>(service: u16, session: u32, body: B) -> ArrowMessage
-        where B: ArrowMessageBody + 'static {
+    where
+        B: ArrowMessageBody + 'static,
+    {
         let mut payload = BytesMut::with_capacity(body.len());
 
         body.encode(&mut payload);
 
         ArrowMessage {
-            header:  ArrowMessageHeader::new(service, session, 0),
+            header: ArrowMessageHeader::new(service, session, 0),
             payload: payload.freeze(),
         }
     }
@@ -154,7 +152,8 @@ impl Encode for ArrowMessage {
         let header = ArrowMessageHeader::new(
             self.header.service,
             self.header.session,
-            self.payload.len() as u32);
+            self.payload.len() as u32,
+        );
 
         header.encode(buf);
 
@@ -178,11 +177,10 @@ impl Decode for ArrowMessage {
             }
 
             let message = buf.split_to(msize);
-            let payload = message.freeze()
-                .split_off(hsize);
+            let payload = message.freeze().split_off(hsize);
 
             let msg = ArrowMessage {
-                header:  header,
+                header: header,
                 payload: payload,
             };
 

@@ -35,10 +35,8 @@ impl Serialize for Box<[u8]> {
 /// Sum a given Sized type instance as 16-bit unsigned big endian numbers.
 pub fn sum_type<T: Sized>(data: &T) -> u32 {
     let size = mem::size_of::<T>();
-    let ptr  = data as *const T;
-    unsafe {
-        sum_raw_be(ptr as *const u8, size)
-    }
+    let ptr = data as *const T;
+    unsafe { sum_raw_be(ptr as *const u8, size) }
 }
 
 /// Sum a given slice of Sized type instances as 16-bit unsigned big endian
@@ -46,15 +44,13 @@ pub fn sum_type<T: Sized>(data: &T) -> u32 {
 pub fn sum_slice<T: Sized>(data: &[T]) -> u32 {
     let size = mem::size_of::<T>();
     let ptr = data.as_ptr();
-    unsafe {
-        sum_raw_be(ptr as *const u8, size * data.len())
-    }
+    unsafe { sum_raw_be(ptr as *const u8, size * data.len()) }
 }
 
 /// Sum given raw data as 16-bit unsigned big endian numbers.
 pub unsafe fn sum_raw_be(data: *const u8, size: usize) -> u32 {
-    let sdata        = slice::from_raw_parts(data as *const u16, size >> 1);
-    let slice        = slice::from_raw_parts(data, size);
+    let sdata = slice::from_raw_parts(data as *const u16, size >> 1);
+    let slice = slice::from_raw_parts(data, size);
     let mut sum: u32 = 0;
     for w in sdata {
         sum = sum.wrapping_add(u16::from_be(*w) as u32);
@@ -71,8 +67,8 @@ pub unsafe fn sum_raw_be(data: *const u8, size: usize) -> u32 {
 pub fn sum_to_checksum(sum: u32) -> u16 {
     let mut checksum = sum;
     while (checksum & 0xffff0000) != 0 {
-        let hw   = checksum >> 16;
-        let lw   = checksum & 0xffff;
+        let hw = checksum >> 16;
+        let lw = checksum & 0xffff;
         checksum = lw + hw;
     }
 
@@ -99,7 +95,7 @@ mod tests {
     #[test]
     fn test_sum_slice() {
         let val = TestType { b1: 1, b2: 2 };
-        let vec  = vec![val, val];
+        let vec = vec![val, val];
         assert_eq!(0x0204, sum_slice(&vec));
     }
 

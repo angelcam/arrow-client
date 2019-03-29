@@ -16,21 +16,20 @@ use std::mem;
 
 use bytes::BytesMut;
 
-use utils;
+use crate::utils;
 
-use net::arrow::proto::codec::Encode;
-use net::arrow::proto::msg::MessageBody;
-use net::utils::IpAddrEx;
-
-use scanner::HostRecord;
+use crate::net::arrow::proto::codec::Encode;
+use crate::net::arrow::proto::msg::MessageBody;
+use crate::net::utils::IpAddrEx;
+use crate::scanner::HostRecord;
 
 /// Host table element header.
 #[repr(packed)]
 struct ElementHeader {
-    flags:      u8,
-    mac:        [u8; 6],
+    flags: u8,
+    mac: [u8; 6],
     ip_version: u8,
-    ip_addr:    [u8; 16],
+    ip_addr: [u8; 16],
     port_count: u16,
 }
 
@@ -39,10 +38,10 @@ impl<'a> From<&'a Element> for ElementHeader {
         let ports = element.host.ports();
 
         ElementHeader {
-            flags:      element.host.flags,
-            mac:        element.host.mac.octets(),
+            flags: element.host.flags,
+            mac: element.host.mac.octets(),
             ip_version: element.host.ip.version(),
-            ip_addr:    element.host.ip.bytes(),
+            ip_addr: element.host.ip.bytes(),
             port_count: ports.len() as u16,
         }
     }
@@ -51,10 +50,10 @@ impl<'a> From<&'a Element> for ElementHeader {
 impl Encode for ElementHeader {
     fn encode(&self, buf: &mut BytesMut) {
         let be_header = ElementHeader {
-            flags:      self.flags,
-            mac:        self.mac,
+            flags: self.flags,
+            mac: self.mac,
             ip_version: self.ip_version,
-            ip_addr:    self.ip_addr,
+            ip_addr: self.ip_addr,
             port_count: self.port_count.to_be(),
         };
 
@@ -70,16 +69,13 @@ struct Element {
 impl Element {
     /// Create a new host table element.
     fn new(host: HostRecord) -> Element {
-        Element {
-            host: host,
-        }
+        Element { host: host }
     }
 }
 
 impl Encode for Element {
     fn encode(&self, buf: &mut BytesMut) {
-        ElementHeader::from(self)
-            .encode(buf);
+        ElementHeader::from(self).encode(buf);
 
         for port in self.host.ports() {
             buf.extend_from_slice(utils::as_bytes(&port.to_be()));
@@ -91,8 +87,7 @@ impl MessageBody for Element {
     fn len(&self) -> usize {
         let ports = self.host.ports();
 
-        mem::size_of::<ElementHeader>() + (
-            ports.len() * mem::size_of::<u16>())
+        mem::size_of::<ElementHeader>() + (ports.len() * mem::size_of::<u16>())
     }
 }
 
@@ -105,7 +100,7 @@ struct HostTableHeader {
 impl<'a> From<&'a HostTable> for HostTableHeader {
     fn from(table: &'a HostTable) -> HostTableHeader {
         HostTableHeader {
-            count: table.hosts.len() as u32
+            count: table.hosts.len() as u32,
         }
     }
 }
@@ -126,22 +121,22 @@ pub struct HostTable {
 }
 
 impl<I> From<I> for HostTable
-    where I: IntoIterator<Item=HostRecord> {
+where
+    I: IntoIterator<Item = HostRecord>,
+{
     fn from(hosts: I) -> HostTable {
-        let hosts = hosts.into_iter()
+        let hosts = hosts
+            .into_iter()
             .map(|host| Element::new(host))
             .collect::<Vec<_>>();
 
-        HostTable {
-            hosts: hosts,
-        }
+        HostTable { hosts: hosts }
     }
 }
 
 impl Encode for HostTable {
     fn encode(&self, buf: &mut BytesMut) {
-        HostTableHeader::from(self)
-            .encode(buf);
+        HostTableHeader::from(self).encode(buf);
 
         for host in &self.hosts {
             host.encode(buf);

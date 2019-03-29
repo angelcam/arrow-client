@@ -22,13 +22,15 @@ use futures;
 
 use futures::{Async, Future};
 
-use runtime;
+use crate::runtime;
 
-use utils::RuntimeError;
+use crate::utils::RuntimeError;
 
 /// Get socket address from a given argument.
 pub fn get_socket_address<T>(s: T) -> Result<SocketAddr, RuntimeError>
-    where T: ToSocketAddrs {
+where
+    T: ToSocketAddrs,
+{
     s.to_socket_addrs()
         .ok()
         .ok_or(RuntimeError::from("unable to get socket address"))?
@@ -37,7 +39,9 @@ pub fn get_socket_address<T>(s: T) -> Result<SocketAddr, RuntimeError>
 }
 
 /// Asynchronously get socket address from a given argument.
-pub fn get_socket_address_async<T>(s: T) -> impl Future<Item = SocketAddr, Error = RuntimeError> + Send
+pub fn get_socket_address_async<T>(
+    s: T,
+) -> impl Future<Item = SocketAddr, Error = RuntimeError> + Send
 where
     T: ToSocketAddrs + Clone + Send,
 {
@@ -67,7 +71,7 @@ impl Ipv4AddrEx for Ipv4Addr {
     fn from_slice(bytes: &[u8]) -> Ipv4Addr {
         assert_eq!(bytes.len(), 4);
 
-        let ptr  = bytes.as_ptr() as *const u32;
+        let ptr = bytes.as_ptr() as *const u32;
         let addr = unsafe { u32::from_be(*ptr) };
 
         Ipv4Addr::from(addr)
@@ -95,21 +99,21 @@ impl IpAddrEx for IpAddr {
     fn bytes(&self) -> [u8; 16] {
         match self {
             &IpAddr::V4(ref ip_addr) => ip_addr.bytes(),
-            &IpAddr::V6(ref ip_addr) => ip_addr.bytes()
+            &IpAddr::V6(ref ip_addr) => ip_addr.bytes(),
         }
     }
 
     fn version(&self) -> u8 {
         match self {
             &IpAddr::V4(ref ip_addr) => ip_addr.version(),
-            &IpAddr::V6(ref ip_addr) => ip_addr.version()
+            &IpAddr::V6(ref ip_addr) => ip_addr.version(),
         }
     }
 }
 
 impl IpAddrEx for Ipv4Addr {
     fn bytes(&self) -> [u8; 16] {
-        let octets  = self.octets();
+        let octets = self.octets();
         let mut res = [0u8; 16];
 
         for i in 0..octets.len() {
@@ -127,13 +131,13 @@ impl IpAddrEx for Ipv4Addr {
 impl IpAddrEx for Ipv6Addr {
     fn bytes(&self) -> [u8; 16] {
         let segments = self.segments();
-        let mut res  = [0u8; 16];
+        let mut res = [0u8; 16];
 
         for i in 0..segments.len() {
             let segment = segments[i];
-            let j       = i << 1;
-            res[j]      = (segment >> 8) as u8;
-            res[j + 1]  = (segment & 0xff) as u8;
+            let j = i << 1;
+            res[j] = (segment >> 8) as u8;
+            res[j + 1] = (segment & 0xff) as u8;
         }
 
         res
@@ -158,7 +162,7 @@ mod test {
     #[test]
     fn test_slice_to_ipv4addr_2() {
         let buffer = [192, 168, 2, 3];
-        let addr   = Ipv4Addr::from_slice(&buffer);
+        let addr = Ipv4Addr::from_slice(&buffer);
 
         assert_eq!(buffer, addr.octets());
     }
