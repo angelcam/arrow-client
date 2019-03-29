@@ -14,6 +14,19 @@
 
 //! Arrow Client definitions.
 
+#[macro_use]
+extern crate futures;
+
+#[macro_use]
+extern crate json;
+
+#[cfg(feature = "discovery")]
+#[macro_use]
+extern crate lazy_static;
+
+#[macro_use]
+pub mod utils;
+
 pub mod cmd_handler;
 pub mod config;
 pub mod context;
@@ -22,7 +35,6 @@ pub mod net;
 pub mod runtime;
 pub mod scanner;
 pub mod svc_table;
-pub mod utils;
 
 use std::process;
 
