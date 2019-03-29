@@ -40,10 +40,9 @@ use bytes::BytesMut;
 
 use futures::{Future, IntoFuture, Poll, Sink, Stream};
 
+use tokio::codec::{Decoder, Encoder};
 use tokio::net::TcpStream;
 use tokio::timer::Timeout;
-
-use tokio_codec::{Decoder, Encoder};
 
 /// RTSP codec error.
 #[derive(Debug, Clone)]

@@ -16,14 +16,12 @@ mod error;
 mod proto;
 mod session;
 
-use std::net::{SocketAddr, ToSocketAddrs};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, Duration};
 
 use time;
 
-use futures;
 use futures::task;
 
 use futures::{StartSend, Async, AsyncSink, Poll};
@@ -74,6 +72,8 @@ pub use self::error::{
     ArrowError,
     ErrorKind,
 };
+
+use net::utils::get_socket_address_async;
 
 const ACK_TIMEOUT:         f64 = 20.0;
 const CONNECTION_TIMEOUT:  u64 = 20;
@@ -630,20 +630,6 @@ impl Stream for ArrowClient {
     }
 }
 
-/// Get socket address for a given hostname and port.
-fn get_socket_addr(addr: &str) -> impl Future<Item = SocketAddr, Error = ArrowError> {
-    let saddr = addr.to_socket_addrs()
-        .map_err(|err| ArrowError::connection_error(err))
-        .and_then(move |mut addrs| {
-            addrs.next()
-                .ok_or(ArrowError::connection_error(
-                    format!("failed to lookup Arrow Service {} address information", addr)
-                ))
-        });
-
-    futures::future::result(saddr)
-}
-
 /// Connect Arrow Client to a given address and return either a redirect address or an error.
 pub fn connect(
     app_context: ApplicationContext,
@@ -651,11 +637,19 @@ pub fn connect(
     addr: &str) -> impl Future<Item = String, Error = ArrowError> {
     let addr = addr.to_string();
 
+    let addr1 = addr.clone();
+    let addr2 = addr.clone();
+
     let aclient = ArrowClient::new(
         app_context.clone(),
         cmd_channel);
 
-    let connection = get_socket_addr(&addr)
+    let connection = get_socket_address_async(addr)
+        .map_err(move |_| {
+            ArrowError::connection_error(
+                format!("failed to lookup Arrow Service {} address information", addr1)
+            )
+        })
         .and_then(|saddr| {
             TcpStream::connect(&saddr)
                 .map_err(|err| ArrowError::connection_error(err))
@@ -677,9 +671,9 @@ pub fn connect(
     Timeout::new(connection, Duration::from_secs(CONNECTION_TIMEOUT))
         .map_err(move |err| {
             if err.is_elapsed() {
-                ArrowError::connection_error(format!("unable to connect to remote Arrow Service {} (connection timeout)", addr))
+                ArrowError::connection_error(format!("unable to connect to remote Arrow Service {} (connection timeout)", addr2))
             } else if let Some(inner) = err.into_inner() {
-                ArrowError::connection_error(format!("unable to connect to remote Arrow Service {} ({})", addr, inner))
+                ArrowError::connection_error(format!("unable to connect to remote Arrow Service {} ({})", addr2, inner))
             } else {
                 ArrowError::other("timer error")
             }

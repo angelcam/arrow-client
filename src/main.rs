@@ -31,9 +31,10 @@ extern crate lazy_static;
 #[macro_use]
 extern crate futures;
 
-extern crate num_cpus;
-
 extern crate tokio;
+
+#[cfg(feature = "threads")]
+extern crate tokio_threadpool;
 
 pub mod futures_ex;
 
@@ -45,6 +46,7 @@ pub mod net;
 pub mod config;
 pub mod context;
 pub mod cmd_handler;
+pub mod runtime;
 pub mod scanner;
 pub mod svc_table;
 
@@ -282,57 +284,10 @@ fn diagnose_connection_result(
     }
 }
 
-/// Create a new single-threaded tokio runtime.
-#[cfg(not(feature = "threads"))]
-fn create_tokio_runtime(_: usize) -> tokio::runtime::current_thread::Runtime {
-    tokio::runtime::current_thread::Runtime::new()
-        .expect("unable to create a tokio runtime")
-}
-
-/// Create a multi-threaded tokio runtime.
-#[cfg(feature = "threads")]
-fn create_tokio_runtime(mut threads: usize) -> tokio::runtime::Runtime {
-    // by default we use the number of CPUs
-    if threads == 0 {
-        threads = num_cpus::get();
-    }
-
-    // just in case we cannot get the number of CPUs
-    if threads == 0 {
-        threads = 1;
-    }
-
-    let mut threadpool_builder = tokio::executor::thread_pool::Builder::new();
-
-    threadpool_builder.pool_size(threads);
-
-    tokio::runtime::Builder::new()
-        .threadpool_builder(threadpool_builder)
-        .build()
-        .expect("unable to create a tokio runtime")
-}
-
-/// Create a new single-threaded tokio runtime.
-#[cfg(not(feature = "threads"))]
-fn tokio_run(mut runtime: tokio::runtime::current_thread::Runtime) {
-    runtime.run()
-        .unwrap()
-}
-
-/// Create a multi-threaded tokio runtime.
-#[cfg(feature = "threads")]
-fn tokio_run(runtime: tokio::runtime::Runtime) {
-    runtime.shutdown_on_idle()
-        .wait()
-        .unwrap();
-}
-
 /// Arrow Client main function.
 fn main() {
     let config = result_or_usage(
         ApplicationConfig::create());
-
-    let threads = config.get_thread_count();
 
     let context = ApplicationContext::new(config);
 
@@ -361,11 +316,10 @@ fn main() {
         })
         .map_err(|_| ());
 
-    let mut runtime = create_tokio_runtime(threads);
+    runtime::run(futures::future::lazy(|| {
+        tokio::spawn(rx);
+        tokio::spawn(periodic_network_scan);
 
-    runtime.spawn(periodic_network_scan);
-    runtime.spawn(arrow_main_task);
-    runtime.spawn(rx);
-
-    tokio_run(runtime);
+        arrow_main_task
+    }));
 }

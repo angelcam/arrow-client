@@ -7,20 +7,27 @@ readme  = "README.md"
 build   = "build.rs"
 
 [features]
-discovery = []
-threads = []
+discovery = ["lazy_static"]
+threads = ["tokio-threadpool"]
+all = ["discovery", "threads"]
 
 [dependencies]
 bytes        = "0.4"
 farmhash     = "1.1"
 futures      = "0.1"
 json         = "0.11"
-lazy_static  = "1.3"
 libc         = "0.2"
-num_cpus     = "1.10"
 openssl      = "0.10"
 time         = "0.1"
 tokio        = "0.1"
+
+[dependencies.lazy_static]
+version = "1.3"
+optional = true
+
+[dependencies.tokio-threadpool]
+version = "0.1"
+optional = true
 
 [dependencies.uuid]
 version  = "0.7"

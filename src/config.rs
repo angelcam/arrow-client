@@ -168,7 +168,6 @@ struct ApplicationConfigBuilder {
     diagnostic_mode:    bool,
     log_file_size:      usize,
     log_file_rotations: usize,
-    threads:            usize,
 }
 
 impl ApplicationConfigBuilder {
@@ -195,7 +194,6 @@ impl ApplicationConfigBuilder {
             diagnostic_mode:    false,
             log_file_size:      10 * 1024,
             log_file_rotations: 1,
-            threads:            0,
         };
 
         Ok(builder)
@@ -276,7 +274,6 @@ impl ApplicationConfigBuilder {
             default_svc_table: config.svc_table.clone(),
             svc_table:         config.svc_table,
             logger:            logger,
-            threads:           self.threads,
         };
 
         if self.verbose {
@@ -337,8 +334,6 @@ impl ApplicationConfigBuilder {
                         self.log_file_size(arg)?;
                     } else if arg.starts_with("--log-file-rotations=") {
                         self.log_file_rotations(arg)?;
-                    } else if arg.starts_with("--threads=") {
-                        self.threads(arg)?;
                     } else {
                         return Err(ConfigError::from(
                             format!("unknown argument: \"{}\"", arg)
@@ -508,23 +503,6 @@ impl ApplicationConfigBuilder {
         let rotations = &arg[21..];
 
         self.log_file_rotations = rotations.parse()
-            .map_err(|_| ConfigError::from(
-                format!("invalid value given for {}, number expeced", arg)
-            ))?;
-
-        Ok(())
-    }
-
-    /// Process the threads argument.
-    fn threads(&mut self, arg: &str) -> Result<(), ConfigError> {
-        if ! cfg!(feature = "threads") {
-            return Err(ConfigError::from("unknown argument: \"--threads\""));
-        }
-
-        // skip "--threads=" length
-        let rotations = &arg[10..];
-
-        self.threads = rotations.parse()
             .map_err(|_| ConfigError::from(
                 format!("invalid value given for {}, number expeced", arg)
             ))?;
@@ -747,7 +725,6 @@ pub struct ApplicationConfig {
     svc_table:         SharedServiceTable,
     default_svc_table: SharedServiceTable,
     logger:            BoxLogger,
-    threads:           usize,
 }
 
 impl ApplicationConfig {
@@ -807,11 +784,6 @@ impl ApplicationConfig {
     /// Get logger.
     pub fn get_logger(&self) -> BoxLogger {
         self.logger.clone()
-    }
-
-    /// Get number of worker threads.
-    pub fn get_thread_count(&self) -> usize {
-        self.threads
     }
 
     /// Get TLS connector for a given server hostname.
@@ -1095,14 +1067,10 @@ pub fn usage(exit_code: i32) -> ! {
         println!("                        /etc/arrow/rtsp-paths)");
         println!("    --mjpeg-paths=path  alternative path to a file containing list of MJPEG");
         println!("                        paths used on service discovery (default value:");
-        println!("                        /etc/arrow/mjpeg-paths)\n");
+        println!("                        /etc/arrow/mjpeg-paths)");
     }
 
-    if cfg!(feature = "threads") {
-        println!("    --threads=n         number of worker threads (default value: # of CPUs)");
-    } else {
-        println!("");
-    }
+    println!();
 
     process::exit(exit_code);
 }

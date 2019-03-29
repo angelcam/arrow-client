@@ -41,10 +41,9 @@ use bytes::BytesMut;
 
 use futures::{IntoFuture, Future, Poll, Sink, Stream};
 
+use tokio::codec::{Decoder, Encoder};
 use tokio::net::TcpStream;
 use tokio::timer::Timeout;
-
-use tokio_codec::{Decoder, Encoder};
 
 /// HTTP codec error.
 #[derive(Debug, Clone)]
