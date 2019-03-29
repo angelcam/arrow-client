@@ -34,10 +34,9 @@ use futures::task::Task;
 
 use tokio;
 
+use tokio::codec::Decoder;
 use tokio::net::TcpStream;
 use tokio::timer::{Timeout, Interval};
-
-use tokio_codec::Decoder;
 
 use futures_ex::StreamEx;
 
@@ -66,8 +65,6 @@ use net::arrow::session::SessionManager;
 use net::arrow::proto::msg::control::ControlMessageFactory;
 
 use net::raw::ether::MacAddr;
-
-use net::utils::get_hostname;
 
 use svc_table::SharedServiceTableRef;
 
@@ -652,10 +649,7 @@ pub fn connect(
     app_context: ApplicationContext,
     cmd_channel: CommandChannel,
     addr: &str) -> impl Future<Item = String, Error = ArrowError> {
-    let hostname = get_hostname(addr);
-
     let addr = addr.to_string();
-    let hostname = hostname.to_string();
 
     let aclient = ArrowClient::new(
         app_context.clone(),
@@ -667,18 +661,16 @@ pub fn connect(
                 .map_err(|err| ArrowError::connection_error(err))
         })
         .and_then(move |socket| {
-            app_context.get_tls_connector(&hostname)
+            app_context
+                .get_tls_connector()
+                .map(move |tls_connector| (socket, tls_connector))
                 .map_err(|err| ArrowError::other(
                     format!("unable to get TLS context: {}", err)
                 ))
-                .and_then(move |tls_connector| {
-                    Ok((socket, tls_connector))
-                })
         })
         .and_then(|(socket, tls_connector)| {
-            // NOTE: we use our own hostname verification for now, this will be later
-            // replaced by a propper one
-            tls_connector.danger_connect_async_without_providing_domain_for_certificate_verification_and_server_name_indication(socket)
+            tls_connector
+                .connect_async(socket)
                 .map_err(|err| ArrowError::connection_error(err))
         });
 

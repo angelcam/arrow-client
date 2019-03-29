@@ -20,17 +20,6 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
 use utils::RuntimeError;
 
-/// Get hostname from a given socket address string.
-pub fn get_hostname<'a>(address: &'a str) -> &'a str {
-    if !address.ends_with(']') {
-        if let Some(delim) = address.rfind(':') {
-            return &address[..delim];
-        }
-    }
-
-    address
-}
-
 /// Get socket address from a given argument.
 pub fn get_socket_address<T>(s: T) -> Result<SocketAddr, RuntimeError>
     where T: ToSocketAddrs {

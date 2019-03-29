@@ -34,7 +34,6 @@ extern crate futures;
 extern crate num_cpus;
 
 extern crate tokio;
-extern crate tokio_codec;
 
 pub mod futures_ex;
 

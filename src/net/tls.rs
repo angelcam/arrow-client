@@ -107,14 +107,20 @@ where
     S: AsyncRead + AsyncWrite,
 {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
-        match self.inner.shutdown() {
-            Ok(_) => (),
-            Err(SslError::WantRead(_)) => return Ok(Async::NotReady),
-            Err(SslError::WantWrite(_)) => return Ok(Async::NotReady),
-            Err(err) => return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("TLS shutdown error: {}", err),
-            )),
+        if let Err(err) = self.inner.shutdown() {
+            match err.into_io_error() {
+                Ok(err) => {
+                    if err.kind() == io::ErrorKind::WouldBlock {
+                        return Ok(Async::NotReady);
+                    } else {
+                        return Err(err);
+                    }
+                }
+                Err(err) => return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("TLS shutdown error: {}", err),
+                )),
+            }
         }
 
         self.inner.get_mut().shutdown()
@@ -144,12 +150,12 @@ where
             Ok(stream) => Ok(Async::Ready(stream.into())),
             Err(HandshakeError::SetupFailure(err)) => Err(TlsError::from(err)),
             Err(HandshakeError::Failure(m)) => Err(TlsError::from(m.into_error())),
-            Err(HandshakeError::Interrupted(m)) => match m.handshake() {
+            Err(HandshakeError::WouldBlock(m)) => match m.handshake() {
                 Ok(stream) => Ok(Async::Ready(stream.into())),
                 Err(HandshakeError::SetupFailure(err)) => Err(TlsError::from(err)),
                 Err(HandshakeError::Failure(m)) => Err(TlsError::from(m.into_error())),
-                Err(HandshakeError::Interrupted(m)) => {
-                    self.handshake = Some(Err(HandshakeError::Interrupted(m)));
+                Err(HandshakeError::WouldBlock(m)) => {
+                    self.handshake = Some(Err(HandshakeError::WouldBlock(m)));
 
                     Ok(Async::NotReady)
                 },
@@ -166,23 +172,20 @@ pub struct TlsConnector {
 
 impl TlsConnector {
     /// Take a given asynchronous stream and perform a TLS handshake.
-    pub fn connect_async<S>(&self, domain: &str, stream: S) -> TlsConnect<S>
+    pub fn connect_async<S>(&self, stream: S) -> TlsConnect<S>
     where
         S: AsyncRead + AsyncWrite,
     {
-        let handshake = self.inner.connect(domain, stream);
-
-        TlsConnect {
-            handshake: Some(handshake),
-        }
-    }
-
-    /// Take a given asynchronous stream and perform a TLS handshake.
-    pub fn danger_connect_async_without_providing_domain_for_certificate_verification_and_server_name_indication<S>(&self, stream: S) -> TlsConnect<S>
-    where
-        S: AsyncRead + AsyncWrite,
-    {
-        let handshake = self.inner.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(stream);
+        // NOTE: We do not need to validate the server name because we use only one root
+        // certificate. It's a self signed certificate issued directly by Angelcam and used
+        // only for Arrow.
+        let handshake = self.inner.configure()
+            .map_err(|err| HandshakeError::from(err))
+            .and_then(move |configuration| {
+                configuration
+                    .verify_hostname(false)
+                    .connect("hostname", stream)
+            });
 
         TlsConnect {
             handshake: Some(handshake),

@@ -24,7 +24,6 @@ use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::Read;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::path::Path;
 use std::str::FromStr;
 
 use svc_table::{
@@ -54,12 +53,7 @@ use json;
 
 use json::JsonValue;
 
-use openssl::ssl;
-
-use openssl::nid::COMMONNAME;
-use openssl::ssl::SSL_VERIFY_PEER;
-use openssl::ssl::{SslConnectorBuilder, SslMethod};
-use openssl::x509::X509StoreContextRef;
+use openssl::ssl::{SslConnector, SslMethod, SslOptions, SslVerifyMode};
 
 use uuid::Uuid;
 
@@ -611,7 +605,7 @@ impl PublicIdentity {
 impl ToJson for PublicIdentity {
     fn to_json(&self) -> JsonValue {
         object!{
-            "uuid" => format!("{}", self.uuid.hyphenated())
+            "uuid" => format!("{}", self.uuid.to_hyphenated_ref())
         }
     }
 }
@@ -683,8 +677,8 @@ impl PersistentConfig {
 impl ToJson for PersistentConfig {
     fn to_json(&self) -> JsonValue {
         object!{
-            "uuid" => format!("{}", self.uuid.hyphenated()),
-            "passwd" => format!("{}", self.passwd.hyphenated()),
+            "uuid" => format!("{}", self.uuid.to_hyphenated_ref()),
+            "passwd" => format!("{}", self.passwd.to_hyphenated_ref()),
             "version" => self.version,
             "svc_table" => self.svc_table.to_json()
         }
@@ -821,36 +815,32 @@ impl ApplicationConfig {
     }
 
     /// Get TLS connector for a given server hostname.
-    pub fn get_tls_connector(&self, hostname: &str) -> Result<TlsConnector, RuntimeError> {
-        let mut builder = SslConnectorBuilder::new(SslMethod::tls())
+    pub fn get_tls_connector(&self) -> Result<TlsConnector, RuntimeError> {
+        let mut builder = SslConnector::builder(SslMethod::tls())
             .map_err(|err| RuntimeError::from(
                 format!("unable to create a TLS connection builder: {}", err)
             ))?;
 
         let mut options = builder.options();
 
-        options.insert(ssl::SSL_OP_NO_COMPRESSION);
-        options.insert(ssl::SSL_OP_NO_SSLV2);
-        options.insert(ssl::SSL_OP_NO_SSLV3);
-        options.insert(ssl::SSL_OP_NO_TLSV1);
-        options.insert(ssl::SSL_OP_NO_TLSV1_1);
+        options.insert(SslOptions::NO_COMPRESSION);
+        options.insert(SslOptions::NO_SSLV2);
+        options.insert(SslOptions::NO_SSLV3);
+        options.insert(SslOptions::NO_TLSV1);
+        options.insert(SslOptions::NO_TLSV1_1);
 
         builder.set_options(options);
 
+        builder.set_verify(SslVerifyMode::PEER);
         builder.set_cipher_list(SSL_CIPHER_LIST)
             .map_err(|err| RuntimeError::from(
                 format!("unable to set TLS cipher list: {}", err)
             ))?;
 
         for ca_cert in &self.ca_certificates {
-            builder.load_ca_certificates(ca_cert)?;
+            builder.set_ca_file(&ca_cert)
+                .map_err(|err| RuntimeError::from(format!("{}", err)))?;
         }
-
-        let hostname = hostname.to_string();
-
-        builder.set_verify_callback(SSL_VERIFY_PEER, move |p, x509| {
-            verify_callback(&hostname, p, x509)
-        });
 
         let connector = TlsConnector::from(builder.build());
 
@@ -1057,123 +1047,6 @@ fn parse_mjpeg_url(url: &str) -> Result<Service, ConfigError> {
     }
 }
 
-/// Verify callback.
-fn verify_callback(
-    hostname: &str,
-    preverify_ok: bool,
-    x509_ctx: &X509StoreContextRef) -> bool {
-    if !preverify_ok || x509_ctx.error_depth() != 0 {
-        return preverify_ok;
-    }
-
-    validate_hostname(hostname, x509_ctx)
-}
-
-/// Validate a given hostname using peer certificate. This function returns
-/// true if there is no CN record or the CN record matches with the given
-/// hostname. False is returned if there is no certificate or the hostname does
-/// not match.
-fn validate_hostname(hostname: &str, x509_ctx: &X509StoreContextRef) -> bool {
-    if let Some(cert) = x509_ctx.current_cert() {
-        let subject_name   = cert.subject_name();
-        let mut cn_entries = subject_name.entries_by_nid(COMMONNAME);
-
-        if let Some(cn) = cn_entries.next() {
-            let cn = cn.data();
-
-            if let Ok(pattern) = str::from_utf8(cn.as_slice()) {
-                validate_hostname_pattern(hostname, pattern)
-            } else {
-                false
-            }
-        } else {
-            true
-        }
-    } else {
-        false
-    }
-}
-
-/// Validate a given hostname against a given wildcard pattern.
-fn validate_hostname_pattern(mut hostname: &str, pattern: &str) -> bool {
-    let mut split = pattern.split('*');
-
-    if !pattern.starts_with('*') {
-        if let Some(fragment) = split.next() {
-            let len = fragment.len();
-
-            if hostname.starts_with(fragment) {
-                hostname = &hostname[len..];
-            } else {
-                return false;
-            }
-        }
-    }
-
-    while let Some(fragment) = split.next() {
-        let len = fragment.len();
-
-        if let Some(pos) = hostname.find(fragment) {
-            hostname = &hostname[pos+len..];
-        } else {
-            return false;
-        }
-    }
-
-    hostname.is_empty() || pattern.ends_with('*')
-}
-
-/// Check if a given file is a certificate file.
-fn is_cert_file<P: AsRef<Path>>(path: P) -> bool {
-    let path = path.as_ref();
-
-    if let Some(ext) = path.extension() {
-        let ext = ext.to_string_lossy();
-
-        match &ext.to_lowercase() as &str {
-            "der" => true,
-            "cer" => true,
-            "crt" => true,
-            "pem" => true,
-            _ => false
-        }
-    } else {
-        false
-    }
-}
-
-/// Simple extension to the SslContextBuilder.
-trait SslConnectorBuilderExt {
-    /// Load all CA certificates from a given path.
-    fn load_ca_certificates<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RuntimeError>;
-}
-
-impl SslConnectorBuilderExt for SslConnectorBuilder {
-    fn load_ca_certificates<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RuntimeError> {
-        let path = path.as_ref();
-
-        if path.is_dir() {
-            let dir = path.read_dir()
-                .map_err(|err| RuntimeError::from(format!("{}", err)))?;
-
-            for entry in dir {
-                let entry = entry.map_err(|err| RuntimeError::from(format!("{}", err)))?;
-
-                let path = entry.path();
-
-                if path.is_dir() || is_cert_file(&path) {
-                    self.load_ca_certificates(&path)?;
-                }
-            }
-
-            Ok(())
-        } else {
-            self.set_ca_file(&path)
-                .map_err(|err| RuntimeError::from(format!("{}", err)))
-        }
-    }
-}
-
 /// Print usage and exit the process with a given exit code.
 pub fn usage(exit_code: i32) -> ! {
     println!("USAGE: arrow-client arr-host[:arr-port] [OPTIONS]\n");
@@ -1182,13 +1055,7 @@ pub fn usage(exit_code: i32) -> ! {
     println!("OPTIONS:\n");
     println!("    -i iface  ethernet interface used for client identification (the first");
     println!("              configured network interface is used by default)");
-    println!("    -c path   path to a CA certificate for Arrow Service identity verification;");
-    println!("              in case the path is a directory, it's scanned recursively for");
-    println!("              all files with the following extensions:\n");
-    println!("              .der");
-    println!("              .cer");
-    println!("              .crr");
-    println!("              .pem\n");
+    println!("    -c path   path to a CA certificate for Arrow Service identity verification");
     if cfg!(feature = "discovery") {
         println!("    -d        automatic service discovery");
     }

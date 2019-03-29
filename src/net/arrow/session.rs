@@ -28,10 +28,9 @@ use futures::sink::Sink;
 
 use tokio;
 
+use tokio::codec::Decoder;
 use tokio::net::TcpStream;
 use tokio::timer::Timeout;
-
-use tokio_codec::Decoder;
 
 use futures_ex::StreamEx;
 
