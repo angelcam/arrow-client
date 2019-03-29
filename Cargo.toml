@@ -34,7 +34,7 @@ opt-level = 0
 debug     = true
 
 [profile.release]
-opt-level     = 3
+opt-level     = "s"
 debug         = false
 panic         = "abort"
 lto           = true
