@@ -24,13 +24,14 @@ use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::Read;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::path::Path;
 use std::str::FromStr;
 
 use json;
 
 use json::JsonValue;
 
-use openssl::ssl::{SslConnector, SslMethod, SslOptions, SslVerifyMode};
+use openssl::ssl::{SslConnector, SslConnectorBuilder, SslMethod, SslOptions, SslVerifyMode};
 
 use uuid::Uuid;
 
@@ -808,9 +809,7 @@ impl ApplicationConfig {
             .map_err(|err| RuntimeError::from(format!("unable to set TLS cipher list: {}", err)))?;
 
         for ca_cert in &self.ca_certificates {
-            builder
-                .set_ca_file(&ca_cert)
-                .map_err(|err| RuntimeError::from(format!("{}", err)))?;
+            builder.load_ca_certificates(&ca_cert)?;
         }
 
         let connector = TlsConnector::from(builder.build());
@@ -903,6 +902,56 @@ fn get_mac(iface: &str) -> Result<MacAddr, ConfigError> {
             "there is no such ethernet device: {}",
             iface
         )))
+}
+
+/// Simple extension to the SslContextBuilder.
+trait SslConnectorBuilderExt {
+    /// Load all CA certificates from a given path.
+    fn load_ca_certificates<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RuntimeError>;
+}
+
+impl SslConnectorBuilderExt for SslConnectorBuilder {
+    fn load_ca_certificates<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RuntimeError> {
+        let path = path.as_ref();
+
+        if path.is_dir() {
+            let dir = path
+                .read_dir()
+                .map_err(|err| RuntimeError::from(format!("{}", err)))?;
+
+            for entry in dir {
+                let path = entry
+                    .map_err(|err| RuntimeError::from(format!("{}", err)))?
+                    .path();
+
+                self.load_ca_certificates(&path)?;
+            }
+        } else if is_cert_file(&path) {
+            self.set_ca_file(&path)
+                .map_err(|err| RuntimeError::from(format!("{}", err)))?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Check if a given file is a certificate file.
+fn is_cert_file<P: AsRef<Path>>(path: P) -> bool {
+    let path = path.as_ref();
+
+    if let Some(ext) = path.extension() {
+        let ext = ext.to_string_lossy();
+
+        match &ext.to_ascii_lowercase() as &str {
+            "der" => true,
+            "cer" => true,
+            "crt" => true,
+            "pem" => true,
+            _ => false,
+        }
+    } else {
+        false
+    }
 }
 
 /// Generate a fake MAC address from a given prefix and socket address.
@@ -1028,7 +1077,13 @@ pub fn usage(exit_code: i32) -> ! {
     println!("OPTIONS:\n");
     println!("    -i iface  ethernet interface used for client identification (the first");
     println!("              configured network interface is used by default)");
-    println!("    -c path   path to a CA certificate for Arrow Service identity verification");
+    println!("    -c path   path to a CA certificate for Arrow Service identity verification;");
+    println!("              in case the path is a directory, it's scanned recursively for");
+    println!("              all files with the following extensions:\n");
+    println!("              .der");
+    println!("              .cer");
+    println!("              .crr");
+    println!("              .pem\n");
     if cfg!(feature = "discovery") {
         println!("    -d        automatic service discovery");
     }
