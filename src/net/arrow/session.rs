@@ -506,6 +506,20 @@ impl SessionManager {
     }
 }
 
+impl Drop for SessionManager {
+    fn drop(&mut self) {
+        for (session_id, mut session) in self.sessions.drain() {
+            log_info!(
+                self.logger,
+                "closing service connection; session ID: {:08x}",
+                session_id
+            );
+
+            session.close();
+        }
+    }
+}
+
 impl Stream for SessionManager {
     type Item = ArrowMessage;
     type Error = ArrowError;
