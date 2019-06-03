@@ -575,6 +575,15 @@ impl ArrowClient {
     }
 }
 
+impl Drop for ArrowClient {
+    fn drop(&mut self) {
+        let mut context = self.context.lock().unwrap();
+
+        // we must mark the context as closed so that the interval task gets terminated
+        context.closed = true;
+    }
+}
+
 impl Sink for ArrowClient {
     type SinkItem = ArrowMessage;
     type SinkError = ArrowError;
