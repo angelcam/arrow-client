@@ -158,6 +158,8 @@ struct ApplicationConfigBuilder {
     diagnostic_mode: bool,
     log_file_size: usize,
     log_file_rotations: usize,
+    pid_file: Option<String>,
+    lock_file: Option<String>,
 }
 
 impl ApplicationConfigBuilder {
@@ -184,6 +186,8 @@ impl ApplicationConfigBuilder {
             diagnostic_mode: false,
             log_file_size: 10 * 1024,
             log_file_rotations: 1,
+            pid_file: None,
+            lock_file: None,
         };
 
         Ok(builder)
@@ -279,6 +283,8 @@ impl ApplicationConfigBuilder {
             default_svc_table: config.svc_table.clone(),
             svc_table: config.svc_table,
             logger: logger,
+            pid_file: self.pid_file,
+            lock_file: self.lock_file,
         };
 
         if self.verbose {
@@ -341,6 +347,10 @@ impl ApplicationConfigBuilder {
                         self.log_file_size(arg)?;
                     } else if arg.starts_with("--log-file-rotations=") {
                         self.log_file_rotations(arg)?;
+                    } else if arg.starts_with("--pid-file=") {
+                        self.pid_file(arg)?
+                    } else if arg.starts_with("--lock-file=") {
+                        self.lock_file(arg)?
                     } else {
                         return Err(ConfigError::from(format!("unknown argument: \"{}\"", arg)));
                     }
@@ -563,6 +573,26 @@ impl ApplicationConfigBuilder {
 
         Ok(())
     }
+
+    /// Process the pid-file argument.
+    fn pid_file(&mut self, arg: &str) -> Result<(), ConfigError> {
+        // skip "--pid-file=" length
+        let pid_file = &arg[11..];
+
+        self.pid_file = Some(pid_file.to_string());
+
+        Ok(())
+    }
+
+    /// Process the lock-file argument.
+    fn lock_file(&mut self, arg: &str) -> Result<(), ConfigError> {
+        // skip "--lock-file=" length
+        let lock_file = &arg[12..];
+
+        self.lock_file = Some(lock_file.to_string());
+
+        Ok(())
+    }
 }
 
 /// Client identification that can be publicly available.
@@ -723,6 +753,8 @@ pub struct ApplicationConfig {
     svc_table: SharedServiceTable,
     default_svc_table: SharedServiceTable,
     logger: BoxLogger,
+    pid_file: Option<String>,
+    lock_file: Option<String>,
 }
 
 impl ApplicationConfig {
@@ -782,6 +814,16 @@ impl ApplicationConfig {
     /// Get logger.
     pub fn get_logger(&self) -> BoxLogger {
         self.logger.clone()
+    }
+
+    /// Get PID file.
+    pub fn get_pid_file(&self) -> Option<&str> {
+        self.pid_file.as_ref().map(|s| s.as_str())
+    }
+
+    /// Get lock file.
+    pub fn get_lock_file(&self) -> Option<&str> {
+        self.lock_file.as_ref().map(|s| s.as_str())
     }
 
     /// Get TLS connector for a given server hostname.
@@ -1125,7 +1167,9 @@ pub fn usage(exit_code: i32) -> ! {
         println!("                        paths used on service discovery (default value:");
         println!("                        /etc/arrow/mjpeg-paths)");
     }
-
+    println!("    --pid-file=path     write PID of the process into a given file");
+    println!("    --lock-file=path    make sure that there is only one instance of the");
+    println!("                        process running");
     println!();
 
     process::exit(exit_code);
