@@ -36,17 +36,12 @@ pub mod runtime;
 pub mod scanner;
 pub mod svc_table;
 
-use std::mem;
 use std::process;
 
 use std::error::Error;
 use std::fmt::Debug;
-use std::fs::File;
-use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-
-use fs2::FileExt;
 
 use futures::{Future, Stream};
 
@@ -55,7 +50,7 @@ use tokio::timer::{Delay, Interval};
 use crate::net::arrow;
 
 use crate::cmd_handler::{Command, CommandChannel};
-use crate::config::{ApplicationConfig, ConfigError};
+use crate::config::ApplicationConfig;
 use crate::context::{ApplicationContext, ConnectionState};
 use crate::net::arrow::{ArrowError, ErrorKind};
 use crate::utils::logger::{BoxLogger, Logger};
@@ -290,31 +285,6 @@ fn diagnose_connection_result(connection_result: &Result<String, ArrowError>) ->
 fn main() {
     let config = result_or_usage(ApplicationConfig::create());
 
-    // write our PID into a given file
-    if let Some(pid_file) = config.get_pid_file() {
-        let res = File::create(pid_file)
-            .and_then(|mut pid_file| pid_file.write_fmt(format_args!("{}\n", process::id())))
-            .map_err(|_| {
-                ConfigError::from(format!("unable to write into PID file \"{}\"", pid_file))
-            });
-
-        result_or_usage(res);
-    }
-
-    // create a lock file
-    let lock_file = config.get_lock_file().map(|lock_file| {
-        let res = File::create(lock_file)
-            .and_then(|lock_file| lock_file.try_lock_exclusive().map(move |_| lock_file))
-            .map_err(|_| {
-                ConfigError::from(format!(
-                    "unable to acquire an exclusive lock on \"{}\"",
-                    lock_file
-                ))
-            });
-
-        result_or_usage(res)
-    });
-
     let context = ApplicationContext::new(config);
 
     let mut logger = context.get_logger();
@@ -351,6 +321,4 @@ fn main() {
 
         arrow_main_task
     }));
-
-    mem::drop(lock_file);
 }

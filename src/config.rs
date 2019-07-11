@@ -22,10 +22,12 @@ use std::env::Args;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::Path;
 use std::str::FromStr;
+
+use fs2::FileExt;
 
 use json;
 
@@ -193,23 +195,77 @@ impl ApplicationConfigBuilder {
         Ok(builder)
     }
 
-    /// Build application configuration.
-    fn build(self) -> Result<ApplicationConfig, ConfigError> {
-        let mut logger = match self.logger_type {
+    /// Create a lock file (if specified).
+    fn create_lock_file(&self) -> Result<Option<File>, ConfigError> {
+        self.lock_file
+            .as_ref()
+            .map(|lock_file| {
+                File::create(lock_file)
+                    .and_then(|mut lock_file| {
+                        lock_file.try_lock_exclusive()?;
+                        lock_file.write_fmt(format_args!("{}\n", process::id()))?;
+                        lock_file.flush()?;
+                        lock_file.sync_all()?;
+
+                        Ok(lock_file)
+                    })
+                    .map_err(|_| {
+                        ConfigError::from(format!(
+                            "unable to acquire an exclusive lock on \"{}\"",
+                            lock_file
+                        ))
+                    })
+            })
+            .transpose()
+    }
+
+    /// Create PID file (if specified).
+    fn create_pid_file(&self) -> Result<(), ConfigError> {
+        self.pid_file
+            .as_ref()
+            .map(|pid_file| {
+                File::create(pid_file)
+                    .and_then(|mut pid_file| {
+                        pid_file.write_fmt(format_args!("{}\n", process::id()))
+                    })
+                    .map_err(|_| {
+                        ConfigError::from(format!("unable to write into PID file \"{}\"", pid_file))
+                    })
+            })
+            .transpose()
+            .map(|_| ())
+    }
+
+    /// Create a new logger.
+    fn create_logger(&self) -> Result<BoxLogger, ConfigError> {
+        let logger = match self.logger_type {
             LoggerType::Syslog => BoxLogger::new(logger::syslog::new()),
             LoggerType::Stderr => BoxLogger::new(logger::stderr::new()),
             LoggerType::StderrPretty => BoxLogger::new(logger::stderr::new_pretty()),
-            LoggerType::FileLogger => BoxLogger::new(
+            LoggerType::FileLogger => {
                 logger::file::new(&self.log_file, self.log_file_size, self.log_file_rotations)
+                    .map(|logger| BoxLogger::new(logger))
                     .map_err(|_| {
                         ConfigError::from(format!(
                             "unable to open the given log file: \"{}\"",
                             self.log_file
                         ))
-                    })?,
-            ),
+                    })?
+            }
         };
 
+        Ok(logger)
+    }
+
+    /// Build application configuration.
+    fn build(self) -> Result<ApplicationConfig, ConfigError> {
+        let lock_file = self.create_lock_file()?;
+
+        self.create_pid_file()?;
+
+        let mut logger = self.create_logger()?;
+
+        // read config skeleton
         let config_skeleton = utils::result_or_log(
             &mut logger,
             Severity::WARN,
@@ -220,6 +276,7 @@ impl ApplicationConfigBuilder {
             PersistentConfig::load(&self.config_file_skel),
         );
 
+        // read config
         let config = utils::result_or_log(
             &mut logger,
             Severity::WARN,
@@ -256,6 +313,7 @@ impl ApplicationConfigBuilder {
             );
         }
 
+        // create identity file
         if let Some(identity_file) = self.identity_file {
             let identity = config.to_identity();
 
@@ -283,8 +341,7 @@ impl ApplicationConfigBuilder {
             default_svc_table: config.svc_table.clone(),
             svc_table: config.svc_table,
             logger: logger,
-            pid_file: self.pid_file,
-            lock_file: self.lock_file,
+            _lock_file: lock_file,
         };
 
         if self.verbose {
@@ -753,8 +810,7 @@ pub struct ApplicationConfig {
     svc_table: SharedServiceTable,
     default_svc_table: SharedServiceTable,
     logger: BoxLogger,
-    pid_file: Option<String>,
-    lock_file: Option<String>,
+    _lock_file: Option<File>,
 }
 
 impl ApplicationConfig {
@@ -814,16 +870,6 @@ impl ApplicationConfig {
     /// Get logger.
     pub fn get_logger(&self) -> BoxLogger {
         self.logger.clone()
-    }
-
-    /// Get PID file.
-    pub fn get_pid_file(&self) -> Option<&str> {
-        self.pid_file.as_ref().map(|s| s.as_str())
-    }
-
-    /// Get lock file.
-    pub fn get_lock_file(&self) -> Option<&str> {
-        self.lock_file.as_ref().map(|s| s.as_str())
     }
 
     /// Get TLS connector for a given server hostname.
