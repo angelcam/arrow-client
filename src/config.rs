@@ -160,7 +160,6 @@ struct ApplicationConfigBuilder {
     diagnostic_mode: bool,
     log_file_size: usize,
     log_file_rotations: usize,
-    pid_file: Option<String>,
     lock_file: Option<String>,
 }
 
@@ -188,7 +187,6 @@ impl ApplicationConfigBuilder {
             diagnostic_mode: false,
             log_file_size: 10 * 1024,
             log_file_rotations: 1,
-            pid_file: None,
             lock_file: None,
         };
 
@@ -219,23 +217,6 @@ impl ApplicationConfigBuilder {
             .transpose()
     }
 
-    /// Create PID file (if specified).
-    fn create_pid_file(&self) -> Result<(), ConfigError> {
-        self.pid_file
-            .as_ref()
-            .map(|pid_file| {
-                File::create(pid_file)
-                    .and_then(|mut pid_file| {
-                        pid_file.write_fmt(format_args!("{}\n", process::id()))
-                    })
-                    .map_err(|_| {
-                        ConfigError::from(format!("unable to write into PID file \"{}\"", pid_file))
-                    })
-            })
-            .transpose()
-            .map(|_| ())
-    }
-
     /// Create a new logger.
     fn create_logger(&self) -> Result<BoxLogger, ConfigError> {
         let logger = match self.logger_type {
@@ -260,8 +241,6 @@ impl ApplicationConfigBuilder {
     /// Build application configuration.
     fn build(self) -> Result<ApplicationConfig, ConfigError> {
         let lock_file = self.create_lock_file()?;
-
-        self.create_pid_file()?;
 
         let mut logger = self.create_logger()?;
 
@@ -404,8 +383,6 @@ impl ApplicationConfigBuilder {
                         self.log_file_size(arg)?;
                     } else if arg.starts_with("--log-file-rotations=") {
                         self.log_file_rotations(arg)?;
-                    } else if arg.starts_with("--pid-file=") {
-                        self.pid_file(arg)?
                     } else if arg.starts_with("--lock-file=") {
                         self.lock_file(arg)?
                     } else {
@@ -627,16 +604,6 @@ impl ApplicationConfigBuilder {
         let mjpeg_paths_file = &arg[14..];
 
         self.mjpeg_paths_file = mjpeg_paths_file.to_string();
-
-        Ok(())
-    }
-
-    /// Process the pid-file argument.
-    fn pid_file(&mut self, arg: &str) -> Result<(), ConfigError> {
-        // skip "--pid-file=" length
-        let pid_file = &arg[11..];
-
-        self.pid_file = Some(pid_file.to_string());
 
         Ok(())
     }
@@ -1213,9 +1180,9 @@ pub fn usage(exit_code: i32) -> ! {
         println!("                        paths used on service discovery (default value:");
         println!("                        /etc/arrow/mjpeg-paths)");
     }
-    println!("    --pid-file=path     write PID of the process into a given file");
     println!("    --lock-file=path    make sure that there is only one instance of the");
-    println!("                        process running");
+    println!("                        process running; the file will contain also PID of the");
+    println!("                        process");
     println!();
 
     process::exit(exit_code);
