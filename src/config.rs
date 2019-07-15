@@ -22,10 +22,12 @@ use std::env::Args;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::Path;
 use std::str::FromStr;
+
+use fs2::FileExt;
 
 use json;
 
@@ -158,6 +160,7 @@ struct ApplicationConfigBuilder {
     diagnostic_mode: bool,
     log_file_size: usize,
     log_file_rotations: usize,
+    lock_file: Option<String>,
 }
 
 impl ApplicationConfigBuilder {
@@ -184,28 +187,64 @@ impl ApplicationConfigBuilder {
             diagnostic_mode: false,
             log_file_size: 10 * 1024,
             log_file_rotations: 1,
+            lock_file: None,
         };
 
         Ok(builder)
     }
 
-    /// Build application configuration.
-    fn build(self) -> Result<ApplicationConfig, ConfigError> {
-        let mut logger = match self.logger_type {
+    /// Create a lock file (if specified).
+    fn create_lock_file(&self) -> Result<Option<File>, ConfigError> {
+        self.lock_file
+            .as_ref()
+            .map(|lock_file| {
+                File::create(lock_file)
+                    .and_then(|mut lock_file| {
+                        lock_file.try_lock_exclusive()?;
+                        lock_file.write_fmt(format_args!("{}\n", process::id()))?;
+                        lock_file.flush()?;
+                        lock_file.sync_all()?;
+
+                        Ok(lock_file)
+                    })
+                    .map_err(|_| {
+                        ConfigError::from(format!(
+                            "unable to acquire an exclusive lock on \"{}\"",
+                            lock_file
+                        ))
+                    })
+            })
+            .transpose()
+    }
+
+    /// Create a new logger.
+    fn create_logger(&self) -> Result<BoxLogger, ConfigError> {
+        let logger = match self.logger_type {
             LoggerType::Syslog => BoxLogger::new(logger::syslog::new()),
             LoggerType::Stderr => BoxLogger::new(logger::stderr::new()),
             LoggerType::StderrPretty => BoxLogger::new(logger::stderr::new_pretty()),
-            LoggerType::FileLogger => BoxLogger::new(
+            LoggerType::FileLogger => {
                 logger::file::new(&self.log_file, self.log_file_size, self.log_file_rotations)
+                    .map(|logger| BoxLogger::new(logger))
                     .map_err(|_| {
                         ConfigError::from(format!(
                             "unable to open the given log file: \"{}\"",
                             self.log_file
                         ))
-                    })?,
-            ),
+                    })?
+            }
         };
 
+        Ok(logger)
+    }
+
+    /// Build application configuration.
+    fn build(self) -> Result<ApplicationConfig, ConfigError> {
+        let lock_file = self.create_lock_file()?;
+
+        let mut logger = self.create_logger()?;
+
+        // read config skeleton
         let config_skeleton = utils::result_or_log(
             &mut logger,
             Severity::WARN,
@@ -216,6 +255,7 @@ impl ApplicationConfigBuilder {
             PersistentConfig::load(&self.config_file_skel),
         );
 
+        // read config
         let config = utils::result_or_log(
             &mut logger,
             Severity::WARN,
@@ -252,6 +292,7 @@ impl ApplicationConfigBuilder {
             );
         }
 
+        // create identity file
         if let Some(identity_file) = self.identity_file {
             let identity = config.to_identity();
 
@@ -279,6 +320,7 @@ impl ApplicationConfigBuilder {
             default_svc_table: config.svc_table.clone(),
             svc_table: config.svc_table,
             logger: logger,
+            _lock_file: lock_file,
         };
 
         if self.verbose {
@@ -341,6 +383,8 @@ impl ApplicationConfigBuilder {
                         self.log_file_size(arg)?;
                     } else if arg.starts_with("--log-file-rotations=") {
                         self.log_file_rotations(arg)?;
+                    } else if arg.starts_with("--lock-file=") {
+                        self.lock_file(arg)?
                     } else {
                         return Err(ConfigError::from(format!("unknown argument: \"{}\"", arg)));
                     }
@@ -563,6 +607,16 @@ impl ApplicationConfigBuilder {
 
         Ok(())
     }
+
+    /// Process the lock-file argument.
+    fn lock_file(&mut self, arg: &str) -> Result<(), ConfigError> {
+        // skip "--lock-file=" length
+        let lock_file = &arg[12..];
+
+        self.lock_file = Some(lock_file.to_string());
+
+        Ok(())
+    }
 }
 
 /// Client identification that can be publicly available.
@@ -723,6 +777,7 @@ pub struct ApplicationConfig {
     svc_table: SharedServiceTable,
     default_svc_table: SharedServiceTable,
     logger: BoxLogger,
+    _lock_file: Option<File>,
 }
 
 impl ApplicationConfig {
@@ -1125,7 +1180,9 @@ pub fn usage(exit_code: i32) -> ! {
         println!("                        paths used on service discovery (default value:");
         println!("                        /etc/arrow/mjpeg-paths)");
     }
-
+    println!("    --lock-file=path    make sure that there is only one instance of the");
+    println!("                        process running; the file will contain also PID of the");
+    println!("                        process");
     println!();
 
     process::exit(exit_code);
