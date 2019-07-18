@@ -10,7 +10,7 @@ dependencies = [
 
 [[package]]
 name = "arrow-client"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "bytes 0.4.12 (registry+https://github.com/rust-lang/crates.io-index)",
  "cc 1.0.37 (registry+https://github.com/rust-lang/crates.io-index)",
