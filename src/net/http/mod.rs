@@ -167,7 +167,7 @@ impl Request {
         let mut path = url.path().to_string();
 
         if let Some(query) = url.query() {
-            path += query;
+            path += &format!("?{}", query);
         }
 
         let app_version = env!("CARGO_PKG_VERSION");
