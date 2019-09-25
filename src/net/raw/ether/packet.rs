@@ -111,7 +111,7 @@ impl EtherPacketHeader {
 }
 
 impl Serialize for EtherPacketHeader {
-    fn serialize(&self, w: &mut Write) -> io::Result<()> {
+    fn serialize(&self, w: &mut dyn Write) -> io::Result<()> {
         w.write_all(utils::as_bytes(&self.raw_header()))
     }
 }
@@ -162,7 +162,7 @@ impl EtherPacketBody for Box<[u8]> {}
 /// Ethernet packet.
 pub struct EtherPacket {
     header: EtherPacketHeader,
-    body: Box<EtherPacketBody>,
+    body: Box<dyn EtherPacketBody>,
 }
 
 impl EtherPacket {
@@ -228,7 +228,7 @@ impl EtherPacket {
 }
 
 impl Serialize for EtherPacket {
-    fn serialize(&self, w: &mut Write) -> io::Result<()> {
+    fn serialize(&self, w: &mut dyn Write) -> io::Result<()> {
         self.header.serialize(w)?;
         self.body.serialize(w)?;
 

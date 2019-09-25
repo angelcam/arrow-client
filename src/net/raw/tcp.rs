@@ -118,7 +118,7 @@ impl TcpPacket {
 }
 
 impl Ipv4PacketBody for TcpPacket {
-    fn serialize(&self, iph: &Ipv4PacketHeader, w: &mut Write) -> io::Result<()> {
+    fn serialize(&self, iph: &Ipv4PacketHeader, w: &mut dyn Write) -> io::Result<()> {
         let rh = RawTcpPacketHeader::new(iph, self);
 
         w.write_all(utils::as_bytes(&rh))?;

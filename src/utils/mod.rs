@@ -35,18 +35,18 @@ use crate::utils::logger::{Logger, Severity};
 /// Helper trait for getting Any reference to an object.
 pub trait AsAny {
     /// Get Any reference to this object.
-    fn as_any(&self) -> &Any;
+    fn as_any(&self) -> &dyn Any;
 
     /// Get mutable Any reference to this object.
-    fn as_any_mut(&mut self) -> &mut Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 impl<T: Any + 'static> AsAny for T {
-    fn as_any(&self) -> &Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
-    fn as_any_mut(&mut self) -> &mut Any {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 }

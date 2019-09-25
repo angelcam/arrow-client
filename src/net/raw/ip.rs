@@ -76,7 +76,7 @@ impl Ipv4PacketHeader {
     }
 
     /// Serialize header in-place using a given writer.
-    fn serialize(&self, body: &Ipv4PacketBody, w: &mut Write) -> io::Result<()> {
+    fn serialize(&self, body: &dyn Ipv4PacketBody, w: &mut dyn Write) -> io::Result<()> {
         let rh = RawIpv4PacketHeader::new(self, body.len(self));
 
         w.write_all(utils::as_bytes(&rh))?;
@@ -215,14 +215,14 @@ impl From<u8> for Ipv4PacketType {
 /// Common trait for IPv4 body implementations.
 pub trait Ipv4PacketBody: AsAny + Send {
     /// Serialize the packet body in-place using a given writer.
-    fn serialize(&self, iph: &Ipv4PacketHeader, w: &mut Write) -> io::Result<()>;
+    fn serialize(&self, iph: &Ipv4PacketHeader, w: &mut dyn Write) -> io::Result<()>;
 
     /// Get body length.
     fn len(&self, iph: &Ipv4PacketHeader) -> usize;
 }
 
 impl Ipv4PacketBody for Vec<u8> {
-    fn serialize(&self, _: &Ipv4PacketHeader, w: &mut Write) -> io::Result<()> {
+    fn serialize(&self, _: &Ipv4PacketHeader, w: &mut dyn Write) -> io::Result<()> {
         w.write_all(self)
     }
 
@@ -234,7 +234,7 @@ impl Ipv4PacketBody for Vec<u8> {
 /// IPv4 packet.
 pub struct Ipv4Packet {
     header: Ipv4PacketHeader,
-    body: Box<Ipv4PacketBody>,
+    body: Box<dyn Ipv4PacketBody>,
 }
 
 impl Ipv4Packet {
@@ -304,7 +304,7 @@ impl Ipv4Packet {
 }
 
 impl Serialize for Ipv4Packet {
-    fn serialize(&self, w: &mut Write) -> io::Result<()> {
+    fn serialize(&self, w: &mut dyn Write) -> io::Result<()> {
         self.header.serialize(self.body.as_ref(), w)?;
         self.body.serialize(&self.header, w)?;
 
