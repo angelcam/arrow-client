@@ -347,7 +347,7 @@ impl Response {
 
 /// Future response. This struct implements the Futere trait yielding Response.
 pub struct FutureResponse {
-    inner: Box<Future<Item = Response, Error = Error>>,
+    inner: Box<dyn Future<Item = Response, Error = Error>>,
 }
 
 impl FutureResponse {
@@ -374,7 +374,7 @@ impl Future for FutureResponse {
 /// HTTP client codec.
 pub struct ClientCodec {
     hdecoder: GenericResponseHeaderDecoder,
-    bdecoder: Option<Box<MessageBodyDecoder>>,
+    bdecoder: Option<Box<dyn MessageBodyDecoder>>,
     header: Option<GenericResponseHeader>,
     max_line_length: usize,
     ignore_response_body: bool,
@@ -408,7 +408,7 @@ impl Decoder for ClientCodec {
             if let Some(header) = self.hdecoder.decode(data)? {
                 let status_code = header.status_code();
 
-                let bdecoder: Box<MessageBodyDecoder>;
+                let bdecoder: Box<dyn MessageBodyDecoder>;
 
                 if status_code >= 100 && status_code < 200 {
                     bdecoder = Box::new(FixedSizeBodyDecoder::new(0, self.ignore_response_body));

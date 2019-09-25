@@ -93,21 +93,21 @@ pub trait Logger: Send {
 /// Helper trait for implementing Clone to the BoxLogger.
 pub trait CloneableLogger: Logger {
     /// Clone as trait object.
-    fn clone(&self) -> Box<CloneableLogger + Send + Sync>;
+    fn clone(&self) -> Box<dyn CloneableLogger + Send + Sync>;
 }
 
 impl<T> CloneableLogger for T
 where
     T: 'static + Logger + Clone + Send + Sync,
 {
-    fn clone(&self) -> Box<CloneableLogger + Send + Sync> {
+    fn clone(&self) -> Box<dyn CloneableLogger + Send + Sync> {
         Box::new(<T as Clone>::clone(self))
     }
 }
 
 /// Abstraction from a concrete logger type.
 pub struct BoxLogger {
-    logger: Box<CloneableLogger + Send + Sync>,
+    logger: Box<dyn CloneableLogger + Send + Sync>,
 }
 
 impl BoxLogger {

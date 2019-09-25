@@ -205,7 +205,7 @@ pub struct ControlMessage {
     /// Message header.
     header: ControlMessageHeader,
     /// Message body.
-    body: Box<ControlMessageBody>,
+    body: Box<dyn ControlMessageBody>,
 }
 
 impl ControlMessage {
@@ -309,7 +309,7 @@ impl ControlMessage {
     fn decode_body(
         mtype: ControlMessageType,
         bytes: &[u8],
-    ) -> Result<Box<ControlMessageBody>, DecodeError> {
+    ) -> Result<Box<dyn ControlMessageBody>, DecodeError> {
         match mtype {
             ControlMessageType::ACK => ControlMessage::decode_ack_message(bytes),
             ControlMessageType::PING => ControlMessage::decode_empty_message(bytes),
@@ -329,7 +329,7 @@ impl ControlMessage {
     }
 
     /// Decode an ACK message from given data.
-    fn decode_ack_message(bytes: &[u8]) -> Result<Box<ControlMessageBody>, DecodeError> {
+    fn decode_ack_message(bytes: &[u8]) -> Result<Box<dyn ControlMessageBody>, DecodeError> {
         if let Some(msg) = AckMessage::from_bytes(bytes)? {
             Ok(Box::new(msg))
         } else {
@@ -338,7 +338,7 @@ impl ControlMessage {
     }
 
     /// Decode a REDIRECT message from given data.
-    fn decode_redirect_message(bytes: &[u8]) -> Result<Box<ControlMessageBody>, DecodeError> {
+    fn decode_redirect_message(bytes: &[u8]) -> Result<Box<dyn ControlMessageBody>, DecodeError> {
         if let Some(msg) = RedirectMessage::from_bytes(bytes)? {
             Ok(Box::new(msg))
         } else {
@@ -347,7 +347,7 @@ impl ControlMessage {
     }
 
     /// Decode a HUP message from given data.
-    fn decode_hup_message(bytes: &[u8]) -> Result<Box<ControlMessageBody>, DecodeError> {
+    fn decode_hup_message(bytes: &[u8]) -> Result<Box<dyn ControlMessageBody>, DecodeError> {
         if let Some(msg) = HupMessage::from_bytes(bytes)? {
             Ok(Box::new(msg))
         } else {
@@ -356,7 +356,7 @@ impl ControlMessage {
     }
 
     /// Decode an empty message from given data (i.e. just check there is no data).
-    fn decode_empty_message(bytes: &[u8]) -> Result<Box<ControlMessageBody>, DecodeError> {
+    fn decode_empty_message(bytes: &[u8]) -> Result<Box<dyn ControlMessageBody>, DecodeError> {
         if bytes.len() == 0 {
             Ok(Box::new(EmptyMessage))
         } else {

@@ -141,7 +141,7 @@ impl IcmpPacket {
 }
 
 impl Ipv4PacketBody for IcmpPacket {
-    fn serialize(&self, _: &Ipv4PacketHeader, w: &mut Write) -> io::Result<()> {
+    fn serialize(&self, _: &Ipv4PacketHeader, w: &mut dyn Write) -> io::Result<()> {
         let raw_header = self.raw_header();
 
         let payload = self.body.as_ref();

@@ -23,11 +23,11 @@ use std::io::Write;
 /// Common trait for serializable objects.
 pub trait Serialize {
     /// Serialize this object using a given writer.
-    fn serialize(&self, w: &mut Write) -> io::Result<()>;
+    fn serialize(&self, w: &mut dyn Write) -> io::Result<()>;
 }
 
 impl Serialize for Box<[u8]> {
-    fn serialize(&self, w: &mut Write) -> io::Result<()> {
+    fn serialize(&self, w: &mut dyn Write) -> io::Result<()> {
         w.write_all(self.as_ref())
     }
 }

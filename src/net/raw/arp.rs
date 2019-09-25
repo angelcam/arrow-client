@@ -145,7 +145,7 @@ impl ArpPacket {
 }
 
 impl Serialize for ArpPacket {
-    fn serialize(&self, w: &mut Write) -> io::Result<()> {
+    fn serialize(&self, w: &mut dyn Write) -> io::Result<()> {
         let rh = RawArpPacketHeader::new(self);
 
         w.write_all(utils::as_bytes(&rh))?;

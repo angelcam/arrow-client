@@ -178,7 +178,7 @@ impl CommandHandlerContext {
 /// Command handler. It implements the future trait and it's designed to be used in combination
 /// with tokio event loop.
 pub struct CommandHandler {
-    handler: Box<Future<Item = (), Error = ()> + Send + Sync>,
+    handler: Box<dyn Future<Item = (), Error = ()> + Send + Sync>,
 }
 
 impl CommandHandler {

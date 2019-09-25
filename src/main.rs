@@ -246,9 +246,9 @@ fn process_connection_error(
 
 /// Process a given connection retry object.
 fn wait_for_retry(
-    logger: &mut Logger,
+    logger: &mut dyn Logger,
     connection_retry: ConnectionRetry,
-) -> Box<Future<Item = (), Error = ()> + Send + Sync> {
+) -> Box<dyn Future<Item = (), Error = ()> + Send + Sync> {
     match connection_retry {
         ConnectionRetry::Timeout(t) if t > 0.5 => {
             log_info!(logger, "retrying in {:.3} seconds", t);

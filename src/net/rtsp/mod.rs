@@ -342,7 +342,7 @@ impl Response {
 
 /// Future response. This struct implements the Futere trait yielding Response.
 pub struct FutureResponse {
-    inner: Box<Future<Item = Response, Error = Error>>,
+    inner: Box<dyn Future<Item = Response, Error = Error>>,
 }
 
 impl FutureResponse {

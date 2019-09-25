@@ -222,9 +222,9 @@ impl Capture {
     where
         F: FnMut(&[u8]),
     {
-        let mut callback: Box<FnMut(&[u8])> = Box::new(callback);
+        let mut callback: Box<dyn FnMut(&[u8])> = Box::new(callback);
 
-        let misc = &mut callback as *mut Box<FnMut(&[u8])>;
+        let misc = &mut callback as *mut Box<dyn FnMut(&[u8])>;
 
         let res = unsafe {
             pcap_dispatch(
@@ -343,7 +343,7 @@ unsafe extern "C" fn capture_packet_callback(
     header: *const pcap_pkthdr,
     data: *const c_uchar,
 ) {
-    let callback = misc as *mut Box<FnMut(&[u8])>;
+    let callback = misc as *mut Box<dyn FnMut(&[u8])>;
     let header = &*header;
 
     let data = slice::from_raw_parts(data as *const u8, header.caplen as usize);

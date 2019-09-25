@@ -417,7 +417,7 @@ where
 
 /// Wrapper around a boxed future.
 struct FutureResult<T> {
-    inner: Box<Future<Item = T, Error = DiscoveryError>>,
+    inner: Box<dyn Future<Item = T, Error = DiscoveryError>>,
 }
 
 impl<T> FutureResult<T> {
