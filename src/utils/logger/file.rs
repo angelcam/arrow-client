@@ -130,10 +130,10 @@ pub fn new(path: &str, limit: usize, rotations: usize) -> io::Result<FileLogger>
     let logger = InternalFileLogger {
         level: Severity::INFO,
         path: path.to_string(),
-        file: file,
+        file,
         written: written as usize,
-        limit: limit,
-        rotations: rotations,
+        limit,
+        rotations,
     };
 
     let logger = FileLogger {

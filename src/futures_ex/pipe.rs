@@ -35,7 +35,7 @@ where
 {
     Pipe {
         stream: stream.fuse(),
-        sink: sink,
+        sink,
         buffered: None,
     }
 }

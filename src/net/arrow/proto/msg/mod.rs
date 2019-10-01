@@ -56,19 +56,19 @@ pub struct ArrowMessageHeader {
 impl ArrowMessageHeader {
     /// Create a new Arrow Message header with a given service ID, session ID
     /// and payload size.
-    fn new(service: u16, session: u32, size: u32) -> ArrowMessageHeader {
-        ArrowMessageHeader {
+    fn new(service: u16, session: u32, size: u32) -> Self {
+        Self {
             version: ARROW_PROTOCOL_VERSION,
-            service: service,
+            service,
             session: session & ((1 << 24) - 1),
-            size: size,
+            size,
         }
     }
 }
 
 impl Encode for ArrowMessageHeader {
     fn encode(&self, buf: &mut BytesMut) {
-        let be_header = ArrowMessageHeader {
+        let be_header = Self {
             version: self.version,
             service: self.service.to_be(),
             session: self.session.to_be(),
@@ -80,13 +80,13 @@ impl Encode for ArrowMessageHeader {
 }
 
 impl FromBytes for ArrowMessageHeader {
-    fn from_bytes(bytes: &[u8]) -> Result<Option<ArrowMessageHeader>, DecodeError> {
-        assert_eq!(bytes.len(), mem::size_of::<ArrowMessageHeader>());
+    fn from_bytes(bytes: &[u8]) -> Result<Option<Self>, DecodeError> {
+        assert_eq!(bytes.len(), mem::size_of::<Self>());
 
-        let ptr = bytes.as_ptr() as *const ArrowMessageHeader;
+        let ptr = bytes.as_ptr() as *const Self;
         let header = unsafe { &*ptr };
 
-        let res = ArrowMessageHeader {
+        let res = Self {
             version: header.version,
             service: u16::from_be(header.service),
             session: u32::from_be(header.session) & ((1 << 24) - 1),
@@ -116,7 +116,7 @@ pub struct ArrowMessage {
 
 impl ArrowMessage {
     /// Create a new Arrow Message with a given service ID, session ID and payload.
-    pub fn new<B>(service: u16, session: u32, body: B) -> ArrowMessage
+    pub fn new<B>(service: u16, session: u32, body: B) -> Self
     where
         B: ArrowMessageBody + 'static,
     {
@@ -124,7 +124,7 @@ impl ArrowMessage {
 
         body.encode(&mut payload);
 
-        ArrowMessage {
+        Self {
             header: ArrowMessageHeader::new(service, session, 0),
             payload: payload.freeze(),
         }
@@ -142,8 +142,8 @@ impl ArrowMessage {
 }
 
 impl From<ControlMessage> for ArrowMessage {
-    fn from(cmsg: ControlMessage) -> ArrowMessage {
-        ArrowMessage::new(0, 0, cmsg)
+    fn from(cmsg: ControlMessage) -> Self {
+        Self::new(0, 0, cmsg)
     }
 }
 
@@ -162,7 +162,7 @@ impl Encode for ArrowMessage {
 }
 
 impl Decode for ArrowMessage {
-    fn decode(buf: &mut BytesMut) -> Result<Option<ArrowMessage>, DecodeError> {
+    fn decode(buf: &mut BytesMut) -> Result<Option<Self>, DecodeError> {
         let hsize = mem::size_of::<ArrowMessageHeader>();
 
         if buf.len() < hsize {
@@ -179,10 +179,7 @@ impl Decode for ArrowMessage {
             let message = buf.split_to(msize);
             let payload = message.freeze().split_off(hsize);
 
-            let msg = ArrowMessage {
-                header: header,
-                payload: payload,
-            };
+            let msg = Self { header, payload };
 
             Ok(Some(msg))
         } else {

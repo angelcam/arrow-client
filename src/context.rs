@@ -43,10 +43,10 @@ pub enum ConnectionState {
 impl ConnectionState {
     /// Get string representation of the state.
     fn as_str(&self) -> &str {
-        match self {
-            &ConnectionState::Connected => "connected",
-            &ConnectionState::Disconnected => "disconnected",
-            &ConnectionState::Unauthorized => "unauthorized",
+        match &self {
+            Self::Connected => "connected",
+            Self::Disconnected => "disconnected",
+            Self::Unauthorized => "unauthorized",
         }
     }
 }
@@ -68,10 +68,10 @@ struct ApplicationContextData {
 
 impl ApplicationContextData {
     /// Take a given application config and create application context data.
-    fn new(config: ApplicationConfig) -> ApplicationContextData {
-        ApplicationContextData {
+    fn new(config: ApplicationConfig) -> Self {
+        Self {
             logger: config.get_logger(),
-            config: config,
+            config,
             scanning: false,
             scan_result: ScanResult::new(),
             conn_state: ConnectionState::Disconnected,
@@ -145,8 +145,8 @@ pub struct ApplicationContext {
 
 impl ApplicationContext {
     /// Take a given application config and create a new application context.
-    pub fn new(config: ApplicationConfig) -> ApplicationContext {
-        ApplicationContext {
+    pub fn new(config: ApplicationConfig) -> Self {
+        Self {
             data: Arc::new(Mutex::new(ApplicationContextData::new(config))),
         }
     }

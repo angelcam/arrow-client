@@ -38,8 +38,8 @@ impl Display for ParseError {
 }
 
 impl<'a> From<&'a str> for ParseError {
-    fn from(msg: &'a str) -> ParseError {
-        ParseError {
+    fn from(msg: &'a str) -> Self {
+        Self {
             msg: msg.to_string(),
         }
     }
@@ -66,14 +66,11 @@ impl<'a> Reader<'a> {
         // matching methods would not work.
         let current = input.clone().next();
 
-        Reader {
-            input: input,
-            current: current,
-        }
+        Reader { input, current }
     }
 
     /// Get current character (if any) without advancing the input.
-    pub fn current_char(&mut self) -> Option<char> {
+    pub fn current_char(&self) -> Option<char> {
         self.current
     }
 
@@ -82,7 +79,7 @@ impl<'a> Reader<'a> {
         let res = self
             .input
             .next()
-            .ok_or(ParseError::from("input is empty"))?;
+            .ok_or_else(|| ParseError::from("input is empty"))?;
 
         // Peek for the next character without advancing the input.
         self.current = self.input.clone().next();
@@ -94,7 +91,7 @@ impl<'a> Reader<'a> {
     pub fn match_char(&mut self, expected: char) -> Result<()> {
         let c = self
             .current_char()
-            .ok_or(ParseError::from("input is empty"))?;
+            .ok_or_else(|| ParseError::from("input is empty"))?;
 
         if c != expected {
             return Err(ParseError::from("unexpected character"));
@@ -146,8 +143,8 @@ impl<'a> Reader<'a> {
     /// Read a decimal integer as u32. The method skips all the initial
     /// whitespace (if any).
     pub fn read_decimal_u32(&mut self) -> Result<u32> {
-        let mut res = 0u32;
-        let mut cnt = 0u32;
+        let mut res = 0_u32;
+        let mut cnt = 0_u32;
 
         self.skip_whitespace();
 
@@ -177,7 +174,7 @@ impl<'a> Reader<'a> {
     {
         let rest = self.input.as_str();
 
-        let index = rest.find(cnd).unwrap_or(rest.len());
+        let index = rest.find(cnd).unwrap_or_else(|| rest.len());
 
         let (word, rest) = rest.split_at(index);
 
@@ -198,7 +195,7 @@ impl<'a> Reader<'a> {
     }
 
     /// Check if the reader is empty.
-    pub fn is_empty(&mut self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.current_char().is_none()
     }
 

@@ -92,6 +92,7 @@ struct ArrowMainTask {
 
 impl ArrowMainTask {
     /// Create a new task.
+    #[allow(clippy::new_ret_no_self)]
     fn new(
         app_context: ApplicationContext,
         cmd_channel: CommandChannel,
@@ -104,15 +105,15 @@ impl ArrowMainTask {
 
         let pairing_mode_timeout = t + PAIRING_MODE_TIMEOUT;
 
-        let task = ArrowMainTask {
-            app_context: app_context,
-            cmd_channel: cmd_channel,
-            logger: logger,
+        let task = Self {
+            app_context,
+            cmd_channel,
+            logger,
             default_addr: addr.clone(),
             current_addr: addr,
             last_attempt: t,
-            pairing_mode_timeout: pairing_mode_timeout,
-            diagnostic_mode: diagnostic_mode,
+            pairing_mode_timeout,
+            diagnostic_mode,
         };
 
         let task = Arc::new(Mutex::new(task));
@@ -206,8 +207,8 @@ enum SuspendReason {
 impl SuspendReason {
     fn to_string(&self) -> &str {
         match *self {
-            SuspendReason::NotInPairingMode => "pairing window timeout",
-            SuspendReason::UnsupportedProtocolVersion => "unsupported protocol version",
+            Self::NotInPairingMode => "pairing window timeout",
+            Self::UnsupportedProtocolVersion => "unsupported protocol version",
         }
     }
 }
@@ -272,9 +273,9 @@ fn wait_for_retry(
 /// connection was successful or the server responded with UNAUTHORIZED,
 /// otherwise exit with exit code 1.
 fn diagnose_connection_result(connection_result: &Result<String, ArrowError>) -> ! {
-    match connection_result {
-        &Ok(_) => process::exit(0),
-        &Err(ref err) => match err.kind() {
+    match &connection_result {
+        Ok(_) => process::exit(0),
+        Err(ref err) => match err.kind() {
             ErrorKind::Unauthorized => process::exit(0),
             _ => process::exit(1),
         },

@@ -63,10 +63,10 @@ struct SessionContext {
 
 impl SessionContext {
     /// Create a new session context for a given service ID and session ID.
-    fn new(service_id: u16, session_id: u32) -> SessionContext {
-        SessionContext {
-            service_id: service_id,
-            session_id: session_id,
+    fn new(service_id: u16, session_id: u32) -> Self {
+        Self {
+            service_id,
+            session_id,
             input: BytesMut::with_capacity(8192),
             output: BytesMut::with_capacity(8192),
             input_ready: None,
@@ -94,7 +94,7 @@ impl SessionContext {
 
             // we MUST notify any possible task consuming the output buffer that
             // there is some data available again
-            if self.output.len() > 0 {
+            if !self.output.is_empty() {
                 if let Some(task) = self.output_ready.take() {
                     task.notify();
                 }
@@ -117,7 +117,7 @@ impl SessionContext {
             task.notify();
         }
 
-        if data.len() > 0 {
+        if !data.is_empty() {
             let message = ArrowMessage::new(self.service_id, self.session_id, data);
 
             Ok(Async::Ready(Some(message)))
@@ -156,20 +156,20 @@ impl SessionContext {
 
         // we MUST notify any possible task consuming the input buffer that
         // there is some data available again
-        if self.input.len() > 0 {
+        if !self.input.is_empty() {
             if let Some(task) = self.input_ready.take() {
                 task.notify();
             }
         }
 
-        if msg.len() > 0 {
+        if msg.is_empty() {
+            Ok(AsyncSink::Ready)
+        } else {
             // save the current task and wait until there is some space in
             // the input buffer again
             self.input_empty = Some(task::current());
 
             Ok(AsyncSink::NotReady(msg))
-        } else {
-            Ok(AsyncSink::Ready)
         }
     }
 
@@ -177,13 +177,13 @@ impl SessionContext {
     /// * `Async::Ready(())` if the input buffer is empty
     /// * `Async::NotReady` if the buffer is not empty
     fn flush_input_buffer(&mut self) -> Poll<(), ConnectionError> {
-        if self.input.len() > 0 {
+        if self.input.is_empty() {
+            Ok(Async::Ready(()))
+        } else {
             // save the current task and wait until the input buffer is empty
             self.input_empty = Some(task::current());
 
             Ok(Async::NotReady)
-        } else {
-            Ok(Async::Ready(()))
         }
     }
 
@@ -195,7 +195,7 @@ impl SessionContext {
     fn take_output_data(&mut self) -> Poll<Option<Bytes>, ConnectionError> {
         let data = self.output.take().freeze();
 
-        if data.len() > 0 {
+        if !data.is_empty() {
             Ok(Async::Ready(Some(data)))
         } else if self.closed {
             Ok(Async::Ready(None))
@@ -244,10 +244,10 @@ struct Session {
 
 impl Session {
     /// Create a new session for a given service ID and session ID.
-    fn new(service_id: u16, session_id: u32) -> Session {
+    fn new(service_id: u16, session_id: u32) -> Self {
         let context = SessionContext::new(service_id, session_id);
 
-        Session {
+        Self {
             context: Arc::new(Mutex::new(context)),
         }
     }
@@ -350,16 +350,13 @@ pub struct SessionManager {
 
 impl SessionManager {
     /// Create a new session manager.
-    pub fn new(
-        app_context: ApplicationContext,
-        cmsg_factory: ControlMessageFactory,
-    ) -> SessionManager {
+    pub fn new(app_context: ApplicationContext, cmsg_factory: ControlMessageFactory) -> Self {
         let svc_table = app_context.get_service_table();
 
-        SessionManager {
+        Self {
             logger: app_context.get_logger(),
             svc_table: svc_table.boxed(),
-            cmsg_factory: cmsg_factory,
+            cmsg_factory,
             cmsg_queue: VecDeque::new(),
             sessions: HashMap::new(),
             poll_order: VecDeque::new(),
@@ -411,22 +408,18 @@ impl SessionManager {
 
     /// Take a given session object.
     fn take_session(&mut self, service_id: u16, session_id: u32) -> Result<Session, ArrowError> {
-        if !self.sessions.contains_key(&session_id) {
+        let session = if let Some(session) = self.sessions.remove(&session_id) {
+            session
+        } else {
             let session = self.connect(service_id, session_id)?;
-
-            self.sessions.insert(session_id, session);
-
             self.poll_order.push_back(session_id);
-
             // notify the message consuming task
             if let Some(task) = self.new_session.take() {
                 task.notify();
             }
-        }
-
-        let session = self.sessions.remove(&session_id);
-
-        Ok(session.unwrap())
+            session
+        };
+        Ok(session)
     }
 
     /// Connect to a given service and create an associated session object
@@ -435,15 +428,14 @@ impl SessionManager {
         let svc = self
             .svc_table
             .get(service_id)
-            .ok_or(ArrowError::other(format!(
-                "unknown service ID: {:04x}",
-                service_id
-            )))?;
+            .ok_or_else(|| ArrowError::other(format!("unknown service ID: {:04x}", service_id)))?;
 
-        let addr = svc.address().ok_or(ArrowError::other(format!(
-            "there is no address for a given service; service ID: {:04x}",
-            service_id
-        )))?;
+        let addr = svc.address().ok_or_else(|| {
+            ArrowError::other(format!(
+                "there is no address for a given service; service ID: {:04x}",
+                service_id
+            ))
+        })?;
 
         log_info!(
             self.logger,

@@ -42,7 +42,7 @@ impl MessageBody for RedirectMessage {
 impl ControlMessageBody for RedirectMessage {}
 
 impl FromBytes for RedirectMessage {
-    fn from_bytes(bytes: &[u8]) -> Result<Option<RedirectMessage>, DecodeError> {
+    fn from_bytes(bytes: &[u8]) -> Result<Option<Self>, DecodeError> {
         let length = bytes.len();
 
         if length == 0 || bytes[length - 1] != 0 {
@@ -55,7 +55,7 @@ impl FromBytes for RedirectMessage {
         let target = str::from_utf8(bytes)
             .map_err(|_| DecodeError::from("malformed Arrow Control Protocol REDIRECT message"))?;
 
-        let msg = RedirectMessage {
+        let msg = Self {
             target: target.to_string(),
         };
 

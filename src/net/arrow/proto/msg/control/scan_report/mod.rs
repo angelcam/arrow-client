@@ -36,8 +36,8 @@ struct ScanReportMessageHeader {
 }
 
 impl<'a> From<&'a ScanReportMessage> for ScanReportMessageHeader {
-    fn from(message: &'a ScanReportMessage) -> ScanReportMessageHeader {
-        ScanReportMessageHeader {
+    fn from(message: &'a ScanReportMessage) -> Self {
+        Self {
             request_id: message.request_id,
         }
     }
@@ -45,7 +45,7 @@ impl<'a> From<&'a ScanReportMessage> for ScanReportMessageHeader {
 
 impl Encode for ScanReportMessageHeader {
     fn encode(&self, buf: &mut BytesMut) {
-        let be_header = ScanReportMessageHeader {
+        let be_header = Self {
             request_id: self.request_id.to_be(),
         };
 
@@ -62,11 +62,11 @@ pub struct ScanReportMessage {
 
 impl ScanReportMessage {
     /// Create a new SCAN_REPORT message.
-    pub fn new<T>(request_id: u16, scan_result: ScanResult, svc_table: &T) -> ScanReportMessage
+    pub fn new<T>(request_id: u16, scan_result: ScanResult, svc_table: &T) -> Self
     where
         T: ServiceTable,
     {
-        let hosts = scan_result.hosts().map(|host| host.clone());
+        let hosts = scan_result.hosts().cloned();
 
         let host_table = HostTable::from(hosts);
 
@@ -80,10 +80,10 @@ impl ScanReportMessage {
 
         let svc_table = SimpleServiceTable::from(services);
 
-        ScanReportMessage {
-            request_id: request_id,
-            host_table: host_table,
-            svc_table: svc_table,
+        Self {
+            request_id,
+            host_table,
+            svc_table,
         }
     }
 }

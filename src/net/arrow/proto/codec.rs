@@ -52,7 +52,7 @@ impl Decoder for ArrowCodec {
     type Error = ArrowError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        ArrowMessage::decode(src).map_err(|err| ArrowError::from(err))
+        ArrowMessage::decode(src).map_err(ArrowError::from)
     }
 }
 
@@ -76,10 +76,10 @@ impl Decoder for RawCodec {
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let bytes = src.take().freeze();
 
-        if bytes.len() > 0 {
-            Ok(Some(bytes))
-        } else {
+        if bytes.is_empty() {
             Ok(None)
+        } else {
+            Ok(Some(bytes))
         }
     }
 }

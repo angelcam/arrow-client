@@ -33,9 +33,9 @@ where
 {
     s.to_socket_addrs()
         .ok()
-        .ok_or(RuntimeError::from("unable to get socket address"))?
+        .ok_or_else(|| RuntimeError::from("unable to get socket address"))?
         .next()
-        .ok_or(RuntimeError::from("unable to get socket address"))
+        .ok_or_else(|| RuntimeError::from("unable to get socket address"))
 }
 
 /// Asynchronously get socket address from a given argument.
@@ -71,10 +71,11 @@ impl Ipv4AddrEx for Ipv4Addr {
     fn from_slice(bytes: &[u8]) -> Ipv4Addr {
         assert_eq!(bytes.len(), 4);
 
+        #[allow(clippy::cast_ptr_alignment)]
         let ptr = bytes.as_ptr() as *const u32;
         let addr = unsafe { u32::from_be(*ptr) };
 
-        Ipv4Addr::from(addr)
+        Self::from(addr)
     }
 
     fn as_u32(&self) -> u32 {
@@ -97,16 +98,16 @@ pub trait IpAddrEx {
 
 impl IpAddrEx for IpAddr {
     fn bytes(&self) -> [u8; 16] {
-        match self {
-            &IpAddr::V4(ref ip_addr) => ip_addr.bytes(),
-            &IpAddr::V6(ref ip_addr) => ip_addr.bytes(),
+        match &self {
+            Self::V4(ref ip_addr) => ip_addr.bytes(),
+            Self::V6(ref ip_addr) => ip_addr.bytes(),
         }
     }
 
     fn version(&self) -> u8 {
-        match self {
-            &IpAddr::V4(ref ip_addr) => ip_addr.version(),
-            &IpAddr::V6(ref ip_addr) => ip_addr.version(),
+        match &self {
+            Self::V4(ref ip_addr) => ip_addr.version(),
+            Self::V6(ref ip_addr) => ip_addr.version(),
         }
     }
 }
@@ -114,11 +115,9 @@ impl IpAddrEx for IpAddr {
 impl IpAddrEx for Ipv4Addr {
     fn bytes(&self) -> [u8; 16] {
         let octets = self.octets();
-        let mut res = [0u8; 16];
+        let mut res = [0_u8; 16];
 
-        for i in 0..octets.len() {
-            res[i] = octets[i];
-        }
+        res[0..octets.len()].clone_from_slice(&octets[..]);
 
         res
     }
@@ -131,10 +130,9 @@ impl IpAddrEx for Ipv4Addr {
 impl IpAddrEx for Ipv6Addr {
     fn bytes(&self) -> [u8; 16] {
         let segments = self.segments();
-        let mut res = [0u8; 16];
+        let mut res = [0_u8; 16];
 
-        for i in 0..segments.len() {
-            let segment = segments[i];
+        for (i, segment) in segments.iter().enumerate() {
             let j = i << 1;
             res[j] = (segment >> 8) as u8;
             res[j + 1] = (segment & 0xff) as u8;
@@ -155,7 +153,7 @@ mod test {
     #[test]
     #[should_panic]
     fn test_slice_to_ipv4addr_1() {
-        let buffer = [0u8; 3];
+        let buffer = [0_u8; 3];
         Ipv4Addr::from_slice(&buffer);
     }
 
@@ -170,6 +168,6 @@ mod test {
     #[test]
     fn test_ipv4addr_to_u32() {
         let addr = Ipv4Addr::new(192, 168, 2, 5);
-        assert_eq!(0xc0a80205, addr.as_u32());
+        assert_eq!(0xc0a8_0205, addr.as_u32());
     }
 }

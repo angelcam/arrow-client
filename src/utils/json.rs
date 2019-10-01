@@ -40,20 +40,20 @@ impl Display for ParseError {
 }
 
 impl From<String> for ParseError {
-    fn from(msg: String) -> ParseError {
-        ParseError { msg: msg }
+    fn from(msg: String) -> Self {
+        Self { msg }
     }
 }
 
 impl<'a> From<&'a str> for ParseError {
-    fn from(msg: &'a str) -> ParseError {
-        ParseError::from(msg.to_string())
+    fn from(msg: &'a str) -> Self {
+        Self::from(msg.to_string())
     }
 }
 
 impl From<json::Error> for ParseError {
-    fn from(err: json::Error) -> ParseError {
-        ParseError::from(err.description())
+    fn from(err: json::Error) -> Self {
+        Self::from(err.description())
     }
 }
 

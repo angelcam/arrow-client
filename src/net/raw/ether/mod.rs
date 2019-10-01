@@ -41,8 +41,8 @@ impl Display for AddrParseError {
 }
 
 impl<'a> From<&'a str> for AddrParseError {
-    fn from(msg: &'a str) -> AddrParseError {
-        AddrParseError {
+    fn from(msg: &'a str) -> Self {
+        Self {
             msg: msg.to_string(),
         }
     }
@@ -56,26 +56,26 @@ pub struct MacAddr {
 
 impl MacAddr {
     /// Create a new MAC address with all octets set to zero.
-    pub fn zero() -> MacAddr {
-        MacAddr { bytes: [0; 6] }
+    pub fn zero() -> Self {
+        Self { bytes: [0; 6] }
     }
 
     /// Create a new MAC address.
-    pub fn new(a: u8, b: u8, c: u8, d: u8, e: u8, f: u8) -> MacAddr {
-        MacAddr {
-            bytes: [a, b, c, d, e, f],
+    pub fn new(e0: u8, e1: u8, e2: u8, e3: u8, e4: u8, e5: u8) -> Self {
+        Self {
+            bytes: [e0, e1, e2, e3, e4, e5],
         }
     }
 
     /// Get address octets.
-    pub fn octets(&self) -> [u8; 6] {
+    pub fn octets(self) -> [u8; 6] {
         self.bytes
     }
 
     /// Crete address from slice.
-    pub fn from_slice(bytes: &[u8]) -> MacAddr {
+    pub fn from_slice(bytes: &[u8]) -> Self {
         assert_eq!(bytes.len(), 6);
-        MacAddr::new(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
+        Self::new(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
     }
 }
 
@@ -100,13 +100,15 @@ impl FromStr for MacAddr {
         let octets = s
             .split(':')
             .map(|x| {
-                u8::from_str_radix(x, 16).or(Err(AddrParseError::from(
-                    "unable to parse a MAC address, invalid octet",
-                )))
+                u8::from_str_radix(x, 16).or_else(|_| {
+                    Err(AddrParseError::from(
+                        "unable to parse a MAC address, invalid octet",
+                    ))
+                })
             })
             .collect::<Vec<_>>();
         if octets.len() == 6 {
-            Ok(MacAddr::new(
+            Ok(Self::new(
                 octets[0].clone()?,
                 octets[1].clone()?,
                 octets[2].clone()?,

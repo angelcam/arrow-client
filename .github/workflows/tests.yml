@@ -65,18 +65,17 @@ jobs:
           command: fmt
           args: --all -- --check
 
-#  clippy:
-#    name: Clippy
-#    needs: [ install_pcap ]
-#    runs-on: ubuntu-latest
-#    steps:
-#      - uses: actions/checkout@v1
-#      - uses: actions-rs/toolchain@v1
-#        with:
-#          toolchain: stable
-#          override: true
-#      - run: rustup component add clippy
-#      - uses: actions-rs/cargo@v1.0.1
-#        with:
-#          command: clippy
-#          args: -- -D warnings
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - run: rustup component add clippy
+      - uses: actions-rs/cargo@v1.0.1
+        with:
+          command: clippy
+          args: -- -D warnings

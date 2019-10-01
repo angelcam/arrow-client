@@ -25,10 +25,8 @@ pub struct UpdateMessage {
 
 impl UpdateMessage {
     /// Create a new UPDATE message.
-    pub fn new(svc_table: SimpleServiceTable) -> UpdateMessage {
-        UpdateMessage {
-            svc_table: svc_table,
-        }
+    pub fn new(svc_table: SimpleServiceTable) -> Self {
+        Self { svc_table }
     }
 }
 

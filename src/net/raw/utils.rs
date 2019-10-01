@@ -66,7 +66,7 @@ pub unsafe fn sum_raw_be(data: *const u8, size: usize) -> u32 {
 /// Convert given 32-bit unsigned sum into 16-bit unsigned checksum.
 pub fn sum_to_checksum(sum: u32) -> u16 {
     let mut checksum = sum;
-    while (checksum & 0xffff0000) != 0 {
+    while (checksum & 0xffff_0000) != 0 {
         let hw = checksum >> 16;
         let lw = checksum & 0xffff;
         checksum = lw + hw;
@@ -101,6 +101,6 @@ mod tests {
 
     #[test]
     fn test_sum_to_checksum() {
-        assert_eq!(!0x00003333, sum_to_checksum(0x11112222));
+        assert_eq!(!0x0000_3333, sum_to_checksum(0x1111_2222));
     }
 }

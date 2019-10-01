@@ -127,17 +127,17 @@ struct ServiceTableElement {
 
 impl ServiceTableElement {
     /// Create a new Control Protocol service table element.
-    fn control() -> ServiceTableElement {
-        ServiceTableElement::new(0, Service::control(), true, true)
+    fn control() -> Self {
+        Self::new(0, Service::control(), true, true)
     }
 
     /// Create a new service table element.
-    fn new(id: u16, svc: Service, static_svc: bool, enabled: bool) -> ServiceTableElement {
-        ServiceTableElement {
-            id: id,
+    fn new(id: u16, svc: Service, static_svc: bool, enabled: bool) -> Self {
+        Self {
+            id,
             service: svc,
             static_service: static_svc,
-            enabled: enabled,
+            enabled,
             last_seen: get_utc_timestamp(),
             active: true,
         }
@@ -207,28 +207,27 @@ impl FromJson for ServiceTableElement {
         let svc_type = service
             .get("svc_type")
             .and_then(|v| v.as_u16())
-            .ok_or(ParseError::from("missing field \"svc_type\""))?;
+            .ok_or_else(|| ParseError::from("missing field \"svc_type\""))?;
         let mac = service
             .get("mac")
             .and_then(|v| v.as_str())
-            .ok_or(ParseError::from("missing field \"mac\""))?;
+            .ok_or_else(|| ParseError::from("missing field \"mac\""))?;
         let address = service
             .get("address")
             .and_then(|v| v.as_str())
-            .ok_or(ParseError::from("missing field \"address\""))?;
+            .ok_or_else(|| ParseError::from("missing field \"address\""))?;
         let path = service
             .get("path")
             .and_then(|v| v.as_str())
-            .ok_or(ParseError::from("missing field \"path\""))?;
+            .ok_or_else(|| ParseError::from("missing field \"path\""))?;
 
         let epath = String::new();
-        let opath;
 
-        if path.len() > 0 {
-            opath = Some(path.to_string());
+        let opath = if path.is_empty() {
+            None
         } else {
-            opath = None;
-        }
+            Some(path.to_string())
+        };
 
         let mac = mac
             .parse()
@@ -262,18 +261,18 @@ impl FromJson for ServiceTableElement {
         let last_seen = service
             .get("last_seen")
             .and_then(|v| v.as_i64())
-            .unwrap_or(get_utc_timestamp());
+            .unwrap_or_else(get_utc_timestamp);
         let active = service
             .get("active")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
-        let elem = ServiceTableElement {
-            id: id,
+        let elem = Self {
+            id,
             service: svc?,
             static_service: static_svc,
-            last_seen: last_seen,
-            active: active,
+            last_seen,
+            active,
             enabled: false,
         };
 
@@ -291,7 +290,7 @@ struct ServiceTableData {
 
 impl ServiceTableData {
     /// Create a new instance of ServiceTableData.
-    fn new() -> ServiceTableData {
+    fn new() -> Self {
         let elem = ServiceTableElement::control();
 
         let mut identifier_map = HashMap::new();
@@ -301,9 +300,9 @@ impl ServiceTableData {
 
         service_map.insert(elem.id, elem);
 
-        ServiceTableData {
-            identifier_map: identifier_map,
-            service_map: service_map,
+        Self {
+            identifier_map,
+            service_map,
             version: 0,
         }
     }
@@ -315,7 +314,7 @@ impl ServiceTableData {
 
     /// Get visible service for a given ID.
     fn get(&self, id: u16) -> Option<Service> {
-        if let Some(ref elem) = self.service_map.get(&id) {
+        if let Some(elem) = self.service_map.get(&id) {
             if elem.is_visible() || elem.service.is_control() {
                 Some(elem.to_service())
             } else {
@@ -412,7 +411,7 @@ impl ServiceTableData {
     fn update(&mut self, svc: Service, static_svc: bool, enabled: bool) -> u16 {
         let key = svc.to_service_identifier();
 
-        let id = self.identifier_map.get(&key).map(|id| *id);
+        let id = self.identifier_map.get(&key).copied();
 
         if let Some(id) = id {
             self.update_element(id, svc, enabled)
@@ -452,7 +451,7 @@ impl ToJson for ServiceTableData {
 
 impl FromJson for ServiceTableData {
     fn from_json(value: JsonValue) -> Result<Self, ParseError> {
-        let mut res = ServiceTableData::new();
+        let mut res = Self::new();
 
         let mut table;
 
@@ -464,7 +463,7 @@ impl FromJson for ServiceTableData {
 
         let tmp = table
             .remove("services")
-            .ok_or(ParseError::from("missing field \"services\""))?;
+            .ok_or_else(|| ParseError::from("missing field \"services\""))?;
 
         let services;
 
@@ -503,7 +502,7 @@ pub struct ServiceTableIterator {
 
 impl ServiceTableIterator {
     /// Create a new service table iterator.
-    fn new<'a, I>(elements: I) -> ServiceTableIterator
+    fn new<'a, I>(elements: I) -> Self
     where
         I: IntoIterator<Item = &'a ServiceTableElement>,
     {
@@ -512,7 +511,7 @@ impl ServiceTableIterator {
             .map(|elem| (elem.id, elem.to_service()))
             .collect::<Vec<_>>();
 
-        ServiceTableIterator {
+        Self {
             elements: elements.into_iter(),
         }
     }
@@ -531,12 +530,18 @@ pub struct SharedServiceTable {
     data: Arc<Mutex<ServiceTableData>>,
 }
 
-impl SharedServiceTable {
-    /// Create a new shared service table.
-    pub fn new() -> SharedServiceTable {
-        SharedServiceTable {
+impl Default for SharedServiceTable {
+    fn default() -> Self {
+        Self {
             data: Arc::new(Mutex::new(ServiceTableData::new())),
         }
+    }
+}
+
+impl SharedServiceTable {
+    /// Create a new shared service table.
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Get version of the service table.
@@ -568,10 +573,10 @@ impl SharedServiceTable {
 }
 
 impl Clone for SharedServiceTable {
-    fn clone(&self) -> SharedServiceTable {
+    fn clone(&self) -> Self {
         let cloned = self.data.lock().unwrap().clone();
 
-        SharedServiceTable {
+        Self {
             data: Arc::new(Mutex::new(cloned)),
         }
     }
@@ -607,7 +612,7 @@ impl FromJson for SharedServiceTable {
     fn from_json(value: JsonValue) -> Result<Self, ParseError> {
         let data = ServiceTableData::from_json(value)?;
 
-        let res = SharedServiceTable {
+        let res = Self {
             data: Arc::new(Mutex::new(data)),
         };
 
@@ -673,7 +678,7 @@ fn test_visible_services_iterator() {
     let svc_3 = Service::rtsp(mac, addr, "/3".to_string());
 
     table.update(svc_1.clone(), true, true);
-    table.update(svc_2.clone(), true, false);
+    table.update(svc_2, true, false);
     table.update(svc_3.clone(), true, true);
 
     let mut visible = table.visible().collect::<Vec<_>>();
@@ -840,7 +845,7 @@ fn test_deserialization_and_initialization() {
 
     internal.update(control.clone(), true, true);
 
-    assert_eq!(internal.get(0), Some(control.clone()));
+    assert_eq!(internal.get(0), Some(control));
     assert_eq!(internal.get_id(&key), Some(0));
     assert_eq!(internal.service_map.len(), 6);
     assert_eq!(internal.identifier_map.len(), 6);
@@ -854,8 +859,8 @@ fn test_deserialization_and_initialization() {
         vec![
             (1, svc_1.clone()),
             (2, svc_2.clone()),
-            (3, svc_3.clone()),
-            (10000, svc_4.clone()),
+            (3, svc_3),
+            (10000, svc_4),
             (33402, svc_5.clone()),
         ]
     );
@@ -869,14 +874,7 @@ fn test_deserialization_and_initialization() {
 
     visible.sort_by_key(|&(id, _)| id);
 
-    assert_eq!(
-        visible,
-        vec![
-            (1, svc_1.clone()),
-            (2, svc_2.clone()),
-            (33402, svc_5.clone()),
-        ]
-    );
+    assert_eq!(visible, vec![(1, svc_1), (2, svc_2), (33402, svc_5),]);
 
     assert_eq!(internal.version(), 5);
 }

@@ -33,11 +33,11 @@ pub struct HostRecord {
 
 impl HostRecord {
     /// Create a new instance of host record.
-    pub fn new(mac: MacAddr, ip: IpAddr, flags: u8) -> HostRecord {
-        HostRecord {
-            flags: flags,
-            mac: mac,
-            ip: ip,
+    pub fn new(mac: MacAddr, ip: IpAddr, flags: u8) -> Self {
+        Self {
+            flags,
+            mac,
+            ip,
             ports: HashSet::new(),
         }
     }
@@ -84,7 +84,7 @@ impl<'a> Iterator for PortIterator<'a> {
     type Item = u16;
 
     fn next(&mut self) -> Option<u16> {
-        self.inner.next().map(|port| *port)
+        self.inner.next().cloned()
     }
 }
 

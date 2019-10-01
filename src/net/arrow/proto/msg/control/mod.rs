@@ -52,14 +52,14 @@ pub use self::svc_table::SimpleServiceTable;
 pub use self::status::STATUS_FLAG_SCAN;
 
 // error codes
-pub const EC_NO_ERROR: u32 = 0x00000000;
-pub const EC_UNSUPPORTED_PROTOCOL_VERSION: u32 = 0x00000001;
-pub const EC_UNAUTHORIZED: u32 = 0x00000002;
-pub const EC_CONNECTION_ERROR: u32 = 0x00000003;
-pub const EC_INTERNAL_SERVER_ERROR: u32 = 0xffffffff;
+pub const EC_NO_ERROR: u32 = 0x0000_0000;
+pub const EC_UNSUPPORTED_PROTOCOL_VERSION: u32 = 0x0000_0001;
+pub const EC_UNAUTHORIZED: u32 = 0x0000_0002;
+pub const EC_CONNECTION_ERROR: u32 = 0x0000_0003;
+pub const EC_INTERNAL_SERVER_ERROR: u32 = 0xffff_ffff;
 
 // unused error codes
-//pub const EC_UNSUPPORTED_METHOD:           u32 = 0x00000004;
+//pub const EC_UNSUPPORTED_METHOD:           u32 = 0x0000_0004;
 
 // message type constants
 const CMSG_ACK: u16 = 0x0000;
@@ -95,23 +95,21 @@ pub enum ControlMessageType {
 }
 
 impl ControlMessageType {
-    fn code(&self) -> u16 {
-        match *self {
-            ControlMessageType::ACK => CMSG_ACK,
-            ControlMessageType::PING => CMSG_PING,
-            ControlMessageType::REGISTER => CMSG_REGISTER,
-            ControlMessageType::REDIRECT => CMSG_REDIRECT,
-            ControlMessageType::UPDATE => CMSG_UPDATE,
-            ControlMessageType::HUP => CMSG_HUP,
-            ControlMessageType::RESET_SVC_TABLE => CMSG_RESET_SVC_TABLE,
-            ControlMessageType::SCAN_NETWORK => CMSG_SCAN_NETWORK,
-            ControlMessageType::GET_STATUS => CMSG_GET_STATUS,
-            ControlMessageType::STATUS => CMSG_STATUS,
-            ControlMessageType::GET_SCAN_REPORT => CMSG_GET_SCAN_REPORT,
-            ControlMessageType::SCAN_REPORT => CMSG_SCAN_REPORT,
-            ControlMessageType::UNKNOWN => {
-                panic!("UNKNOWN Control Protocol message type has no code")
-            }
+    fn code(self) -> u16 {
+        match self {
+            Self::ACK => CMSG_ACK,
+            Self::PING => CMSG_PING,
+            Self::REGISTER => CMSG_REGISTER,
+            Self::REDIRECT => CMSG_REDIRECT,
+            Self::UPDATE => CMSG_UPDATE,
+            Self::HUP => CMSG_HUP,
+            Self::RESET_SVC_TABLE => CMSG_RESET_SVC_TABLE,
+            Self::SCAN_NETWORK => CMSG_SCAN_NETWORK,
+            Self::GET_STATUS => CMSG_GET_STATUS,
+            Self::STATUS => CMSG_STATUS,
+            Self::GET_SCAN_REPORT => CMSG_GET_SCAN_REPORT,
+            Self::SCAN_REPORT => CMSG_SCAN_REPORT,
+            Self::UNKNOWN => panic!("UNKNOWN Control Protocol message type has no code"),
         }
     }
 }
@@ -128,15 +126,12 @@ pub struct ControlMessageHeader {
 
 impl ControlMessageHeader {
     /// Create a new Control Protocol message header.
-    fn new(msg_id: u16, msg_type: u16) -> ControlMessageHeader {
-        ControlMessageHeader {
-            msg_id: msg_id,
-            msg_type: msg_type,
-        }
+    fn new(msg_id: u16, msg_type: u16) -> Self {
+        Self { msg_id, msg_type }
     }
 
     /// Get message type.
-    pub fn message_type(&self) -> ControlMessageType {
+    pub fn message_type(self) -> ControlMessageType {
         match self.msg_type {
             CMSG_ACK => ControlMessageType::ACK,
             CMSG_PING => ControlMessageType::PING,
@@ -157,7 +152,7 @@ impl ControlMessageHeader {
 
 impl Encode for ControlMessageHeader {
     fn encode(&self, buf: &mut BytesMut) {
-        let be_header = ControlMessageHeader {
+        let be_header = Self {
             msg_id: self.msg_id.to_be(),
             msg_type: self.msg_type.to_be(),
         };
@@ -167,13 +162,13 @@ impl Encode for ControlMessageHeader {
 }
 
 impl FromBytes for ControlMessageHeader {
-    fn from_bytes(bytes: &[u8]) -> Result<Option<ControlMessageHeader>, DecodeError> {
-        assert_eq!(bytes.len(), mem::size_of::<ControlMessageHeader>());
+    fn from_bytes(bytes: &[u8]) -> Result<Option<Self>, DecodeError> {
+        assert_eq!(bytes.len(), mem::size_of::<Self>());
 
-        let ptr = bytes.as_ptr() as *const ControlMessageHeader;
+        let ptr = bytes.as_ptr() as *const Self;
         let header = unsafe { &*ptr };
 
-        let header = ControlMessageHeader {
+        let header = Self {
             msg_id: u16::from_be(header.msg_id),
             msg_type: u16::from_be(header.msg_type),
         };
@@ -210,13 +205,13 @@ pub struct ControlMessage {
 
 impl ControlMessage {
     /// Create a new ACK Control Protocol message.
-    pub fn ack(msg_id: u16, err: u32) -> ControlMessage {
-        ControlMessage::new(msg_id, ControlMessageType::ACK, AckMessage::new(err))
+    pub fn ack(msg_id: u16, err: u32) -> Self {
+        Self::new(msg_id, ControlMessageType::ACK, AckMessage::new(err))
     }
 
     /// Create a new HUP Control Protocol message.
-    pub fn hup(msg_id: u16, session_id: u32, error_code: u32) -> ControlMessage {
-        ControlMessage::new(
+    pub fn hup(msg_id: u16, session_id: u32, error_code: u32) -> Self {
+        Self::new(
             msg_id,
             ControlMessageType::HUP,
             HupMessage::new(session_id, error_code),
@@ -224,13 +219,8 @@ impl ControlMessage {
     }
 
     /// Create a new STATUS Control Protocol message.
-    pub fn status(
-        msg_id: u16,
-        request_id: u16,
-        status_flags: u32,
-        active_sessions: u32,
-    ) -> ControlMessage {
-        ControlMessage::new(
+    pub fn status(msg_id: u16, request_id: u16, status_flags: u32, active_sessions: u32) -> Self {
+        Self::new(
             msg_id,
             ControlMessageType::STATUS,
             StatusMessage::new(request_id, status_flags, active_sessions),
@@ -243,11 +233,11 @@ impl ControlMessage {
         request_id: u16,
         scan_result: ScanResult,
         svc_table: &T,
-    ) -> ControlMessage
+    ) -> Self
     where
         T: ServiceTable,
     {
-        ControlMessage::new(
+        Self::new(
             msg_id,
             ControlMessageType::SCAN_REPORT,
             ScanReportMessage::new(request_id, scan_result, svc_table),
@@ -255,8 +245,8 @@ impl ControlMessage {
     }
 
     /// Create a new PING Control Protocol message.
-    pub fn ping(msg_id: u16) -> ControlMessage {
-        ControlMessage::new(msg_id, ControlMessageType::PING, EmptyMessage)
+    pub fn ping(msg_id: u16) -> Self {
+        Self::new(msg_id, ControlMessageType::PING, EmptyMessage)
     }
 
     /// Create a new REGISTER Control Protocol message.
@@ -266,8 +256,8 @@ impl ControlMessage {
         uuid: [u8; 16],
         password: [u8; 16],
         svc_table: SimpleServiceTable,
-    ) -> ControlMessage {
-        ControlMessage::new(
+    ) -> Self {
+        Self::new(
             msg_id,
             ControlMessageType::REGISTER,
             RegisterMessage::new(mac, uuid, password, svc_table),
@@ -275,8 +265,8 @@ impl ControlMessage {
     }
 
     /// Create a new UPDATE Control Protocol message.
-    pub fn update(msg_id: u16, svc_table: SimpleServiceTable) -> ControlMessage {
-        ControlMessage::new(
+    pub fn update(msg_id: u16, svc_table: SimpleServiceTable) -> Self {
+        Self::new(
             msg_id,
             ControlMessageType::UPDATE,
             UpdateMessage::new(svc_table),
@@ -284,11 +274,11 @@ impl ControlMessage {
     }
 
     /// Create a new Control Protocol message.
-    fn new<B>(msg_id: u16, msg_type: ControlMessageType, body: B) -> ControlMessage
+    fn new<B>(msg_id: u16, msg_type: ControlMessageType, body: B) -> Self
     where
         B: ControlMessageBody + 'static,
     {
-        ControlMessage {
+        Self {
             header: ControlMessageHeader::new(msg_id, msg_type.code()),
             body: Box::new(body),
         }
@@ -311,14 +301,14 @@ impl ControlMessage {
         bytes: &[u8],
     ) -> Result<Box<dyn ControlMessageBody>, DecodeError> {
         match mtype {
-            ControlMessageType::ACK => ControlMessage::decode_ack_message(bytes),
-            ControlMessageType::PING => ControlMessage::decode_empty_message(bytes),
-            ControlMessageType::REDIRECT => ControlMessage::decode_redirect_message(bytes),
-            ControlMessageType::HUP => ControlMessage::decode_hup_message(bytes),
-            ControlMessageType::RESET_SVC_TABLE => ControlMessage::decode_empty_message(bytes),
-            ControlMessageType::SCAN_NETWORK => ControlMessage::decode_empty_message(bytes),
-            ControlMessageType::GET_STATUS => ControlMessage::decode_empty_message(bytes),
-            ControlMessageType::GET_SCAN_REPORT => ControlMessage::decode_empty_message(bytes),
+            ControlMessageType::ACK => Self::decode_ack_message(bytes),
+            ControlMessageType::REDIRECT => Self::decode_redirect_message(bytes),
+            ControlMessageType::HUP => Self::decode_hup_message(bytes),
+            ControlMessageType::PING
+            | ControlMessageType::RESET_SVC_TABLE
+            | ControlMessageType::SCAN_NETWORK
+            | ControlMessageType::GET_STATUS
+            | ControlMessageType::GET_SCAN_REPORT => Self::decode_empty_message(bytes),
             ControlMessageType::UNKNOWN => Err(DecodeError::from(
                 "unknown Arrow Control Protocol message type",
             )),
@@ -357,7 +347,7 @@ impl ControlMessage {
 
     /// Decode an empty message from given data (i.e. just check there is no data).
     fn decode_empty_message(bytes: &[u8]) -> Result<Box<dyn ControlMessageBody>, DecodeError> {
-        if bytes.len() == 0 {
+        if bytes.is_empty() {
             Ok(Box::new(EmptyMessage))
         } else {
             Err(DecodeError::from(
@@ -383,7 +373,7 @@ impl MessageBody for ControlMessage {
 impl ArrowMessageBody for ControlMessage {}
 
 impl FromBytes for ControlMessage {
-    fn from_bytes(bytes: &[u8]) -> Result<Option<ControlMessage>, DecodeError> {
+    fn from_bytes(bytes: &[u8]) -> Result<Option<Self>, DecodeError> {
         let hsize = mem::size_of::<ControlMessageHeader>();
 
         if bytes.len() < hsize {
@@ -393,12 +383,9 @@ impl FromBytes for ControlMessage {
         }
 
         if let Some(header) = ControlMessageHeader::from_bytes(&bytes[..hsize])? {
-            let body = ControlMessage::decode_body(header.message_type(), &bytes[hsize..])?;
+            let body = Self::decode_body(header.message_type(), &bytes[hsize..])?;
 
-            let msg = ControlMessage {
-                header: header,
-                body: body,
-            };
+            let msg = Self { header, body };
 
             Ok(Some(msg))
         } else {
@@ -415,8 +402,8 @@ pub struct ControlMessageFactory {
 
 impl ControlMessageFactory {
     /// Create a new Control Protocol message factory.
-    pub fn new() -> ControlMessageFactory {
-        ControlMessageFactory {
+    pub fn new() -> Self {
+        Self {
             counter: Arc::new(AtomicUsize::new(0)),
         }
     }

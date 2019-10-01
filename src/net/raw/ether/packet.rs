@@ -48,8 +48,8 @@ impl Display for PacketParseError {
 }
 
 impl<'a> From<&'a str> for PacketParseError {
-    fn from(msg: &'a str) -> PacketParseError {
-        PacketParseError {
+    fn from(msg: &'a str) -> Self {
+        Self {
             msg: msg.to_string(),
         }
     }
@@ -71,10 +71,10 @@ pub struct EtherPacketHeader {
 
 impl EtherPacketHeader {
     /// Create a new ethernet packet header.
-    pub fn new(src: MacAddr, dst: MacAddr, etype: EtherPacketType) -> EtherPacketHeader {
-        EtherPacketHeader {
-            src: src,
-            dst: dst,
+    pub fn new(src: MacAddr, dst: MacAddr, etype: EtherPacketType) -> Self {
+        Self {
+            src,
+            dst,
             etype: etype.code(),
         }
     }
@@ -94,7 +94,7 @@ impl EtherPacketHeader {
     }
 
     /// Read header from a given raw representation.
-    fn parse(data: &[u8]) -> EtherPacketHeader {
+    fn parse(data: &[u8]) -> Self {
         assert_eq!(data.len(), mem::size_of::<RawEtherPacketHeader>());
 
         let ptr = data.as_ptr();
@@ -102,7 +102,7 @@ impl EtherPacketHeader {
 
         let rh = unsafe { &*ptr };
 
-        EtherPacketHeader {
+        Self {
             src: MacAddr::from_slice(&rh.src),
             dst: MacAddr::from_slice(&rh.dst),
             etype: u16::from_be(rh.etype),
@@ -136,20 +136,20 @@ impl EtherPacketType {
     /// Get system code of this packet type.
     pub fn code(self) -> u16 {
         match self {
-            EtherPacketType::ARP => ETYPE_ARP,
-            EtherPacketType::IPv4 => ETYPE_IPV4,
-            EtherPacketType::UNKNOWN(pt) => pt,
+            Self::ARP => ETYPE_ARP,
+            Self::IPv4 => ETYPE_IPV4,
+            Self::UNKNOWN(pt) => pt,
         }
     }
 }
 
 impl From<u16> for EtherPacketType {
     /// Get ethernet packet type from a given code.
-    fn from(code: u16) -> EtherPacketType {
+    fn from(code: u16) -> Self {
         match code {
-            ETYPE_ARP => EtherPacketType::ARP,
-            ETYPE_IPV4 => EtherPacketType::IPv4,
-            pt => EtherPacketType::UNKNOWN(pt),
+            ETYPE_ARP => Self::ARP,
+            ETYPE_IPV4 => Self::IPv4,
+            pt => Self::UNKNOWN(pt),
         }
     }
 }
@@ -167,31 +167,31 @@ pub struct EtherPacket {
 
 impl EtherPacket {
     /// Create a new ethernet packet.
-    pub fn new<B>(header: EtherPacketHeader, body: B) -> EtherPacket
+    pub fn new<B>(header: EtherPacketHeader, body: B) -> Self
     where
         B: 'static + EtherPacketBody,
     {
-        EtherPacket {
-            header: header,
+        Self {
+            header,
             body: Box::new(body),
         }
     }
 
     /// Create a new ethernet packet with a given ARP packet payload.
-    pub fn arp(src: MacAddr, dst: MacAddr, body: ArpPacket) -> EtherPacket {
-        EtherPacket::new(EtherPacketHeader::new(src, dst, EtherPacketType::ARP), body)
+    pub fn arp(src: MacAddr, dst: MacAddr, body: ArpPacket) -> Self {
+        Self::new(EtherPacketHeader::new(src, dst, EtherPacketType::ARP), body)
     }
 
     /// Create a new ethernet packet with a given IPv4 packet payload.
-    pub fn ipv4(src: MacAddr, dst: MacAddr, body: Ipv4Packet) -> EtherPacket {
-        EtherPacket::new(
+    pub fn ipv4(src: MacAddr, dst: MacAddr, body: Ipv4Packet) -> Self {
+        Self::new(
             EtherPacketHeader::new(src, dst, EtherPacketType::IPv4),
             body,
         )
     }
 
     /// Parse a given ethernet packet.
-    pub fn parse(data: &[u8]) -> Result<EtherPacket> {
+    pub fn parse(data: &[u8]) -> Result<Self> {
         let hsize = mem::size_of::<RawEtherPacketHeader>();
 
         if data.len() < hsize {
@@ -204,9 +204,9 @@ impl EtherPacket {
             let payload = &data[hsize..];
 
             let packet = match header.packet_type() {
-                EtherPacketType::ARP => EtherPacket::new(header, ArpPacket::parse(payload)?),
-                EtherPacketType::IPv4 => EtherPacket::new(header, Ipv4Packet::parse(payload)?),
-                _ => EtherPacket::new(header, payload.to_vec().into_boxed_slice()),
+                EtherPacketType::ARP => Self::new(header, ArpPacket::parse(payload)?),
+                EtherPacketType::IPv4 => Self::new(header, Ipv4Packet::parse(payload)?),
+                _ => Self::new(header, payload.to_vec().into_boxed_slice()),
             };
 
             Ok(packet)

@@ -68,8 +68,8 @@ pub struct CommandChannel {
 
 impl CommandChannel {
     /// Create a new command channel.
-    fn new(tx: CommandSender) -> CommandChannel {
-        CommandChannel { tx: tx }
+    fn new(tx: CommandSender) -> Self {
+        Self { tx }
     }
 
     /// Send a given command.
@@ -91,15 +91,15 @@ struct CommandHandlerContext {
 
 impl CommandHandlerContext {
     /// Create a new command handler context.
-    fn new(app_context: ApplicationContext, cmd_sender: CommandSender) -> CommandHandlerContext {
+    fn new(app_context: ApplicationContext, cmd_sender: CommandSender) -> Self {
         let logger = app_context.get_logger();
 
         let t = time::precise_time_s();
 
-        CommandHandlerContext {
-            app_context: app_context,
-            logger: logger,
-            cmd_sender: cmd_sender,
+        Self {
+            app_context,
+            logger,
+            cmd_sender,
             last_nw_scan: t - 300.0,
             scanner: None,
         }
@@ -166,7 +166,7 @@ impl CommandHandlerContext {
     /// Cleanup the scanner context.
     fn scan_completed(&mut self) {
         if let Some(handle) = self.scanner.take() {
-            if let Err(_) = handle.join() {
+            if handle.join().is_err() {
                 log_warn!(self.logger, "network scanner thread panicked");
             }
         }
@@ -183,11 +183,7 @@ pub struct CommandHandler {
 
 impl CommandHandler {
     /// Create a new command handler.
-    fn new(
-        app_context: ApplicationContext,
-        rx: CommandReceiver,
-        tx: CommandSender,
-    ) -> CommandHandler {
+    fn new(app_context: ApplicationContext, rx: CommandReceiver, tx: CommandSender) -> Self {
         let mut context = CommandHandlerContext::new(app_context, tx);
 
         let handler = rx.for_each(move |event| {
@@ -195,7 +191,7 @@ impl CommandHandler {
             Ok(())
         });
 
-        CommandHandler {
+        Self {
             handler: Box::new(handler),
         }
     }
@@ -242,7 +238,7 @@ fn network_scanner_thread(mut app_context: ApplicationContext) {
     );
 
     if let Some(result) = result {
-        let services = result.services().map(|svc| svc.clone()).collect::<Vec<_>>();
+        let services = result.services().cloned().collect::<Vec<_>>();
 
         let count = services.len();
 

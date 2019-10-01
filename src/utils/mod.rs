@@ -70,26 +70,26 @@ impl Display for RuntimeError {
 }
 
 impl From<String> for RuntimeError {
-    fn from(msg: String) -> RuntimeError {
-        RuntimeError { msg: msg }
+    fn from(msg: String) -> Self {
+        Self { msg }
     }
 }
 
 impl<'a> From<&'a str> for RuntimeError {
-    fn from(msg: &'a str) -> RuntimeError {
-        RuntimeError::from(msg.to_string())
+    fn from(msg: &'a str) -> Self {
+        Self::from(msg.to_string())
     }
 }
 
 /// Get slice of bytes representing a given object.
-pub fn as_bytes<'a, T: Sized>(val: &'a T) -> &'a [u8] {
+pub fn as_bytes<T: Sized>(val: &T) -> &[u8] {
     let ptr = val as *const T;
     let size = mem::size_of::<T>();
     unsafe { slice::from_raw_parts(ptr as *const u8, size) }
 }
 
 /// Convert a given slice of Sized type instances to a slice of bytes.
-pub fn slice_as_bytes<'a, T: Sized>(data: &'a [T]) -> &'a [u8] {
+pub fn slice_as_bytes<T: Sized>(data: &[T]) -> &[u8] {
     let ptr = data.as_ptr();
     let size = mem::size_of::<T>();
     unsafe { slice::from_raw_parts(ptr as *const u8, size * data.len()) }
@@ -142,8 +142,8 @@ mod tests {
 
     impl DummyLogger {
         /// Create a new dummy logger.
-        pub fn new() -> DummyLogger {
-            DummyLogger {
+        pub fn new() -> Self {
+            Self {
                 level: Severity::INFO,
             }
         }
