@@ -1,4 +1,4 @@
-# Arrow Client
+# Angelcam Connector (a.k.a. Arrow Client)
 
 [![Build Status](https://travis-ci.org/angelcam/arrow-client.svg?branch=master)](https://travis-ci.org/angelcam/arrow-client)
 
