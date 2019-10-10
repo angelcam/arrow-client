@@ -1,0 +1,52 @@
+on: [pull_request]
+
+name: Rust workflow for Arrow client
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+
+    - name: Fmt
+      id: fmt
+      uses: angelcam/actions-rust@master
+      with:
+        command: fmt
+        args: --all -- --check
+
+    - name: Build
+      id: build
+      uses: angelcam/actions-rust@master
+      with:
+        command: build
+        args: --all-features --release
+
+    - name: Test
+      id: test
+      uses: angelcam/actions-rust@master
+      with:
+        command: test
+        args: --all-features
+
+    - name: Clippy
+      id: clippy
+      uses: angelcam/actions-rust@master
+      with:
+        command: clippy
+        args: -- -D warnings
+
+    - name: Audit
+      id: audit
+      uses: angelcam/actions-rust@master
+      with:
+        command: audit
+
+    - name: Udeps
+      id: udeps
+      uses: angelcam/actions-rust@master
+      with:
+        command: udeps
+        toolchain: +nightly
