@@ -1,4 +1,4 @@
-# Arrow Client
+# Angelcam Connector (a.k.a. Arrow Client)
 
 ![](https://github.com/angelcam/arrow-client/workflows/tests/badge.svg)
 
