@@ -339,6 +339,11 @@ impl ArrowClient {
         self.application_context.get_arrow_mac_address()
     }
 
+    /// Get connection state.
+    pub fn get_connection_state(&self) -> ConnectionState {
+        self.application_context.get_connection_state()
+    }
+
     /// Check if the client is currently scanning network.
     pub fn is_scanning(&self) -> bool {
         self.application_context.is_scanning()

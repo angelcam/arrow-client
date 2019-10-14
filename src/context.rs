@@ -58,6 +58,7 @@ struct ApplicationContextData {
     config: Config,
     scanning: bool,
     scan_result: ScanResult,
+    connection_state: ConnectionState,
 }
 
 impl ApplicationContextData {
@@ -68,6 +69,7 @@ impl ApplicationContextData {
             config,
             scanning: false,
             scan_result: ScanResult::new(),
+            connection_state: ConnectionState::Disconnected,
         }
     }
 
@@ -106,8 +108,15 @@ impl ApplicationContextData {
         self.scan_result = result;
     }
 
+    /// Get connection state.
+    fn get_connection_state(&self) -> ConnectionState {
+        self.connection_state
+    }
+
     /// Set connection state.
     fn set_connection_state(&mut self, state: ConnectionState) {
+        self.connection_state = state;
+
         self.config.update_connection_state(state);
     }
 }
@@ -229,6 +238,11 @@ impl ApplicationContext {
             .unwrap()
             .get_config_mut()
             .reset_service_table()
+    }
+
+    /// Get connection state.
+    pub fn get_connection_state(&self) -> ConnectionState {
+        self.data.lock().unwrap().get_connection_state()
     }
 
     /// Set connection state.
