@@ -15,40 +15,43 @@
 use std;
 
 use std::fmt;
+use std::io;
 use std::process;
 use std::str;
 
 use std::env::Args;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::fs::File;
-use std::io::{Read, Write};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::path::Path;
 use std::str::FromStr;
-
-use fs2::FileExt;
+use std::sync::Arc;
 
 use json;
 
 use json::JsonValue;
 
-use openssl::ssl::{SslConnector, SslConnectorBuilder, SslMethod, SslOptions, SslVerifyMode};
+use openssl::ssl::{SslConnector, SslMethod, SslOptions, SslVerifyMode};
 
 use uuid::Uuid;
 
 use crate::net;
 use crate::utils;
-use crate::utils::logger;
 
+use crate::context::ConnectionState;
 use crate::net::raw::devices::EthernetDevice;
-use crate::net::raw::ether::MacAddr;
 use crate::net::tls::TlsConnector;
 use crate::net::url::Url;
-use crate::svc_table::{Service, SharedServiceTable, SharedServiceTableRef};
-use crate::utils::json::{FromJson, ParseError, ToJson};
-use crate::utils::logger::{BoxLogger, Logger, Severity};
+use crate::storage::{DefaultStorage, Storage};
+use crate::svc_table::{SharedServiceTable, SharedServiceTableRef};
+use crate::utils::logger::file::FileLogger;
+use crate::utils::logger::stderr::StderrLogger;
+use crate::utils::logger::syslog::Syslog;
+use crate::utils::logger::{BoxLogger, DummyLogger, Logger, Severity};
 use crate::utils::RuntimeError;
+
+pub use crate::net::raw::ether::{AddrParseError, MacAddr};
+pub use crate::svc_table::{Service, ServiceType};
+pub use crate::utils::json::{FromJson, ParseError, ToJson};
 
 /*const EXIT_CODE_USAGE:         i32 = 1;
 const EXIT_CODE_NETWORK_ERROR: i32 = 2;
@@ -85,6 +88,18 @@ pub struct ConfigError {
     msg: String,
 }
 
+impl ConfigError {
+    /// Create a new error.
+    fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
+    }
+}
+
 impl Error for ConfigError {
     fn description(&self) -> &str {
         &self.msg
@@ -97,39 +112,141 @@ impl Display for ConfigError {
     }
 }
 
-impl From<String> for ConfigError {
-    fn from(msg: String) -> ConfigError {
-        ConfigError { msg: msg }
-    }
+/// Builder for the Arrow client configuration.
+pub struct ConfigBuilder {
+    logger: Option<BoxLogger>,
+    arrow_mac: Option<MacAddr>,
+    services: Vec<Service>,
+    diagnostic_mode: bool,
+    discovery: bool,
+    verbose: bool,
 }
 
-impl<'a> From<&'a str> for ConfigError {
-    fn from(msg: &'a str) -> ConfigError {
-        ConfigError::from(msg.to_string())
+impl ConfigBuilder {
+    /// Create a new configuration builder.
+    fn new() -> Self {
+        Self {
+            logger: None,
+            arrow_mac: None,
+            services: Vec::new(),
+            diagnostic_mode: false,
+            discovery: false,
+            verbose: false,
+        }
     }
-}
 
-impl From<std::io::Error> for ConfigError {
-    fn from(err: std::io::Error) -> ConfigError {
-        ConfigError::from(format!("{}", err))
+    /// Set logger.
+    pub fn logger(mut self, logger: BoxLogger) -> Self {
+        self.logger = Some(logger);
+        self
     }
-}
 
-impl From<utils::json::ParseError> for ConfigError {
-    fn from(err: utils::json::ParseError) -> ConfigError {
-        ConfigError::from(format!("{}", err))
+    /// Set MAC address. (The MAC address can be used as a client identifier in the pairing
+    /// process).
+    pub fn mac_address(mut self, mac_addr: Option<MacAddr>) -> Self {
+        self.arrow_mac = mac_addr;
+        self
     }
-}
 
-impl From<std::net::AddrParseError> for ConfigError {
-    fn from(err: std::net::AddrParseError) -> ConfigError {
-        ConfigError::from(format!("{}", err))
+    /// Add a given static service.
+    pub fn add_service(&mut self, service: Service) -> &mut Self {
+        self.services.push(service);
+        self
     }
-}
 
-impl From<net::raw::ether::AddrParseError> for ConfigError {
-    fn from(err: net::raw::ether::AddrParseError) -> ConfigError {
-        ConfigError::from(format!("{}", err))
+    /// Set a collection of static services.
+    pub fn services<T>(mut self, services: T) -> Self
+    where
+        Vec<Service>: From<T>,
+    {
+        self.services = Vec::from(services);
+        self
+    }
+
+    /// Set diagnostic mode.
+    pub fn diagnostic_mode(mut self, enabled: bool) -> Self {
+        self.diagnostic_mode = enabled;
+        self
+    }
+
+    /// Enable/disable automatic service discovery.
+    pub fn discovery(mut self, enabled: bool) -> Self {
+        self.discovery = enabled;
+        self
+    }
+
+    /// Enable/disable verbose logging.
+    pub fn verbose(mut self, enabled: bool) -> Self {
+        self.verbose = enabled;
+        self
+    }
+
+    /// Build the configuration.
+    pub fn build<S, T>(
+        self,
+        mut storage: S,
+        arrow_service_address: T,
+    ) -> Result<Config, ConfigError>
+    where
+        S: 'static + Storage + Send,
+        T: ToString,
+    {
+        let mut logger = self
+            .logger
+            .unwrap_or_else(|| BoxLogger::new(DummyLogger::default()));
+
+        let config = storage.load_configuration().map_err(|err| {
+            ConfigError::new(format!("unable to load client configuration: {}", err))
+        })?;
+
+        let mac = self
+            .arrow_mac
+            .map(|mac| Ok(mac))
+            .unwrap_or_else(get_first_mac)
+            .map_err(|_| ConfigError::new("unable to get any network interface MAC address"))?;
+
+        let rtsp_paths = utils::result_or_log(
+            &mut logger,
+            Severity::WARN,
+            "unable to load RTSP paths",
+            storage.load_rtsp_paths(),
+        );
+
+        let mjpeg_paths = utils::result_or_log(
+            &mut logger,
+            Severity::WARN,
+            "unable to load MJPEG paths",
+            storage.load_mjpeg_paths(),
+        );
+
+        let mut config = Config {
+            version: config.version,
+            uuid: config.uuid,
+            passwd: config.passwd,
+            arrow_mac: mac,
+            arrow_svc_addr: arrow_service_address.to_string(),
+            diagnostic_mode: self.diagnostic_mode,
+            discovery: self.discovery,
+            rtsp_paths: Arc::new(rtsp_paths.unwrap_or_default()),
+            mjpeg_paths: Arc::new(mjpeg_paths.unwrap_or_default()),
+            default_svc_table: config.svc_table.clone(),
+            svc_table: config.svc_table,
+            logger,
+            storage: Box::new(storage),
+        };
+
+        if self.verbose {
+            config.logger.set_level(Severity::DEBUG);
+        }
+
+        for svc in self.services {
+            config.svc_table.add_static(svc.clone());
+            config.default_svc_table.add_static(svc);
+        }
+
+        config.save().map_err(ConfigError::new)?;
+
+        Ok(config)
     }
 }
 
@@ -142,8 +259,8 @@ enum LoggerType {
 }
 
 /// Builder for application configuration.
-struct ApplicationConfigBuilder {
-    arrow_mac: MacAddr,
+struct ConfigParser {
+    arrow_mac: Option<MacAddr>,
     arrow_svc_addr: String,
     ca_certificates: Vec<String>,
     services: Vec<Service>,
@@ -163,14 +280,11 @@ struct ApplicationConfigBuilder {
     lock_file: Option<String>,
 }
 
-impl ApplicationConfigBuilder {
+impl ConfigParser {
     /// Create a new application configuration builder.
-    fn new() -> Result<ApplicationConfigBuilder, ConfigError> {
-        let default_mac_addr = get_first_mac()
-            .map_err(|_| ConfigError::from("unable to get any network interface MAC address"))?;
-
-        let builder = ApplicationConfigBuilder {
-            arrow_mac: default_mac_addr,
+    fn new() -> Self {
+        Self {
+            arrow_mac: None,
             arrow_svc_addr: String::new(),
             ca_certificates: Vec::new(),
             services: Vec::new(),
@@ -188,46 +302,20 @@ impl ApplicationConfigBuilder {
             log_file_size: 10 * 1024,
             log_file_rotations: 1,
             lock_file: None,
-        };
-
-        Ok(builder)
-    }
-
-    /// Create a lock file (if specified).
-    fn create_lock_file(&self) -> Result<Option<File>, ConfigError> {
-        self.lock_file
-            .as_ref()
-            .map(|lock_file| {
-                File::create(lock_file)
-                    .and_then(|mut lock_file| {
-                        lock_file.try_lock_exclusive()?;
-                        lock_file.write_fmt(format_args!("{}\n", process::id()))?;
-                        lock_file.flush()?;
-                        lock_file.sync_all()?;
-
-                        Ok(lock_file)
-                    })
-                    .map_err(|_| {
-                        ConfigError::from(format!(
-                            "unable to acquire an exclusive lock on \"{}\"",
-                            lock_file
-                        ))
-                    })
-            })
-            .transpose()
+        }
     }
 
     /// Create a new logger.
     fn create_logger(&self) -> Result<BoxLogger, ConfigError> {
         let logger = match self.logger_type {
-            LoggerType::Syslog => BoxLogger::new(logger::syslog::new()),
-            LoggerType::Stderr => BoxLogger::new(logger::stderr::new()),
-            LoggerType::StderrPretty => BoxLogger::new(logger::stderr::new_pretty()),
+            LoggerType::Syslog => BoxLogger::new(Syslog::new()),
+            LoggerType::Stderr => BoxLogger::new(StderrLogger::new()),
+            LoggerType::StderrPretty => BoxLogger::new(StderrLogger::new_pretty()),
             LoggerType::FileLogger => {
-                logger::file::new(&self.log_file, self.log_file_size, self.log_file_rotations)
+                FileLogger::new(&self.log_file, self.log_file_size, self.log_file_rotations)
                     .map(|logger| BoxLogger::new(logger))
                     .map_err(|_| {
-                        ConfigError::from(format!(
+                        ConfigError::new(format!(
                             "unable to open the given log file: \"{}\"",
                             self.log_file
                         ))
@@ -239,111 +327,38 @@ impl ApplicationConfigBuilder {
     }
 
     /// Build application configuration.
-    fn build(self) -> Result<ApplicationConfig, ConfigError> {
-        let lock_file = self.create_lock_file()?;
+    fn build(self) -> Result<Config, ConfigError> {
+        // because of the lock file, we need to create the storage builder before creating the
+        // logger
+        let storage_builder = DefaultStorage::builder(&self.config_file, self.lock_file.as_ref())
+            .map_err(ConfigError::new)?;
 
-        let mut logger = self.create_logger()?;
+        let logger = self.create_logger()?;
 
-        // read config skeleton
-        let config_skeleton = utils::result_or_log(
-            &mut logger,
-            Severity::WARN,
-            format!(
-                "unable to read configuration file skeleton\"{}\"",
-                self.config_file_skel
-            ),
-            PersistentConfig::load(&self.config_file_skel),
-        );
+        let storage = storage_builder
+            .logger(logger.clone())
+            .config_skeleton_file(Some(self.config_file_skel))
+            .connection_state_file(Some(self.state_file))
+            .identity_file(self.identity_file)
+            .rtsp_paths_file(Some(self.rtsp_paths_file))
+            .mjpeg_paths_file(Some(self.mjpeg_paths_file))
+            .ca_certificates(self.ca_certificates)
+            .build();
 
-        // read config
-        let config = utils::result_or_log(
-            &mut logger,
-            Severity::WARN,
-            format!("unable to read configuration file \"{}\"", self.config_file),
-            PersistentConfig::load(&self.config_file),
-        );
-
-        let config_skeleton_exists = config_skeleton.is_some();
-
-        // get the persistent config, if there is no config, use the skeleton,
-        // if there is no skeleton, create a new config
-        let config = config
-            .or(config_skeleton)
-            .unwrap_or(PersistentConfig::new());
-
-        // if there is no skeleton, create one from the config
-        if !config_skeleton_exists {
-            let config_skeleton = config.to_skeleton();
-
-            log_info!(
-                &mut logger,
-                "creating configuration file skeleton \"{}\"",
-                self.config_file_skel
-            );
-
-            utils::result_or_log(
-                &mut logger,
-                Severity::WARN,
-                format!(
-                    "unable to create configuration file skeleton \"{}\"",
-                    self.config_file_skel
-                ),
-                config_skeleton.save(&self.config_file_skel),
-            );
-        }
-
-        // create identity file
-        if let Some(identity_file) = self.identity_file {
-            let identity = config.to_identity();
-
-            utils::result_or_log(
-                &mut logger,
-                Severity::WARN,
-                format!("unable to create identity file \"{}\"", identity_file),
-                identity.save(&identity_file),
-            );
-        }
-
-        let mut config = ApplicationConfig {
-            version: config.version,
-            uuid: config.uuid,
-            passwd: config.passwd,
-            arrow_mac: self.arrow_mac,
-            arrow_svc_addr: self.arrow_svc_addr,
-            ca_certificates: self.ca_certificates,
-            config_file: self.config_file,
-            state_file: self.state_file,
-            rtsp_paths_file: self.rtsp_paths_file,
-            mjpeg_paths_file: self.mjpeg_paths_file,
-            diagnostic_mode: self.diagnostic_mode,
-            discovery: self.discovery,
-            default_svc_table: config.svc_table.clone(),
-            svc_table: config.svc_table,
-            logger: logger,
-            _lock_file: lock_file,
-        };
-
-        if self.verbose {
-            config.logger.set_level(Severity::DEBUG);
-        }
-
-        for svc in self.services {
-            config.svc_table.add_static(svc.clone());
-            config.default_svc_table.add_static(svc);
-        }
-
-        config.save().map_err(|_| {
-            ConfigError::from(format!(
-                "unable to save configuration file \"{}\"",
-                &config.config_file
-            ))
-        })?;
+        let config = Config::builder()
+            .logger(logger)
+            .mac_address(self.arrow_mac)
+            .services(self.services)
+            .diagnostic_mode(self.diagnostic_mode)
+            .discovery(self.discovery)
+            .verbose(self.verbose)
+            .build(storage, self.arrow_svc_addr)?;
 
         Ok(config)
     }
 
     /// Parse given command line arguments.
-    fn parse(mut self, mut args: Args) -> Result<ApplicationConfigBuilder, ConfigError> {
+    fn parse(mut self, mut args: Args) -> Result<ConfigParser, ConfigError> {
         // skip the application name
         args.next();
 
@@ -386,7 +401,7 @@ impl ApplicationConfigBuilder {
                     } else if arg.starts_with("--lock-file=") {
                         self.lock_file(arg)?
                     } else {
-                        return Err(ConfigError::from(format!("unknown argument: \"{}\"", arg)));
+                        return Err(ConfigError::new(format!("unknown argument: \"{}\"", arg)));
                     }
                 }
             }
@@ -399,7 +414,7 @@ impl ApplicationConfigBuilder {
     fn arrow_service_address(&mut self, args: &mut Args) -> Result<(), ConfigError> {
         let addr = args
             .next()
-            .ok_or(ConfigError::from("missing Angelcam Arrow Service address"))?;
+            .ok_or(ConfigError::new("missing Angelcam Arrow Service address"))?;
 
         // add the default port number if the given address has no port
         if addr.ends_with(']') || !addr.contains(':') {
@@ -415,7 +430,7 @@ impl ApplicationConfigBuilder {
     fn ca_certificates(&mut self, args: &mut Args) -> Result<(), ConfigError> {
         let path = args
             .next()
-            .ok_or(ConfigError::from("CA certificate path expected"))?;
+            .ok_or(ConfigError::new("CA certificate path expected"))?;
 
         self.ca_certificates.push(path);
 
@@ -425,7 +440,7 @@ impl ApplicationConfigBuilder {
     /// Process the discovery argument.
     fn discovery(&mut self) -> Result<(), ConfigError> {
         if !cfg!(feature = "discovery") {
-            return Err(ConfigError::from("unknown argument: \"-d\""));
+            return Err(ConfigError::new("unknown argument: \"-d\""));
         }
 
         self.discovery = true;
@@ -437,16 +452,16 @@ impl ApplicationConfigBuilder {
     fn interface(&mut self, args: &mut Args) -> Result<(), ConfigError> {
         let iface = args
             .next()
-            .ok_or(ConfigError::from("network interface name expected"))?;
+            .ok_or(ConfigError::new("network interface name expected"))?;
 
-        self.arrow_mac = get_mac(&iface)?;
+        self.arrow_mac = Some(get_mac(&iface)?);
 
         Ok(())
     }
 
     /// Process the RTSP service argument.
     fn rtsp_service(&mut self, args: &mut Args) -> Result<(), ConfigError> {
-        let url = args.next().ok_or(ConfigError::from("RTSP URL expected"))?;
+        let url = args.next().ok_or(ConfigError::new("RTSP URL expected"))?;
 
         let service = parse_rtsp_url(&url)?;
 
@@ -457,7 +472,7 @@ impl ApplicationConfigBuilder {
 
     /// Process the MJPEG service argument.
     fn mjpeg_service(&mut self, args: &mut Args) -> Result<(), ConfigError> {
-        let url = args.next().ok_or(ConfigError::from("HTTP URL expected"))?;
+        let url = args.next().ok_or(ConfigError::new("HTTP URL expected"))?;
 
         let service = parse_mjpeg_url(&url)?;
 
@@ -470,11 +485,10 @@ impl ApplicationConfigBuilder {
     fn http_service(&mut self, args: &mut Args) -> Result<(), ConfigError> {
         let addr = args
             .next()
-            .ok_or(ConfigError::from("TCP socket address expected"))?;
+            .ok_or(ConfigError::new("TCP socket address expected"))?;
 
-        let addr = net::utils::get_socket_address(addr.as_str()).map_err(|_| {
-            ConfigError::from(format!("unable to resolve socket address: {}", addr))
-        })?;
+        let addr = net::utils::get_socket_address(addr.as_str())
+            .map_err(|_| ConfigError::new(format!("unable to resolve socket address: {}", addr)))?;
 
         let mac = get_fake_mac(0xffff, &addr);
 
@@ -487,11 +501,10 @@ impl ApplicationConfigBuilder {
     fn tcp_service(&mut self, args: &mut Args) -> Result<(), ConfigError> {
         let addr = args
             .next()
-            .ok_or(ConfigError::from("TCP socket address expected"))?;
+            .ok_or(ConfigError::new("TCP socket address expected"))?;
 
-        let addr = net::utils::get_socket_address(addr.as_str()).map_err(|_| {
-            ConfigError::from(format!("unable to resolve socket address: {}", addr))
-        })?;
+        let addr = net::utils::get_socket_address(addr.as_str())
+            .map_err(|_| ConfigError::new(format!("unable to resolve socket address: {}", addr)))?;
 
         let mac = get_fake_mac(0xffff, &addr);
 
@@ -538,7 +551,7 @@ impl ApplicationConfigBuilder {
         let size = &arg[16..];
 
         self.log_file_size = size.parse().map_err(|_| {
-            ConfigError::from(format!("invalid value given for {}, number expeced", arg))
+            ConfigError::new(format!("invalid value given for {}, number expeced", arg))
         })?;
 
         Ok(())
@@ -550,7 +563,7 @@ impl ApplicationConfigBuilder {
         let rotations = &arg[21..];
 
         self.log_file_rotations = rotations.parse().map_err(|_| {
-            ConfigError::from(format!("invalid value given for {}, number expeced", arg))
+            ConfigError::new(format!("invalid value given for {}, number expeced", arg))
         })?;
 
         Ok(())
@@ -583,7 +596,7 @@ impl ApplicationConfigBuilder {
     /// Process the rtsp-paths argument.
     fn rtsp_paths(&mut self, arg: &str) -> Result<(), ConfigError> {
         if !cfg!(feature = "discovery") {
-            return Err(ConfigError::from("unknown argument: \"--rtsp-paths\""));
+            return Err(ConfigError::new("unknown argument: \"--rtsp-paths\""));
         }
 
         // skip "--rtsp-paths=" length
@@ -597,7 +610,7 @@ impl ApplicationConfigBuilder {
     /// Process the mjpeg-paths argument.
     fn mjpeg_paths(&mut self, arg: &str) -> Result<(), ConfigError> {
         if !cfg!(feature = "discovery") {
-            return Err(ConfigError::from("unknown argument: \"--mjpeg-paths\""));
+            return Err(ConfigError::new("unknown argument: \"--mjpeg-paths\""));
         }
 
         // skip "--mjpeg-paths=" length
@@ -620,19 +633,9 @@ impl ApplicationConfigBuilder {
 }
 
 /// Client identification that can be publicly available.
-struct PublicIdentity {
+#[doc(hidden)]
+pub struct PublicIdentity {
     uuid: Uuid,
-}
-
-impl PublicIdentity {
-    /// Save identity into a given file.
-    fn save(&self, path: &str) -> Result<(), ConfigError> {
-        let mut file = File::create(path)?;
-
-        self.to_json().write(&mut file)?;
-
-        Ok(())
-    }
 }
 
 impl ToJson for PublicIdentity {
@@ -644,7 +647,7 @@ impl ToJson for PublicIdentity {
 }
 
 /// Persistent part of application configuration.
-struct PersistentConfig {
+pub struct PersistentConfig {
     uuid: Uuid,
     passwd: Uuid,
     version: usize,
@@ -653,7 +656,7 @@ struct PersistentConfig {
 
 impl PersistentConfig {
     /// Create a new instance of persistent configuration.
-    fn new() -> PersistentConfig {
+    pub fn new() -> PersistentConfig {
         PersistentConfig {
             uuid: Uuid::new_v4(),
             passwd: Uuid::new_v4(),
@@ -662,44 +665,21 @@ impl PersistentConfig {
         }
     }
 
-    /// Load configuration from a given file.
-    fn load(path: &str) -> Result<PersistentConfig, ConfigError> {
-        let mut file = File::open(path)?;
-        let mut data = String::new();
-
-        file.read_to_string(&mut data)?;
-
-        let object = json::parse(&data).map_err(|err| {
-            utils::json::ParseError::from(format!("unable to parse configuration: {}", err))
-        })?;
-
-        let config = PersistentConfig::from_json(object)?;
-
-        Ok(config)
-    }
-
     /// Get client public identity.
-    fn to_identity(&self) -> PublicIdentity {
+    #[doc(hidden)]
+    pub fn to_identity(&self) -> PublicIdentity {
         PublicIdentity { uuid: self.uuid }
     }
 
     /// Create a configuration skeleton from this persistent config.
-    fn to_skeleton(&self) -> PersistentConfig {
+    #[doc(hidden)]
+    pub fn to_skeleton(&self) -> PersistentConfig {
         PersistentConfig {
             uuid: self.uuid.clone(),
             passwd: self.passwd.clone(),
             version: 0,
             svc_table: SharedServiceTable::new(),
         }
-    }
-
-    /// Save configuration into a given file.
-    fn save(&self, path: &str) -> Result<(), ConfigError> {
-        let mut file = File::create(path)?;
-
-        self.to_json().write(&mut file)?;
-
-        Ok(())
     }
 }
 
@@ -721,126 +701,129 @@ impl FromJson for PersistentConfig {
         if let JsonValue::Object(cfg) = value {
             config = cfg;
         } else {
-            return Err(ParseError::from("JSON object expected"));
+            return Err(ParseError::new("JSON object expected"));
         }
 
         let svc_table = config
             .remove("svc_table")
-            .ok_or(ParseError::from("missing field \"svc_table\""))?;
+            .ok_or(ParseError::new("missing field \"svc_table\""))?;
 
         let svc_table = SharedServiceTable::from_json(svc_table)
-            .map_err(|err| ParseError::from(format!("unable to parse service table: {}", err)))?;
+            .map_err(|err| ParseError::new(format!("unable to parse service table: {}", err)))?;
 
         let uuid = config
             .get("uuid")
             .and_then(|v| v.as_str())
-            .ok_or(ParseError::from("missing field \"uuid\""))?;
+            .ok_or(ParseError::new("missing field \"uuid\""))?;
         let passwd = config
             .get("passwd")
             .and_then(|v| v.as_str())
-            .ok_or(ParseError::from("missing field \"passwd\""))?;
+            .ok_or(ParseError::new("missing field \"passwd\""))?;
         let version = config
             .get("version")
             .and_then(|v| v.as_usize())
-            .ok_or(ParseError::from("missing field \"version\""))?;
+            .ok_or(ParseError::new("missing field \"version\""))?;
 
-        let uuid = Uuid::from_str(uuid).map_err(|_| ParseError::from("unable to parse UUID"))?;
-        let passwd =
-            Uuid::from_str(passwd).map_err(|_| ParseError::from("unable to parse UUID"))?;
+        let uuid = Uuid::from_str(uuid).map_err(|_| ParseError::new("unable to parse UUID"))?;
+        let passwd = Uuid::from_str(passwd).map_err(|_| ParseError::new("unable to parse UUID"))?;
 
         let res = PersistentConfig {
-            uuid: uuid,
-            passwd: passwd,
-            version: version,
-            svc_table: svc_table,
+            uuid,
+            passwd,
+            version,
+            svc_table,
         };
 
         Ok(res)
     }
 }
 
-/// Struct holding application configuration loaded from a configuration file and passed as
-/// command line arguments.
-pub struct ApplicationConfig {
+/// Arrow client configuration.
+pub struct Config {
     version: usize,
     uuid: Uuid,
     passwd: Uuid,
     arrow_mac: MacAddr,
     arrow_svc_addr: String,
-    ca_certificates: Vec<String>,
-    config_file: String,
-    state_file: String,
-    rtsp_paths_file: String,
-    mjpeg_paths_file: String,
     diagnostic_mode: bool,
     discovery: bool,
+    rtsp_paths: Arc<Vec<String>>,
+    mjpeg_paths: Arc<Vec<String>>,
     svc_table: SharedServiceTable,
     default_svc_table: SharedServiceTable,
     logger: BoxLogger,
-    _lock_file: Option<File>,
+    storage: Box<dyn Storage + Send>,
 }
 
-impl ApplicationConfig {
+impl Config {
+    /// Get a new client configuration builder.
+    pub fn builder() -> ConfigBuilder {
+        ConfigBuilder::new()
+    }
+
     /// Create a new application configuration. The methods reads all command line arguments and
     /// loads the configuration file.
-    pub fn create() -> Result<ApplicationConfig, ConfigError> {
-        ApplicationConfigBuilder::new()?
-            .parse(std::env::args())?
-            .build()
+    pub fn from_args(args: Args) -> Result<Config, ConfigError> {
+        ConfigParser::new().parse(args)?.build()
     }
 
     /// Get address of the remote Arrow Service.
+    #[doc(hidden)]
     pub fn get_arrow_service_address(&self) -> &str {
         &self.arrow_svc_addr
     }
 
     /// Get Arrow Client UUID.
+    #[doc(hidden)]
     pub fn get_uuid(&self) -> Uuid {
         self.uuid
     }
 
     /// Get Arrow Client password.
+    #[doc(hidden)]
     pub fn get_password(&self) -> Uuid {
         self.passwd
     }
 
     /// Get Arrow Client MAC address.
+    #[doc(hidden)]
     pub fn get_mac_address(&self) -> MacAddr {
         self.arrow_mac
     }
 
     /// Get network discovery settings.
+    #[doc(hidden)]
     pub fn get_discovery(&self) -> bool {
         self.discovery
     }
 
     /// Check if the application is in the diagnostic mode.
+    #[doc(hidden)]
     pub fn get_diagnostic_mode(&self) -> bool {
         self.diagnostic_mode
     }
 
-    /// Get connection state file.
-    pub fn get_connection_state_file(&self) -> &str {
-        &self.state_file
+    /// Get RTSP paths for the network scanner.
+    #[doc(hidden)]
+    pub fn get_rtsp_paths(&self) -> Arc<Vec<String>> {
+        self.rtsp_paths.clone()
     }
 
-    /// Get path to a file containing RTSP paths for the network scanner.
-    pub fn get_rtsp_paths_file(&self) -> &str {
-        &self.rtsp_paths_file
-    }
-
-    /// Get path to a file containing MJPEG paths for the network scanner.
-    pub fn get_mjpeg_paths_file(&self) -> &str {
-        &self.mjpeg_paths_file
+    /// Get MJPEG paths for the network scanner.
+    #[doc(hidden)]
+    pub fn get_mjpeg_paths(&self) -> Arc<Vec<String>> {
+        self.mjpeg_paths.clone()
     }
 
     /// Get logger.
+    #[doc(hidden)]
     pub fn get_logger(&self) -> BoxLogger {
         self.logger.clone()
     }
 
     /// Get TLS connector for a given server hostname.
-    pub fn get_tls_connector(&self) -> Result<TlsConnector, RuntimeError> {
+    #[doc(hidden)]
+    pub fn get_tls_connector(&mut self) -> Result<TlsConnector, RuntimeError> {
         let mut builder = SslConnector::builder(SslMethod::tls()).map_err(|err| {
             RuntimeError::from(format!(
                 "unable to create a TLS connection builder: {}",
@@ -863,9 +846,9 @@ impl ApplicationConfig {
             .set_cipher_list(SSL_CIPHER_LIST)
             .map_err(|err| RuntimeError::from(format!("unable to set TLS cipher list: {}", err)))?;
 
-        for ca_cert in &self.ca_certificates {
-            builder.load_ca_certificates(&ca_cert)?;
-        }
+        self.storage
+            .load_ca_certificates(&mut builder)
+            .map_err(|err| RuntimeError::from(err.to_string()))?;
 
         let connector = TlsConnector::from(builder.build());
 
@@ -873,27 +856,25 @@ impl ApplicationConfig {
     }
 
     /// Get read-only reference to the shared service table.
+    #[doc(hidden)]
     pub fn get_service_table(&self) -> SharedServiceTableRef {
         self.svc_table.get_ref()
     }
 
     /// Reset the service table.
+    #[doc(hidden)]
     pub fn reset_service_table(&mut self) {
         self.svc_table = self.default_svc_table.clone();
 
         self.version += 1;
 
-        let res = self.save();
-
-        utils::result_or_log(
-            &mut self.logger,
-            Severity::WARN,
-            format!("unable to save config file \"{}\"", self.config_file),
-            res,
-        );
+        if let Err(err) = self.save() {
+            log_warn!(&mut self.logger, "{}", err);
+        }
     }
 
     /// Update service table. Add all given services into the table and update active services.
+    #[doc(hidden)]
     pub fn update_service_table<I>(&mut self, services: I)
     where
         I: IntoIterator<Item = Service>,
@@ -912,19 +893,32 @@ impl ApplicationConfig {
 
         self.version += 1;
 
-        let res = self.save();
+        if let Err(err) = self.save() {
+            log_warn!(&mut self.logger, "{}", err);
+        }
+    }
 
+    /// Update connection state.
+    #[doc(hidden)]
+    pub fn update_connection_state(&mut self, state: ConnectionState) {
         utils::result_or_log(
             &mut self.logger,
-            Severity::WARN,
-            format!("unable to save config file \"{}\"", self.config_file),
-            res,
+            Severity::DEBUG,
+            "unable to save current connection state",
+            self.storage.save_connection_state(state),
         );
     }
 
-    /// Save the current configuration into the configuration file.
-    fn save(&self) -> Result<(), ConfigError> {
-        self.to_persistent_config().save(&self.config_file)
+    /// Save the current configuration.
+    fn save(&mut self) -> Result<(), io::Error> {
+        let config = self.to_persistent_config();
+
+        self.storage.save_configuration(&config).map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("unable to save client configuration: {}", err),
+            )
+        })
     }
 
     /// Create persistent configuration.
@@ -944,7 +938,7 @@ fn get_first_mac() -> Result<MacAddr, ConfigError> {
         .into_iter()
         .next()
         .map(|dev| dev.mac_addr)
-        .ok_or(ConfigError::from("there is no configured ethernet device"))
+        .ok_or(ConfigError::new("there is no configured ethernet device"))
 }
 
 /// Get MAC address of a given network interface.
@@ -953,60 +947,10 @@ fn get_mac(iface: &str) -> Result<MacAddr, ConfigError> {
         .into_iter()
         .find(|dev| dev.name == iface)
         .map(|dev| dev.mac_addr)
-        .ok_or(ConfigError::from(format!(
+        .ok_or(ConfigError::new(format!(
             "there is no such ethernet device: {}",
             iface
         )))
-}
-
-/// Simple extension to the SslContextBuilder.
-trait SslConnectorBuilderExt {
-    /// Load all CA certificates from a given path.
-    fn load_ca_certificates<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RuntimeError>;
-}
-
-impl SslConnectorBuilderExt for SslConnectorBuilder {
-    fn load_ca_certificates<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RuntimeError> {
-        let path = path.as_ref();
-
-        if path.is_dir() {
-            let dir = path
-                .read_dir()
-                .map_err(|err| RuntimeError::from(format!("{}", err)))?;
-
-            for entry in dir {
-                let path = entry
-                    .map_err(|err| RuntimeError::from(format!("{}", err)))?
-                    .path();
-
-                self.load_ca_certificates(&path)?;
-            }
-        } else if is_cert_file(&path) {
-            self.set_ca_file(&path)
-                .map_err(|err| RuntimeError::from(format!("{}", err)))?;
-        }
-
-        Ok(())
-    }
-}
-
-/// Check if a given file is a certificate file.
-fn is_cert_file<P: AsRef<Path>>(path: P) -> bool {
-    let path = path.as_ref();
-
-    if let Some(ext) = path.extension() {
-        let ext = ext.to_string_lossy();
-
-        match &ext.to_ascii_lowercase() as &str {
-            "der" => true,
-            "cer" => true,
-            "crt" => true,
-            "pem" => true,
-            _ => false,
-        }
-    } else {
-        false
-    }
 }
 
 /// Generate a fake MAC address from a given prefix and socket address.
@@ -1048,22 +992,19 @@ fn get_fake_mac_from_ipv6(prefix: u16, addr: &SocketAddrV6) -> MacAddr {
 fn parse_rtsp_url(url: &str) -> Result<Service, ConfigError> {
     let url = url
         .parse::<Url>()
-        .map_err(|_| ConfigError::from(format!("invalid RTSP URL given: {}", url)))?;
+        .map_err(|_| ConfigError::new(format!("invalid RTSP URL given: {}", url)))?;
 
     let scheme = url.scheme();
 
     if !scheme.eq_ignore_ascii_case("rtsp") {
-        return Err(ConfigError::from(format!(
-            "invalid RTSP URL given: {}",
-            url
-        )));
+        return Err(ConfigError::new(format!("invalid RTSP URL given: {}", url)));
     }
 
     let host = url.host();
     let port = url.port().unwrap_or(554);
 
     let socket_addr = net::utils::get_socket_address((host, port)).map_err(|_| {
-        ConfigError::from(format!(
+        ConfigError::new(format!(
             "unable to resolve RTSP service address: {}:{}",
             host, port
         ))
@@ -1088,22 +1029,19 @@ fn parse_rtsp_url(url: &str) -> Result<Service, ConfigError> {
 fn parse_mjpeg_url(url: &str) -> Result<Service, ConfigError> {
     let url = url
         .parse::<Url>()
-        .map_err(|_| ConfigError::from(format!("invalid HTTP URL given: {}", url)))?;
+        .map_err(|_| ConfigError::new(format!("invalid HTTP URL given: {}", url)))?;
 
     let scheme = url.scheme();
 
     if !scheme.eq_ignore_ascii_case("http") {
-        return Err(ConfigError::from(format!(
-            "invalid HTTP URL given: {}",
-            url
-        )));
+        return Err(ConfigError::new(format!("invalid HTTP URL given: {}", url)));
     }
 
     let host = url.host();
     let port = url.port().unwrap_or(80);
 
     let socket_addr = net::utils::get_socket_address((host, port)).map_err(|_| {
-        ConfigError::from(format!(
+        ConfigError::new(format!(
             "unable to resolve HTTP service address: {}:{}",
             host, port
         ))
@@ -1125,6 +1063,7 @@ fn parse_mjpeg_url(url: &str) -> Result<Service, ConfigError> {
 }
 
 /// Print usage and exit the process with a given exit code.
+#[doc(hidden)]
 pub fn usage(exit_code: i32) -> ! {
     println!("USAGE: arrow-client arr-host[:arr-port] [OPTIONS]\n");
     println!("    arr-host  Angelcam Arrow Service host");

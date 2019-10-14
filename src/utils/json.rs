@@ -27,6 +27,18 @@ pub struct ParseError {
     msg: String,
 }
 
+impl ParseError {
+    /// Create a new error.
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
+    }
+}
+
 impl Error for ParseError {
     fn description(&self) -> &str {
         &self.msg
@@ -36,24 +48,6 @@ impl Error for ParseError {
 impl Display for ParseError {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         f.write_str(&self.msg)
-    }
-}
-
-impl From<String> for ParseError {
-    fn from(msg: String) -> ParseError {
-        ParseError { msg: msg }
-    }
-}
-
-impl<'a> From<&'a str> for ParseError {
-    fn from(msg: &'a str) -> ParseError {
-        ParseError::from(msg.to_string())
-    }
-}
-
-impl From<json::Error> for ParseError {
-    fn from(err: json::Error) -> ParseError {
-        ParseError::from(err.description())
     }
 }
 

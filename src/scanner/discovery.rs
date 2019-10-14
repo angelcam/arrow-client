@@ -20,8 +20,6 @@ use std::result;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -105,13 +103,13 @@ pub type Result<T> = result::Result<T, DiscoveryError>;
 /// services.
 pub fn scan_network(
     logger: BoxLogger,
-    rtsp_paths_file: &str,
-    mjpeg_paths_file: &str,
+    rtsp_paths: Arc<Vec<String>>,
+    mjpeg_paths: Arc<Vec<String>>,
 ) -> Result<ScanResult> {
     let mut runtime = tokio::runtime::current_thread::Runtime::new()
         .map_err(|err| DiscoveryError::from(format!("Asyn IO error: {}", err)))?;
 
-    let context = Context::new(logger.clone(), rtsp_paths_file, mjpeg_paths_file)?;
+    let context = Context::new(logger.clone(), rtsp_paths, mjpeg_paths)?;
 
     let rtsp_port_priorities = context.get_rtsp_port_priorities();
     let http_port_priorities = context.get_http_port_priorities();
@@ -185,12 +183,9 @@ impl ContextData {
     /// Create new context data for the network scanner context.
     fn new(
         logger: BoxLogger,
-        rtsp_paths_file: &str,
-        mjpeg_paths_file: &str,
+        rtsp_paths: Arc<Vec<String>>,
+        mjpeg_paths: Arc<Vec<String>>,
     ) -> Result<ContextData> {
-        let rtsp_paths = load_paths(rtsp_paths_file)?;
-        let mjpeg_paths = load_paths(mjpeg_paths_file)?;
-
         let mut port_candidates = HashSet::<u16>::new();
         let mut rtsp_port_candidates = HashSet::<u16>::new();
         let mut http_port_candidates = HashSet::<u16>::new();
@@ -205,35 +200,19 @@ impl ContextData {
         let http_port_priorities = get_port_priorities(HTTP_PORT_CANDIDATES);
 
         let cdata = ContextData {
-            logger: logger,
-            port_candidates: port_candidates,
-            rtsp_port_candidates: rtsp_port_candidates,
-            http_port_candidates: http_port_candidates,
-            rtsp_port_priorities: rtsp_port_priorities,
-            http_port_priorities: http_port_priorities,
-            rtsp_paths: Arc::new(rtsp_paths),
-            mjpeg_paths: Arc::new(mjpeg_paths),
+            logger,
+            port_candidates,
+            rtsp_port_candidates,
+            http_port_candidates,
+            rtsp_port_priorities,
+            http_port_priorities,
+            rtsp_paths,
+            mjpeg_paths,
             request_timeout: Duration::from_millis(2000),
         };
 
         Ok(cdata)
     }
-}
-
-/// Helper function for loading all path variants from a given file.
-fn load_paths(file: &str) -> Result<Vec<String>> {
-    let file = File::open(file)?;
-    let breader = BufReader::new(file);
-    let mut paths = Vec::new();
-
-    for line in breader.lines() {
-        let path = line?;
-        if !path.starts_with('#') {
-            paths.push(path);
-        }
-    }
-
-    Ok(paths)
 }
 
 /// Helper function for constructing a map of port priorities. Assuming the
@@ -259,8 +238,12 @@ struct Context {
 
 impl Context {
     /// Create a new network scanner context.
-    fn new(logger: BoxLogger, rtsp_paths_file: &str, mjpeg_paths_file: &str) -> Result<Context> {
-        let data = ContextData::new(logger, rtsp_paths_file, mjpeg_paths_file)?;
+    fn new(
+        logger: BoxLogger,
+        rtsp_paths: Arc<Vec<String>>,
+        mjpeg_paths: Arc<Vec<String>>,
+    ) -> Result<Context> {
+        let data = ContextData::new(logger, rtsp_paths, mjpeg_paths)?;
 
         let context = Context {
             data: Arc::new(data),

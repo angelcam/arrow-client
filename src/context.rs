@@ -13,23 +13,18 @@
 // limitations under the License.
 
 use std::fmt;
-use std::io;
 
 use std::fmt::{Display, Formatter};
-use std::fs::File;
-use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use uuid::Uuid;
 
-use crate::utils;
-
-use crate::config::ApplicationConfig;
+use crate::config::Config;
 use crate::net::raw::ether::MacAddr;
 use crate::net::tls::TlsConnector;
 use crate::scanner::ScanResult;
 use crate::svc_table::{Service, SharedServiceTableRef};
-use crate::utils::logger::{BoxLogger, Severity};
+use crate::utils::logger::BoxLogger;
 use crate::utils::RuntimeError;
 
 /// Arrow service connection state.
@@ -60,31 +55,29 @@ impl Display for ConnectionState {
 /// Internal data of the application context.
 struct ApplicationContextData {
     logger: BoxLogger,
-    config: ApplicationConfig,
+    config: Config,
     scanning: bool,
     scan_result: ScanResult,
-    conn_state: ConnectionState,
 }
 
 impl ApplicationContextData {
     /// Take a given application config and create application context data.
-    fn new(config: ApplicationConfig) -> ApplicationContextData {
+    fn new(config: Config) -> ApplicationContextData {
         ApplicationContextData {
             logger: config.get_logger(),
-            config: config,
+            config,
             scanning: false,
             scan_result: ScanResult::new(),
-            conn_state: ConnectionState::Disconnected,
         }
     }
 
     /// Get application config.
-    fn get_config(&self) -> &ApplicationConfig {
+    fn get_config(&self) -> &Config {
         &self.config
     }
 
     /// Get application config.
-    fn get_config_mut(&mut self) -> &mut ApplicationConfig {
+    fn get_config_mut(&mut self) -> &mut Config {
         &mut self.config
     }
 
@@ -115,25 +108,7 @@ impl ApplicationContextData {
 
     /// Set connection state.
     fn set_connection_state(&mut self, state: ConnectionState) {
-        self.conn_state = state;
-
-        let res = self.save_connection_state();
-
-        utils::result_or_log(
-            &mut self.logger,
-            Severity::DEBUG,
-            "unable to save current connection state",
-            res,
-        );
-    }
-
-    /// Save connection state into the file.
-    fn save_connection_state(&self) -> Result<(), io::Error> {
-        let mut file = File::create(self.config.get_connection_state_file())?;
-
-        writeln!(&mut file, "{}", self.conn_state)?;
-
-        Ok(())
+        self.config.update_connection_state(state);
     }
 }
 
@@ -145,7 +120,7 @@ pub struct ApplicationContext {
 
 impl ApplicationContext {
     /// Take a given application config and create a new application context.
-    pub fn new(config: ApplicationConfig) -> ApplicationContext {
+    pub fn new(config: Config) -> ApplicationContext {
         ApplicationContext {
             data: Arc::new(Mutex::new(ApplicationContextData::new(config))),
         }
@@ -186,24 +161,14 @@ impl ApplicationContext {
         self.data.lock().unwrap().get_config().get_diagnostic_mode()
     }
 
-    /// Get path to a file containing RTSP paths for the network scanner.
-    pub fn get_rtsp_paths_file(&self) -> String {
-        self.data
-            .lock()
-            .unwrap()
-            .get_config()
-            .get_rtsp_paths_file()
-            .to_string()
+    /// Get RTSP paths for the network scanner.
+    pub fn get_rtsp_paths(&self) -> Arc<Vec<String>> {
+        self.data.lock().unwrap().get_config().get_rtsp_paths()
     }
 
-    /// Get path to a file containing MJPEG paths for the network scanner.
-    pub fn get_mjpeg_paths_file(&self) -> String {
-        self.data
-            .lock()
-            .unwrap()
-            .get_config()
-            .get_mjpeg_paths_file()
-            .to_string()
+    /// Get MJPEG paths for the network scanner.
+    pub fn get_mjpeg_paths(&self) -> Arc<Vec<String>> {
+        self.data.lock().unwrap().get_config().get_mjpeg_paths()
     }
 
     /// Get application logger.
@@ -213,7 +178,11 @@ impl ApplicationContext {
 
     /// Get TLS connector for a given server hostname.
     pub fn get_tls_connector(&self) -> Result<TlsConnector, RuntimeError> {
-        self.data.lock().unwrap().get_config().get_tls_connector()
+        self.data
+            .lock()
+            .unwrap()
+            .get_config_mut()
+            .get_tls_connector()
     }
 
     /// Set the state of the network scanner thread.

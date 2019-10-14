@@ -17,7 +17,7 @@
 use std::ptr;
 
 use std::ffi::CString;
-use std::sync::{Once, ONCE_INIT};
+use std::sync::Once;
 
 use libc::{c_char, c_int, c_void};
 
@@ -33,7 +33,7 @@ const LOG_WARNING: c_int = 4;
 const LOG_INFO: c_int = 6;
 const LOG_DEBUG: c_int = 7;
 
-static SYSLOG_INIT: Once = ONCE_INIT;
+static SYSLOG_INIT: Once = Once::new();
 
 #[link(name = "c")]
 extern "C" {
@@ -47,14 +47,16 @@ pub struct Syslog {
     level: Severity,
 }
 
-/// Create a new syslog logger with log level set to INFO.
-pub fn new() -> Syslog {
-    SYSLOG_INIT.call_once(|| unsafe {
-        openlog(ptr::null(), LOG_CONS | LOG_PID, LOG_USER);
-    });
+impl Syslog {
+    /// Create a new syslog logger with log level set to INFO.
+    pub fn new() -> Self {
+        SYSLOG_INIT.call_once(|| unsafe {
+            openlog(ptr::null(), LOG_CONS | LOG_PID, LOG_USER);
+        });
 
-    Syslog {
-        level: Severity::INFO,
+        Self {
+            level: Severity::INFO,
+        }
     }
 }
 

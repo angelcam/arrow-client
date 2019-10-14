@@ -28,21 +28,23 @@ pub struct StderrLogger {
     pretty: bool,
 }
 
-/// Create a new stderr logger with log level set to INFO.
-pub fn new() -> StderrLogger {
-    StderrLogger {
-        level: Severity::INFO,
-        stderr: std::io::stderr(),
-        pretty: false,
+impl StderrLogger {
+    /// Create a new stderr logger with log level set to INFO.
+    pub fn new() -> Self {
+        Self {
+            level: Severity::INFO,
+            stderr: std::io::stderr(),
+            pretty: false,
+        }
     }
-}
 
-/// Create a new stderr logger with color formatted messages.
-pub fn new_pretty() -> StderrLogger {
-    StderrLogger {
-        level: Severity::INFO,
-        stderr: std::io::stderr(),
-        pretty: true,
+    /// Create a new stderr logger with color formatted messages.
+    pub fn new_pretty() -> Self {
+        Self {
+            level: Severity::INFO,
+            stderr: std::io::stderr(),
+            pretty: true,
+        }
     }
 }
 

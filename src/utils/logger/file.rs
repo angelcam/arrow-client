@@ -113,34 +113,36 @@ pub struct FileLogger {
     shared: Arc<Mutex<InternalFileLogger>>,
 }
 
-/// Create a new file logger with a given file size limit, given number of backup files
-/// (rotations) and with log level set to INFO.
-pub fn new(path: &str, limit: usize, rotations: usize) -> io::Result<FileLogger> {
-    let written = match Path::new(path).metadata() {
-        Ok(metadata) => metadata.len(),
-        Err(_) => 0,
-    };
+impl FileLogger {
+    /// Create a new file logger with a given file size limit, given number of backup files
+    /// (rotations) and with log level set to INFO.
+    pub fn new(path: &str, limit: usize, rotations: usize) -> io::Result<Self> {
+        let written = match Path::new(path).metadata() {
+            Ok(metadata) => metadata.len(),
+            Err(_) => 0,
+        };
 
-    let file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(true)
-        .open(path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(true)
+            .open(path)?;
 
-    let logger = InternalFileLogger {
-        level: Severity::INFO,
-        path: path.to_string(),
-        file: file,
-        written: written as usize,
-        limit: limit,
-        rotations: rotations,
-    };
+        let logger = InternalFileLogger {
+            level: Severity::INFO,
+            path: path.to_string(),
+            file,
+            written: written as usize,
+            limit,
+            rotations,
+        };
 
-    let logger = FileLogger {
-        shared: Arc::new(Mutex::new(logger)),
-    };
+        let logger = Self {
+            shared: Arc::new(Mutex::new(logger)),
+        };
 
-    Ok(logger)
+        Ok(logger)
+    }
 }
 
 impl Logger for FileLogger {
@@ -188,7 +190,7 @@ mod test {
     fn test_file_logger() {
         remove_files();
 
-        let mut logger = new("testlog", 100, 5).unwrap();
+        let mut logger = FileLogger::new("testlog", 100, 5).unwrap();
 
         log_debug!(logger, "foo");
 

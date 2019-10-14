@@ -201,25 +201,25 @@ impl FromJson for ServiceTableElement {
         if let JsonValue::Object(svc) = value {
             service = svc;
         } else {
-            return Err(ParseError::from("JSON object expected"));
+            return Err(ParseError::new("JSON object expected"));
         }
 
         let svc_type = service
             .get("svc_type")
             .and_then(|v| v.as_u16())
-            .ok_or(ParseError::from("missing field \"svc_type\""))?;
+            .ok_or(ParseError::new("missing field \"svc_type\""))?;
         let mac = service
             .get("mac")
             .and_then(|v| v.as_str())
-            .ok_or(ParseError::from("missing field \"mac\""))?;
+            .ok_or(ParseError::new("missing field \"mac\""))?;
         let address = service
             .get("address")
             .and_then(|v| v.as_str())
-            .ok_or(ParseError::from("missing field \"address\""))?;
+            .ok_or(ParseError::new("missing field \"address\""))?;
         let path = service
             .get("path")
             .and_then(|v| v.as_str())
-            .ok_or(ParseError::from("missing field \"path\""))?;
+            .ok_or(ParseError::new("missing field \"path\""))?;
 
         let epath = String::new();
         let opath;
@@ -232,10 +232,10 @@ impl FromJson for ServiceTableElement {
 
         let mac = mac
             .parse()
-            .map_err(|_| ParseError::from("unable to parse MAC address"));
+            .map_err(|_| ParseError::new("unable to parse MAC address"));
         let address = address
             .parse()
-            .map_err(|_| ParseError::from("unable to parse socket address"));
+            .map_err(|_| ParseError::new("unable to parse socket address"));
 
         let svc = match svc_type {
             SVC_TYPE_CONTROL_PROTOCOL => Ok(Service::control()),
@@ -251,7 +251,7 @@ impl FromJson for ServiceTableElement {
             SVC_TYPE_MJPEG => Ok(Service::mjpeg(mac?, address?, opath.unwrap_or(epath))),
             SVC_TYPE_LOCKED_MJPEG => Ok(Service::locked_mjpeg(mac?, address?, opath)),
             SVC_TYPE_TCP => Ok(Service::tcp(mac?, address?)),
-            _ => Err(ParseError::from("unknown service type")),
+            _ => Err(ParseError::new("unknown service type")),
         };
 
         let id = service.get("id").and_then(|v| v.as_u16()).unwrap_or(0);
@@ -459,19 +459,19 @@ impl FromJson for ServiceTableData {
         if let JsonValue::Object(t) = value {
             table = t;
         } else {
-            return Err(ParseError::from("JSON object expected"));
+            return Err(ParseError::new("JSON object expected"));
         }
 
         let tmp = table
             .remove("services")
-            .ok_or(ParseError::from("missing field \"services\""))?;
+            .ok_or(ParseError::new("missing field \"services\""))?;
 
         let services;
 
         if let JsonValue::Array(svcs) = tmp {
             services = svcs.into_iter();
         } else {
-            return Err(ParseError::from("JSON array expected"));
+            return Err(ParseError::new("JSON array expected"));
         }
 
         for (index, service) in services.enumerate() {
