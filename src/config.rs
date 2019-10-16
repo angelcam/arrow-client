@@ -60,27 +60,27 @@ const EXIT_CODE_SSL_ERROR:     i32 = 4;
 const EXIT_CODE_CERT_ERROR:    i32 = 5;*/
 
 /// Arrow Client configuration file.
-const CONFIG_FILE: &'static str = "/etc/arrow/config.json";
+const CONFIG_FILE: &str = "/etc/arrow/config.json";
 
 /// Arrow Client configuration file skeleton.
-const CONFIG_FILE_SKELETON: &'static str = "/etc/arrow/config-skel.json";
+const CONFIG_FILE_SKELETON: &str = "/etc/arrow/config-skel.json";
 
 /// Arrow Client connection state file.
-const STATE_FILE: &'static str = "/var/lib/arrow/state";
+const STATE_FILE: &str = "/var/lib/arrow/state";
 
 /// A file containing RTSP paths tested on service discovery (one path per
 /// line).
-const RTSP_PATHS_FILE: &'static str = "/etc/arrow/rtsp-paths";
+const RTSP_PATHS_FILE: &str = "/etc/arrow/rtsp-paths";
 
 /// A file containing MJPEG paths tested on service discovery (one path per
 /// line).
-const MJPEG_PATHS_FILE: &'static str = "/etc/arrow/mjpeg-paths";
+const MJPEG_PATHS_FILE: &str = "/etc/arrow/mjpeg-paths";
 
 /// Default port number for connecting to an Arrow Service.
 const DEFAULT_ARROW_SERVICE_PORT: u16 = 8900;
 
 /// List of cipher that can be used for TLS connections to Arrow services.
-const SSL_CIPHER_LIST: &'static str = "HIGH:!aNULL:!kRSA:!PSK:!MD5:!RC4";
+const SSL_CIPHER_LIST: &str = "HIGH:!aNULL:!kRSA:!PSK:!MD5:!RC4";
 
 /// Arrow configuration loading/parsing/saving error.
 #[derive(Debug, Clone)]
@@ -313,7 +313,7 @@ impl ConfigParser {
             LoggerType::StderrPretty => BoxLogger::new(StderrLogger::new_pretty()),
             LoggerType::FileLogger => {
                 FileLogger::new(&self.log_file, self.log_file_size, self.log_file_rotations)
-                    .map(|logger| BoxLogger::new(logger))
+                    .map(BoxLogger::new)
                     .map_err(|_| {
                         ConfigError::new(format!(
                             "unable to open the given log file: \"{}\"",
@@ -361,7 +361,7 @@ impl ConfigParser {
     }
 
     /// Parse given command line arguments.
-    fn parse(mut self, mut args: Args) -> Result<ConfigParser, ConfigError> {
+    fn parse(mut self, mut args: Args) -> Result<Self, ConfigError> {
         // skip the application name
         args.next();
 
@@ -417,7 +417,7 @@ impl ConfigParser {
     fn arrow_service_address(&mut self, args: &mut Args) -> Result<(), ConfigError> {
         let addr = args
             .next()
-            .ok_or(ConfigError::new("missing Angelcam Arrow Service address"))?;
+            .ok_or_else(|| ConfigError::new("missing Angelcam Arrow Service address"))?;
 
         // add the default port number if the given address has no port
         if addr.ends_with(']') || !addr.contains(':') {
@@ -433,7 +433,7 @@ impl ConfigParser {
     fn ca_certificates(&mut self, args: &mut Args) -> Result<(), ConfigError> {
         let path = args
             .next()
-            .ok_or(ConfigError::new("CA certificate path expected"))?;
+            .ok_or_else(|| ConfigError::new("CA certificate path expected"))?;
 
         self.ca_certificates.push(path);
 
@@ -455,7 +455,7 @@ impl ConfigParser {
     fn interface(&mut self, args: &mut Args) -> Result<(), ConfigError> {
         let iface = args
             .next()
-            .ok_or(ConfigError::new("network interface name expected"))?;
+            .ok_or_else(|| ConfigError::new("network interface name expected"))?;
 
         self.arrow_mac = Some(get_mac(&iface)?);
 
@@ -464,7 +464,9 @@ impl ConfigParser {
 
     /// Process the RTSP service argument.
     fn rtsp_service(&mut self, args: &mut Args) -> Result<(), ConfigError> {
-        let url = args.next().ok_or(ConfigError::new("RTSP URL expected"))?;
+        let url = args
+            .next()
+            .ok_or_else(|| ConfigError::new("RTSP URL expected"))?;
 
         let service = parse_rtsp_url(&url)?;
 
@@ -475,7 +477,9 @@ impl ConfigParser {
 
     /// Process the MJPEG service argument.
     fn mjpeg_service(&mut self, args: &mut Args) -> Result<(), ConfigError> {
-        let url = args.next().ok_or(ConfigError::new("HTTP URL expected"))?;
+        let url = args
+            .next()
+            .ok_or_else(|| ConfigError::new("HTTP URL expected"))?;
 
         let service = parse_mjpeg_url(&url)?;
 
@@ -488,7 +492,7 @@ impl ConfigParser {
     fn http_service(&mut self, args: &mut Args) -> Result<(), ConfigError> {
         let addr = args
             .next()
-            .ok_or(ConfigError::new("TCP socket address expected"))?;
+            .ok_or_else(|| ConfigError::new("TCP socket address expected"))?;
 
         let addr = net::utils::get_socket_address(addr.as_str())
             .map_err(|_| ConfigError::new(format!("unable to resolve socket address: {}", addr)))?;
@@ -504,7 +508,7 @@ impl ConfigParser {
     fn tcp_service(&mut self, args: &mut Args) -> Result<(), ConfigError> {
         let addr = args
             .next()
-            .ok_or(ConfigError::new("TCP socket address expected"))?;
+            .ok_or_else(|| ConfigError::new("TCP socket address expected"))?;
 
         let addr = net::utils::get_socket_address(addr.as_str())
             .map_err(|_| ConfigError::new(format!("unable to resolve socket address: {}", addr)))?;
@@ -659,8 +663,8 @@ pub struct PersistentConfig {
 
 impl PersistentConfig {
     /// Create a new instance of persistent configuration.
-    pub fn new() -> PersistentConfig {
-        PersistentConfig {
+    pub fn new() -> Self {
+        Self {
             uuid: Uuid::new_v4(),
             passwd: Uuid::new_v4(),
             version: 0,
@@ -676,8 +680,8 @@ impl PersistentConfig {
 
     /// Create a configuration skeleton from this persistent config.
     #[doc(hidden)]
-    pub fn to_skeleton(&self) -> PersistentConfig {
-        PersistentConfig {
+    pub fn to_skeleton(&self) -> Self {
+        Self {
             uuid: self.uuid.clone(),
             passwd: self.passwd.clone(),
             version: 0,
@@ -709,7 +713,7 @@ impl FromJson for PersistentConfig {
 
         let svc_table = config
             .remove("svc_table")
-            .ok_or(ParseError::new("missing field \"svc_table\""))?;
+            .ok_or_else(|| ParseError::new("missing field \"svc_table\""))?;
 
         let svc_table = SharedServiceTable::from_json(svc_table)
             .map_err(|err| ParseError::new(format!("unable to parse service table: {}", err)))?;
@@ -717,20 +721,20 @@ impl FromJson for PersistentConfig {
         let uuid = config
             .get("uuid")
             .and_then(|v| v.as_str())
-            .ok_or(ParseError::new("missing field \"uuid\""))?;
+            .ok_or_else(|| ParseError::new("missing field \"uuid\""))?;
         let passwd = config
             .get("passwd")
             .and_then(|v| v.as_str())
-            .ok_or(ParseError::new("missing field \"passwd\""))?;
+            .ok_or_else(|| ParseError::new("missing field \"passwd\""))?;
         let version = config
             .get("version")
             .and_then(|v| v.as_usize())
-            .ok_or(ParseError::new("missing field \"version\""))?;
+            .ok_or_else(|| ParseError::new("missing field \"version\""))?;
 
         let uuid = Uuid::from_str(uuid).map_err(|_| ParseError::new("unable to parse UUID"))?;
         let passwd = Uuid::from_str(passwd).map_err(|_| ParseError::new("unable to parse UUID"))?;
 
-        let res = PersistentConfig {
+        let res = Self {
             uuid,
             passwd,
             version,
@@ -766,7 +770,7 @@ impl Config {
 
     /// Create a new application configuration. The methods reads all command line arguments and
     /// loads the configuration file.
-    pub fn from_args(args: Args) -> Result<Config, ConfigError> {
+    pub fn from_args(args: Args) -> Result<Self, ConfigError> {
         ConfigParser::new().parse(args)?.build()
     }
 
@@ -941,7 +945,7 @@ fn get_first_mac() -> Result<MacAddr, ConfigError> {
         .into_iter()
         .next()
         .map(|dev| dev.mac_addr)
-        .ok_or(ConfigError::new("there is no configured ethernet device"))
+        .ok_or_else(|| ConfigError::new("there is no configured ethernet device"))
 }
 
 /// Get MAC address of a given network interface.
@@ -950,10 +954,7 @@ fn get_mac(iface: &str) -> Result<MacAddr, ConfigError> {
         .into_iter()
         .find(|dev| dev.name == iface)
         .map(|dev| dev.mac_addr)
-        .ok_or(ConfigError::new(format!(
-            "there is no such ethernet device: {}",
-            iface
-        )))
+        .ok_or_else(|| ConfigError::new(format!("there is no such ethernet device: {}", iface)))
 }
 
 /// Generate a fake MAC address from a given prefix and socket address.
@@ -961,9 +962,9 @@ fn get_mac(iface: &str) -> Result<MacAddr, ConfigError> {
 /// Note: It is used in case we do not know the device MAC address (e.g. for
 /// services passed as command line arguments).
 fn get_fake_mac(prefix: u16, addr: &SocketAddr) -> MacAddr {
-    match addr {
-        &SocketAddr::V4(ref addr) => get_fake_mac_from_ipv4(prefix, addr),
-        &SocketAddr::V6(ref addr) => get_fake_mac_from_ipv6(prefix, addr),
+    match &addr {
+        SocketAddr::V4(ref addr) => get_fake_mac_from_ipv4(prefix, addr),
+        SocketAddr::V6(ref addr) => get_fake_mac_from_ipv6(prefix, addr),
     }
 }
 
@@ -981,14 +982,14 @@ fn get_fake_mac_from_ipv6(prefix: u16, addr: &SocketAddrV6) -> MacAddr {
     let addr = addr.ip();
     let segments = addr.segments();
 
-    let a = ((prefix >> 8) & 0xff) as u8;
-    let b = (prefix & 0xff) as u8;
-    let c = ((segments[6] >> 8) & 0xff) as u8;
-    let d = (segments[6] & 0xff) as u8;
-    let e = ((segments[7] >> 8) & 0xff) as u8;
-    let f = (segments[7] & 0xff) as u8;
+    let e0 = ((prefix >> 8) & 0xff) as u8;
+    let e1 = (prefix & 0xff) as u8;
+    let e2 = ((segments[6] >> 8) & 0xff) as u8;
+    let e3 = (segments[6] & 0xff) as u8;
+    let e4 = ((segments[7] >> 8) & 0xff) as u8;
+    let e5 = (segments[7] & 0xff) as u8;
 
-    MacAddr::new(a, b, c, d, e, f)
+    MacAddr::new(e0, e1, e2, e3, e4, e5)
 }
 
 /// Parse a given RTSP URL and return an RTSP service, a LockedRTSP service or an error.

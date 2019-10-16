@@ -51,24 +51,24 @@ pub struct TcpPacket {
 
 impl TcpPacket {
     /// Create a new TCP packet.
-    pub fn new(sport: u16, dport: u16, flags: u16, data: &[u8]) -> TcpPacket {
+    pub fn new(sport: u16, dport: u16, flags: u16, data: &[u8]) -> Self {
         let data = data.to_vec().into_boxed_slice();
 
-        TcpPacket {
-            sport: sport,
-            dport: dport,
+        Self {
+            sport,
+            dport,
             seq: 0,
             ack: 0,
-            flags: flags,
+            flags,
             wsize: 8192,
             uptr: 0,
             options: Box::new([]),
-            data: data,
+            data,
         }
     }
 
     /// Parse a TCP packet from given data.
-    pub fn parse(data: &[u8]) -> Result<TcpPacket> {
+    pub fn parse(data: &[u8]) -> Result<Self> {
         let size = mem::size_of::<RawTcpPacketHeader>();
 
         if data.len() < size {
@@ -99,7 +99,7 @@ impl TcpPacket {
 
                 let payload = &data[offset_2..];
 
-                let res = TcpPacket {
+                let res = Self {
                     sport: u16::from_be(rh.sport),
                     dport: u16::from_be(rh.dport),
                     seq: u32::from_be(rh.seq),
@@ -151,12 +151,12 @@ struct RawTcpPacketHeader {
 
 impl RawTcpPacketHeader {
     /// Create a new raw TCP packet header.
-    fn new(iph: &Ipv4PacketHeader, tcp: &TcpPacket) -> RawTcpPacketHeader {
+    fn new(iph: &Ipv4PacketHeader, tcp: &TcpPacket) -> Self {
         let mut ph = PseudoIpv4PacketHeader::new(iph);
         let doffset = 5 + tcp.options.len() as u16;
         let doffset_flags = (doffset << 12) | (tcp.flags & 0x01ff);
         let tcp_len = (doffset << 2) + tcp.data.len() as u16;
-        let mut rh = RawTcpPacketHeader {
+        let mut rh = Self {
             sport: tcp.sport.to_be(),
             dport: tcp.dport.to_be(),
             seq: tcp.seq.to_be(),
@@ -193,8 +193,8 @@ struct PseudoIpv4PacketHeader {
 
 impl PseudoIpv4PacketHeader {
     /// Create a new pseudo IPv4 packet header.
-    fn new(iph: &Ipv4PacketHeader) -> PseudoIpv4PacketHeader {
-        PseudoIpv4PacketHeader {
+    fn new(iph: &Ipv4PacketHeader) -> Self {
+        Self {
             src: iph.src.octets(),
             dst: iph.dst.octets(),
             res: 0,
@@ -233,22 +233,22 @@ pub mod scanner {
     impl PortRange {
         /// Convert TCP port range into a Range<u16> instance.
         fn to_range(&self) -> Range<u16> {
-            match self {
-                &PortRange::Range(ref r) => r.clone(),
-                &PortRange::Single(p) => p..(p + 1),
+            match *self {
+                Self::Range(ref r) => r.clone(),
+                Self::Single(p) => p..(p + 1),
             }
         }
     }
 
     impl From<u16> for PortRange {
-        fn from(p: u16) -> PortRange {
-            PortRange::Single(p)
+        fn from(p: u16) -> Self {
+            Self::Single(p)
         }
     }
 
     impl From<Range<u16>> for PortRange {
-        fn from(r: Range<u16>) -> PortRange {
-            PortRange::Range(r)
+        fn from(r: Range<u16>) -> Self {
+            Self::Range(r)
         }
     }
 
@@ -261,8 +261,8 @@ pub mod scanner {
 
     impl PortCollection {
         /// Create a new empty collection of ports.
-        pub fn new() -> PortCollection {
-            PortCollection { ranges: Vec::new() }
+        pub fn new() -> Self {
+            Self { ranges: Vec::new() }
         }
 
         /// Add a single port or a range.
@@ -287,7 +287,7 @@ pub mod scanner {
         }
 
         /// Get port collection iterator.
-        pub fn iter<'a>(&'a self) -> PortCollectionIterator<'a> {
+        pub fn iter(&self) -> PortCollectionIterator<'_> {
             PortCollectionIterator::new(self.ranges.iter())
         }
     }
@@ -301,9 +301,9 @@ pub mod scanner {
     }
 
     impl<'a> PortCollectionIterator<'a> {
-        fn new(iter: slice::Iter<'a, PortRange>) -> PortCollectionIterator<'a> {
-            PortCollectionIterator {
-                iter: iter,
+        fn new(iter: slice::Iter<'a, PortRange>) -> Self {
+            Self {
+                iter,
                 last: 0,
                 port: 0,
             }
@@ -351,12 +351,12 @@ pub mod scanner {
             hosts: HI,
             endpoints: &PortCollection,
         ) -> pcap::Result<Vec<(MacAddr, Ipv4Addr, u16)>> {
-            TcpPortScanner::new(device).scan(hosts, endpoints)
+            Self::new(device).scan(hosts, endpoints)
         }
 
         /// Create a new port scanner.
-        fn new(device: &EthernetDevice) -> TcpPortScanner {
-            TcpPortScanner {
+        fn new(device: &EthernetDevice) -> Self {
+            Self {
                 device: device.clone(),
                 scanner: Scanner::new(&device.name),
             }
@@ -372,7 +372,7 @@ pub mod scanner {
             let sport = 61234;
             let mut gen = TcpPortScannerPacketGenerator::new(&self.device, hosts, sport, endpoints);
 
-            let mut generator = move || gen.next().map(|pkt| Bytes::from(pkt));
+            let mut generator = move || gen.next().map(Bytes::from);
 
             let filter = format!(
                 "tcp and dst host {} and dst port {} and \
@@ -429,17 +429,17 @@ pub mod scanner {
             let ports = endpoints.iter();
             TcpPortScannerPacketGenerator {
                 device: device.clone(),
-                hosts: hosts,
-                sport: sport,
-                endpoints: endpoints,
-                host: host,
-                ports: ports,
+                hosts,
+                sport,
+                endpoints,
+                host,
+                ports,
                 buffer: Vec::new(),
             }
         }
 
         /// Get next packet.
-        fn next<'b>(&'b mut self) -> Option<&'b [u8]> {
+        fn next(&mut self) -> Option<&[u8]> {
             if let Some((hdst, pdst)) = self.host {
                 if let Some(port) = self.ports.next() {
                     let tcpp = TcpPacket::new(self.sport, port, TCP_FLAG_SYN, &[]);
@@ -479,7 +479,7 @@ mod tests {
     #[test]
     fn test_port_collection() {
         let col = PortCollection::new()
-            .add_all([3, 5].iter().map(|p| *p))
+            .add_all([3, 5].iter().cloned())
             .add(10..15)
             .add(100);
 

@@ -34,9 +34,9 @@ struct RegisterMessageHeader {
 
 impl RegisterMessageHeader {
     /// Create a new REGISTER message header.
-    fn new(mac: MacAddr, uuid: [u8; 16], password: [u8; 16]) -> RegisterMessageHeader {
-        RegisterMessageHeader {
-            uuid: uuid,
+    fn new(mac: MacAddr, uuid: [u8; 16], password: [u8; 16]) -> Self {
+        Self {
+            uuid,
             mac: mac.octets(),
             passwd: password,
         }
@@ -62,13 +62,10 @@ impl RegisterMessage {
         uuid: [u8; 16],
         password: [u8; 16],
         svc_table: SimpleServiceTable,
-    ) -> RegisterMessage {
+    ) -> Self {
         let header = RegisterMessageHeader::new(mac, uuid, password);
 
-        RegisterMessage {
-            header: header,
-            svc_table: svc_table,
-        }
+        Self { header, svc_table }
     }
 }
 

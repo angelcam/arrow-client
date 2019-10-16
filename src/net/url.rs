@@ -38,8 +38,8 @@ impl Display for UrlParseError {
 }
 
 impl<'a> From<&'a str> for UrlParseError {
-    fn from(msg: &'a str) -> UrlParseError {
-        UrlParseError {
+    fn from(msg: &'a str) -> Self {
+        Self {
             msg: msg.to_string(),
         }
     }
@@ -144,10 +144,7 @@ impl Url {
             self.fragment = Some(start + delim + 1);
         }
 
-        let end = self
-            .fragment
-            .map(|f| f - 1)
-            .unwrap_or(self.serialized.len());
+        let end = self.fragment.map_or(self.serialized.len(), |f| f - 1);
 
         let path = &self.serialized[start..end];
 
@@ -252,8 +249,8 @@ impl Display for Url {
 impl FromStr for Url {
     type Err = UrlParseError;
 
-    fn from_str(s: &str) -> Result<Url> {
-        let mut url = Url {
+    fn from_str(s: &str) -> Result<Self> {
+        let mut url = Self {
             serialized: s.to_string(),
             hier: 0,
             netloc: 0,

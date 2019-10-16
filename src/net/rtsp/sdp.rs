@@ -44,14 +44,14 @@ impl Display for ParseError {
 }
 
 impl From<String> for ParseError {
-    fn from(msg: String) -> ParseError {
-        ParseError { msg: msg }
+    fn from(msg: String) -> Self {
+        Self { msg }
     }
 }
 
 impl<'a> From<&'a str> for ParseError {
-    fn from(msg: &'a str) -> ParseError {
-        ParseError {
+    fn from(msg: &'a str) -> Self {
+        Self {
             msg: msg.to_string(),
         }
     }
@@ -76,15 +76,15 @@ pub struct SessionDescription {
 
 impl SessionDescription {
     /// Create a new session description.
-    fn new() -> SessionDescription {
-        SessionDescription {
+    fn new() -> Self {
+        Self {
             version: 0,
             media_descriptions: Vec::new(),
         }
     }
 
     /// Parse session description from a given string.
-    pub fn parse(sdp: &[u8]) -> Result<SessionDescription> {
+    pub fn parse(sdp: &[u8]) -> Result<Self> {
         SessionDescriptionParser::parse(sdp)
     }
 }
@@ -101,14 +101,14 @@ pub enum MediaType {
 }
 
 impl<'a> From<&'a str> for MediaType {
-    fn from(s: &'a str) -> MediaType {
+    fn from(s: &'a str) -> Self {
         match &s.to_lowercase() as &str {
-            "audio" => MediaType::Audio,
-            "video" => MediaType::Video,
-            "text" => MediaType::Text,
-            "application" => MediaType::Application,
-            "message" => MediaType::Message,
-            _ => MediaType::Other(s.to_string()),
+            "audio" => Self::Audio,
+            "video" => Self::Video,
+            "text" => Self::Text,
+            "application" => Self::Application,
+            "message" => Self::Message,
+            _ => Self::Other(s.to_string()),
         }
     }
 }
@@ -144,19 +144,17 @@ impl FromStr for MediaDescription {
 
         let c = reader
             .current_char()
-            .ok_or(reader::ParseError::from("empty input"))?;
+            .ok_or_else(|| reader::ParseError::from("empty input"))?;
 
-        let np;
-
-        if c == '/' {
+        let np = if c == '/' {
             reader.skip_char();
 
             let val = reader.read_decimal_u32()?;
 
-            np = Some(val as u16);
+            Some(val as u16)
         } else {
-            np = None;
-        }
+            None
+        };
 
         let protocol = reader.read_word();
 
@@ -168,12 +166,12 @@ impl FromStr for MediaDescription {
             formats.push(format);
         }
 
-        let res = MediaDescription {
+        let res = Self {
             media_type: MediaType::from(mtype),
             port: port as u16,
             nb_ports: np,
             protocol: protocol.to_string(),
-            formats: formats,
+            formats,
             attributes: Vec::new(),
         };
 
@@ -192,8 +190,8 @@ pub struct Attribute {
 
 impl Attribute {
     /// Create a new attribute.
-    pub fn new(name: &str, value: Option<&str>) -> Attribute {
-        Attribute {
+    pub fn new(name: &str, value: Option<&str>) -> Self {
+        Self {
             name: name.to_string(),
             value: value.map(|v| v.to_string()),
         }
@@ -203,14 +201,14 @@ impl Attribute {
 impl FromStr for Attribute {
     type Err = ParseError;
 
-    fn from_str(val: &str) -> Result<Attribute> {
+    fn from_str(val: &str) -> Result<Self> {
         let mut val = val.splitn(2, ':');
 
         if let Some(name) = val.next() {
             let name = name.trim();
             let value = val.next().map(|v| v.trim());
 
-            Ok(Attribute::new(name, value))
+            Ok(Self::new(name, value))
         } else {
             Err(ParseError::from("invalid attribute"))
         }
@@ -252,20 +250,18 @@ impl FromStr for RTPMap {
 
         reader.skip_whitespace();
 
-        let eps;
-
-        if !reader.is_empty() {
+        let eps = if reader.is_empty() {
+            None
+        } else {
             reader.match_char('/')?;
             reader.skip_whitespace();
 
             let params = reader.as_str().to_string();
 
-            eps = Some(params);
-        } else {
-            eps = None;
-        }
+            Some(params)
+        };
 
-        let res = RTPMap {
+        let res = Self {
             payload_type: pt,
             encoding: enc,
             clock_rate: cr,
@@ -284,7 +280,7 @@ impl FromAttribute for RTPMap {
 
         if key == "rtpmap" {
             if let Some(ref val) = attr.value {
-                RTPMap::from_str(val).map_err(|_| ParseError::from("invalid attribute"))
+                Self::from_str(val).map_err(|_| ParseError::from("invalid attribute"))
             } else {
                 Err(ParseError::from("invalid attribute"))
             }
@@ -304,8 +300,8 @@ struct LineReader {
 
 impl LineReader {
     /// Create a new line reader with a given line length limit.
-    fn new(limit: usize) -> LineReader {
-        LineReader {
+    fn new(limit: usize) -> Self {
+        Self {
             buffer: Vec::new(),
             capacity: limit,
             complete: false,
@@ -367,10 +363,10 @@ struct LineIterator<'a> {
 
 impl<'a> LineIterator<'a> {
     /// Create a new line iterator for a given reader and content.
-    fn new(reader: LineReader, content: &'a [u8]) -> LineIterator<'a> {
-        LineIterator {
-            reader: reader,
-            content: content,
+    fn new(reader: LineReader, content: &'a [u8]) -> Self {
+        Self {
+            reader,
+            content,
             offset: 0,
         }
     }
@@ -403,7 +399,7 @@ struct SessionDescriptionParser {
 impl SessionDescriptionParser {
     /// Parse session description from a given string.
     fn parse(sdp: &[u8]) -> Result<SessionDescription> {
-        let mut parser = SessionDescriptionParser {
+        let mut parser = Self {
             sdp: SessionDescription::new(),
         };
 
@@ -429,18 +425,7 @@ impl SessionDescriptionParser {
         if let Some(first) = trim_left(line).first() {
             match *first as char {
                 'v' => self.process_version(line),
-                'o' => Ok(()),
-                's' => Ok(()),
-                'i' => Ok(()),
-                'u' => Ok(()),
-                'e' => Ok(()),
-                'p' => Ok(()),
-                'c' => Ok(()),
-                'b' => Ok(()),
                 't' => self.process_time_description(line, lines),
-                'z' => Ok(()),
-                'k' => Ok(()),
-                'a' => Ok(()),
                 'm' => self.process_media_description(line, lines),
                 _ => Ok(()), // ignore unknown line types
             }
@@ -519,10 +504,7 @@ impl SessionDescriptionParser {
         while let Some(ref line) = lines.next()? {
             if let Some(first) = trim_left(line).first() {
                 match *first as char {
-                    'i' => (),
-                    'c' => (),
-                    'b' => (),
-                    'k' => (),
+                    'i' | 'c' | 'b' | 'k' => (),
                     'a' => self.process_media_attribute(line)?,
                     _ => self.process_line(line, lines)?,
                 }

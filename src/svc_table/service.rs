@@ -51,17 +51,17 @@ pub enum ServiceType {
 
 impl ServiceType {
     /// Get code of the service type.
-    pub fn code(&self) -> u16 {
+    pub fn code(self) -> u16 {
         match self {
-            &ServiceType::ControlProtocol => SVC_TYPE_CONTROL_PROTOCOL,
-            &ServiceType::RTSP => SVC_TYPE_RTSP,
-            &ServiceType::LockedRTSP => SVC_TYPE_LOCKED_RTSP,
-            &ServiceType::UnknownRTSP => SVC_TYPE_UNKNOWN_RTSP,
-            &ServiceType::UnsupportedRTSP => SVC_TYPE_UNSUPPORTED_RTSP,
-            &ServiceType::HTTP => SVC_TYPE_HTTP,
-            &ServiceType::MJPEG => SVC_TYPE_MJPEG,
-            &ServiceType::LockedMJPEG => SVC_TYPE_LOCKED_MJPEG,
-            &ServiceType::TCP => SVC_TYPE_TCP,
+            Self::ControlProtocol => SVC_TYPE_CONTROL_PROTOCOL,
+            Self::RTSP => SVC_TYPE_RTSP,
+            Self::LockedRTSP => SVC_TYPE_LOCKED_RTSP,
+            Self::UnknownRTSP => SVC_TYPE_UNKNOWN_RTSP,
+            Self::UnsupportedRTSP => SVC_TYPE_UNSUPPORTED_RTSP,
+            Self::HTTP => SVC_TYPE_HTTP,
+            Self::MJPEG => SVC_TYPE_MJPEG,
+            Self::LockedMJPEG => SVC_TYPE_LOCKED_MJPEG,
+            Self::TCP => SVC_TYPE_TCP,
         }
     }
 }
@@ -95,7 +95,7 @@ impl Service {
     /// Create a new Control Protocol service.
     #[doc(hidden)]
     pub fn control() -> Service {
-        Service {
+        Self {
             svc_type: ServiceType::ControlProtocol,
             mac: None,
             address: None,
@@ -104,8 +104,8 @@ impl Service {
     }
 
     /// Create a new RTSP service.
-    pub fn rtsp(mac: MacAddr, address: SocketAddr, path: String) -> Service {
-        Service {
+    pub fn rtsp(mac: MacAddr, address: SocketAddr, path: String) -> Self {
+        Self {
             svc_type: ServiceType::RTSP,
             mac: Some(mac),
             address: Some(address),
@@ -114,18 +114,18 @@ impl Service {
     }
 
     /// Create a new Locked RTSP service.
-    pub fn locked_rtsp(mac: MacAddr, address: SocketAddr, path: Option<String>) -> Service {
-        Service {
+    pub fn locked_rtsp(mac: MacAddr, address: SocketAddr, path: Option<String>) -> Self {
+        Self {
             svc_type: ServiceType::LockedRTSP,
             mac: Some(mac),
             address: Some(address),
-            path: path,
+            path,
         }
     }
 
     /// Create a new Unknown RTSP service.
-    pub fn unknown_rtsp(mac: MacAddr, address: SocketAddr) -> Service {
-        Service {
+    pub fn unknown_rtsp(mac: MacAddr, address: SocketAddr) -> Self {
+        Self {
             svc_type: ServiceType::UnknownRTSP,
             mac: Some(mac),
             address: Some(address),
@@ -134,8 +134,8 @@ impl Service {
     }
 
     /// Create a new Unsupported RTSP service.
-    pub fn unsupported_rtsp(mac: MacAddr, address: SocketAddr, path: String) -> Service {
-        Service {
+    pub fn unsupported_rtsp(mac: MacAddr, address: SocketAddr, path: String) -> Self {
+        Self {
             svc_type: ServiceType::UnsupportedRTSP,
             mac: Some(mac),
             address: Some(address),
@@ -144,8 +144,8 @@ impl Service {
     }
 
     /// Create a new HTTP service.
-    pub fn http(mac: MacAddr, address: SocketAddr) -> Service {
-        Service {
+    pub fn http(mac: MacAddr, address: SocketAddr) -> Self {
+        Self {
             svc_type: ServiceType::HTTP,
             mac: Some(mac),
             address: Some(address),
@@ -154,8 +154,8 @@ impl Service {
     }
 
     /// Create a new MJPEG service.
-    pub fn mjpeg(mac: MacAddr, address: SocketAddr, path: String) -> Service {
-        Service {
+    pub fn mjpeg(mac: MacAddr, address: SocketAddr, path: String) -> Self {
+        Self {
             svc_type: ServiceType::MJPEG,
             mac: Some(mac),
             address: Some(address),
@@ -164,18 +164,18 @@ impl Service {
     }
 
     /// Create a new Locked MJPEG service.
-    pub fn locked_mjpeg(mac: MacAddr, address: SocketAddr, path: Option<String>) -> Service {
-        Service {
+    pub fn locked_mjpeg(mac: MacAddr, address: SocketAddr, path: Option<String>) -> Self {
+        Self {
             svc_type: ServiceType::LockedMJPEG,
             mac: Some(mac),
             address: Some(address),
-            path: path,
+            path,
         }
     }
 
     /// Create a new TCP service.
-    pub fn tcp(mac: MacAddr, address: SocketAddr) -> Service {
-        Service {
+    pub fn tcp(mac: MacAddr, address: SocketAddr) -> Self {
+        Self {
             svc_type: ServiceType::TCP,
             mac: Some(mac),
             address: Some(address),

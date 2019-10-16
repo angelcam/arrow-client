@@ -49,8 +49,8 @@ impl StderrLogger {
 }
 
 impl Clone for StderrLogger {
-    fn clone(&self) -> StderrLogger {
-        StderrLogger {
+    fn clone(&self) -> Self {
+        Self {
             level: self.level,
             stderr: std::io::stderr(),
             pretty: self.pretty,

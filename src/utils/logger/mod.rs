@@ -101,7 +101,7 @@ where
     T: 'static + Logger + Clone + Send + Sync,
 {
     fn clone(&self) -> Box<dyn CloneableLogger + Send + Sync> {
-        Box::new(<T as Clone>::clone(self))
+        Box::new(<Self as Clone>::clone(self))
     }
 }
 
@@ -112,18 +112,18 @@ pub struct BoxLogger {
 
 impl BoxLogger {
     /// Create a new boxed logger.
-    pub fn new<L: 'static + CloneableLogger + Send + Sync>(logger: L) -> BoxLogger {
-        BoxLogger {
+    pub fn new<L: 'static + CloneableLogger + Send + Sync>(logger: L) -> Self {
+        Self {
             logger: Box::new(logger),
         }
     }
 }
 
 impl Clone for BoxLogger {
-    fn clone(&self) -> BoxLogger {
+    fn clone(&self) -> Self {
         let logger = self.logger.as_ref().clone();
 
-        BoxLogger { logger: logger }
+        Self { logger }
     }
 }
 

@@ -48,26 +48,26 @@ impl Display for Error {
 }
 
 impl From<String> for Error {
-    fn from(msg: String) -> Error {
-        Error { msg: msg }
+    fn from(msg: String) -> Self {
+        Self { msg }
     }
 }
 
 impl<'a> From<&'a str> for Error {
-    fn from(msg: &'a str) -> Error {
-        Error::from(msg.to_string())
+    fn from(msg: &'a str) -> Self {
+        Self::from(msg.to_string())
     }
 }
 
 impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Error {
-        Error::from(format!("IO error: {}", err))
+    fn from(err: io::Error) -> Self {
+        Self::from(format!("IO error: {}", err))
     }
 }
 
 impl From<FromUtf8Error> for Error {
-    fn from(err: FromUtf8Error) -> Error {
-        Error::from(format!("UTF-8 error: {}", err))
+    fn from(err: FromUtf8Error) -> Self {
+        Self::from(format!("UTF-8 error: {}", err))
     }
 }
 
@@ -81,7 +81,7 @@ pub struct HeaderField {
 
 impl HeaderField {
     /// Create a new HTTP-like header field.
-    pub fn new<N, V>(name: N, value: Option<V>) -> HeaderField
+    pub fn new<N, V>(name: N, value: Option<V>) -> Self
     where
         N: ToString,
         V: ToString,
@@ -93,10 +93,10 @@ impl HeaderField {
             None => None,
         };
 
-        HeaderField {
+        Self {
             nname: name.to_lowercase(),
-            name: name,
-            value: value,
+            name,
+            value,
         }
     }
 
@@ -112,9 +112,9 @@ impl HeaderField {
 
     /// Get value of the field.
     pub fn value(&self) -> Option<&str> {
-        match &self.value {
-            &Some(ref v) => Some(v),
-            &None => None,
+        match self.value.as_ref() {
+            Some(v) => Some(v),
+            None => None,
         }
     }
 }
@@ -136,9 +136,9 @@ impl<N> From<(N,)> for HeaderField
 where
     N: ToString,
 {
-    fn from(tuple: (N,)) -> HeaderField {
+    fn from(tuple: (N,)) -> Self {
         match tuple {
-            (name,) => HeaderField::new(name, None as Option<String>),
+            (name,) => Self::new(name, None as Option<String>),
         }
     }
 }
@@ -148,9 +148,9 @@ where
     N: ToString,
     V: ToString,
 {
-    fn from(tuple: (N, V)) -> HeaderField {
+    fn from(tuple: (N, V)) -> Self {
         match tuple {
-            (name, value) => HeaderField::new(name, Some(value)),
+            (name, value) => Self::new(name, Some(value)),
         }
     }
 }
@@ -158,7 +158,7 @@ where
 impl FromStr for HeaderField {
     type Err = Error;
 
-    fn from_str(s: &str) -> Result<HeaderField, Error> {
+    fn from_str(s: &str) -> Result<Self, Error> {
         let name;
         let value;
 
@@ -173,14 +173,14 @@ impl FromStr for HeaderField {
             value = None;
         }
 
-        let field = HeaderField::new(name, value);
+        let field = Self::new(name, value);
 
         Ok(field)
     }
 }
 
 /// Collection of HTTP-like header fields.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct HeaderFields {
     fields: Vec<HeaderField>,
     map: HashMap<String, Vec<HeaderField>>,
@@ -188,11 +188,8 @@ pub struct HeaderFields {
 
 impl HeaderFields {
     /// Create a new collection of HTTP-like header fields.
-    pub fn new() -> HeaderFields {
-        HeaderFields {
-            fields: Vec::new(),
-            map: HashMap::new(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Add a given header field into the collection.
@@ -201,7 +198,10 @@ impl HeaderFields {
 
         self.fields.push(field.clone());
 
-        let mut fields = self.map.remove(&name).unwrap_or(Vec::with_capacity(1));
+        let mut fields = self
+            .map
+            .remove(&name)
+            .unwrap_or_else(|| Vec::with_capacity(1));
 
         fields.push(field);
 
@@ -258,7 +258,7 @@ pub struct HeaderFieldsIter<'a> {
 impl<'a> HeaderFieldsIter<'a> {
     fn new(fields: &'a [HeaderField]) -> HeaderFieldsIter<'a> {
         HeaderFieldsIter {
-            inner: fields.into_iter(),
+            inner: fields.iter(),
         }
     }
 }
@@ -286,8 +286,8 @@ pub struct RequestHeader {
 
 impl RequestHeader {
     /// Create a new HTTP-like request header.
-    fn new(protocol: &str, version: &str, method: &str, path: &str) -> RequestHeader {
-        RequestHeader {
+    fn new(protocol: &str, version: &str, method: &str, path: &str) -> Self {
+        Self {
             method: method.to_string(),
             path: path.to_string(),
             protocol: protocol.to_string(),
@@ -328,8 +328,8 @@ pub struct Request {
 
 impl Request {
     /// Create a new HTTP-like request.
-    fn new(protocol: &str, version: &str, method: &str, path: &str) -> Request {
-        Request {
+    fn new(protocol: &str, version: &str, method: &str, path: &str) -> Self {
+        Self {
             header: RequestHeader::new(protocol, version, method, path),
             body: Box::new([]),
         }
@@ -354,21 +354,21 @@ pub struct RequestBuilder {
 
 impl RequestBuilder {
     /// Create a new request builder.
-    pub fn new(protocol: &str, version: &str, method: &str, path: &str) -> RequestBuilder {
+    pub fn new(protocol: &str, version: &str, method: &str, path: &str) -> Self {
         let request = Request::new(protocol, version, method, path);
 
-        RequestBuilder { request: request }
+        Self { request }
     }
 
     /// Set protocol version.
-    pub fn set_version(mut self, version: &str) -> RequestBuilder {
+    pub fn set_version(mut self, version: &str) -> Self {
         self.request.header.version = version.to_string();
         self
     }
 
     /// Replace the current list of header fields having the same name (if any)
     /// with the given one.
-    pub fn set_header_field<T>(mut self, field: T) -> RequestBuilder
+    pub fn set_header_field<T>(mut self, field: T) -> Self
     where
         HeaderField: From<T>,
     {
@@ -380,7 +380,7 @@ impl RequestBuilder {
     }
 
     /// Add a given header field.
-    pub fn add_header_field<T>(mut self, field: T) -> RequestBuilder
+    pub fn add_header_field<T>(mut self, field: T) -> Self
     where
         HeaderField: From<T>,
     {
@@ -392,7 +392,7 @@ impl RequestBuilder {
     }
 
     /// Set request body.
-    pub fn set_body<T>(mut self, body: T) -> RequestBuilder
+    pub fn set_body<T>(mut self, body: T) -> Self
     where
         T: AsRef<[u8]>,
     {
@@ -460,8 +460,7 @@ impl ResponseHeader {
 
         match value {
             Some(Some(v)) => Some(v),
-            Some(None) => None,
-            None => None,
+            Some(None) | None => None,
         }
     }
 }
@@ -469,7 +468,7 @@ impl ResponseHeader {
 impl FromStr for ResponseHeader {
     type Err = Error;
 
-    fn from_str(s: &str) -> Result<ResponseHeader, Error> {
+    fn from_str(s: &str) -> Result<Self, Error> {
         let mut reader = StringReader::new(s);
 
         let protocol = reader.read_until(|c| c == '/');
@@ -487,10 +486,10 @@ impl FromStr for ResponseHeader {
 
         let status_line = status_line.trim();
 
-        let header = ResponseHeader {
+        let header = Self {
             protocol: protocol.to_string(),
             version: version.to_string(),
-            status_code: status_code,
+            status_code,
             status_line: status_line.to_string(),
             header_fields: HeaderFields::new(),
         };
@@ -508,11 +507,8 @@ pub struct Response {
 
 impl Response {
     /// Create a new HTTP-like response.
-    pub fn new(header: ResponseHeader, body: MessageBody) -> Response {
-        Response {
-            header: header,
-            body: body,
-        }
+    pub fn new(header: ResponseHeader, body: MessageBody) -> Self {
+        Self { header, body }
     }
 
     /// Get response header.
@@ -535,13 +531,13 @@ pub struct LineDecoder {
 
 impl LineDecoder {
     /// Create a new line decoder.
-    pub fn new(separator: &[u8], max_length: usize) -> LineDecoder {
+    pub fn new(separator: &[u8], max_length: usize) -> Self {
         let separator = separator.to_vec();
 
-        LineDecoder {
+        Self {
             separator: separator.into_boxed_slice(),
             buffer: Vec::new(),
-            max_length: max_length,
+            max_length,
         }
     }
 
@@ -559,22 +555,18 @@ impl Decoder for LineDecoder {
         let separator_length = self.separator.len();
         let old_buffer_length = self.buffer.len();
 
-        let search_start;
-
-        if old_buffer_length > separator_length {
-            search_start = old_buffer_length - separator_length;
+        let search_start = if old_buffer_length > separator_length {
+            old_buffer_length - separator_length
         } else {
-            search_start = 0;
-        }
+            0
+        };
 
         // number of bytes to be appended
-        let append;
-
-        if (old_buffer_length + data.len()) > self.max_length {
-            append = self.max_length - old_buffer_length;
+        let append = if (old_buffer_length + data.len()) > self.max_length {
+            self.max_length - old_buffer_length
         } else {
-            append = data.len();
-        }
+            data.len()
+        };
 
         // Copy data from the input buffer into the internal buffer but do not
         // remove it from the input buffer yet.
@@ -582,13 +574,11 @@ impl Decoder for LineDecoder {
 
         let new_buffer_length = self.buffer.len();
 
-        let search_end;
-
-        if new_buffer_length >= separator_length {
-            search_end = new_buffer_length - separator_length + 1;
+        let search_end = if new_buffer_length >= separator_length {
+            new_buffer_length - separator_length + 1
         } else {
-            search_end = 0;
-        }
+            0
+        };
 
         for index in search_start..search_end {
             let line_length = index + separator_length;
@@ -630,13 +620,13 @@ pub struct ResponseHeaderDecoder {
 
 impl ResponseHeaderDecoder {
     /// Create a new decoder for HTTP-like response headers.
-    pub fn new(max_line_length: usize, max_lines: usize) -> ResponseHeaderDecoder {
-        ResponseHeaderDecoder {
+    pub fn new(max_line_length: usize, max_lines: usize) -> Self {
+        Self {
             ldecoder: LineDecoder::new(b"\r\n", max_line_length),
             header: None,
             field: String::new(),
             lines: 0,
-            max_lines: max_lines,
+            max_lines,
         }
     }
 
@@ -665,11 +655,7 @@ impl Decoder for ResponseHeaderDecoder {
 
             if let Some(mut header) = self.header.take() {
                 // check if the current header field should be processed
-                let commit_header_field = line
-                    .chars()
-                    .next()
-                    .map(|c| !c.is_whitespace())
-                    .unwrap_or(true);
+                let commit_header_field = line.chars().next().map_or(true, |c| !c.is_whitespace());
 
                 if commit_header_field && !self.field.is_empty() {
                     header.header_fields.add(self.field.parse()?);
@@ -729,8 +715,8 @@ pub struct SimpleBodyDecoder {
 
 impl SimpleBodyDecoder {
     /// Create a new simple body decoder.
-    pub fn new(ignore_data: bool) -> SimpleBodyDecoder {
-        SimpleBodyDecoder {
+    pub fn new(ignore_data: bool) -> Self {
+        Self {
             body: Vec::new(),
             ignore: ignore_data,
         }
@@ -771,18 +757,16 @@ pub struct FixedSizeBodyDecoder {
 
 impl FixedSizeBodyDecoder {
     /// Create a new fixed-size decoder expecting a given number of bytes.
-    pub fn new(expected: usize, ignore_data: bool) -> FixedSizeBodyDecoder {
-        let body;
-
-        if ignore_data {
-            body = Vec::new();
+    pub fn new(expected: usize, ignore_data: bool) -> Self {
+        let body = if ignore_data {
+            Vec::new()
         } else {
-            body = Vec::with_capacity(expected);
-        }
+            Vec::with_capacity(expected)
+        };
 
-        FixedSizeBodyDecoder {
+        Self {
             body: Some(body),
-            expected: expected,
+            expected,
             ignore: ignore_data,
         }
     }
@@ -793,13 +777,11 @@ impl Decoder for FixedSizeBodyDecoder {
     type Error = Error;
 
     fn decode(&mut self, data: &mut BytesMut) -> Result<Option<MessageBody>, Error> {
-        let take;
-
-        if self.expected < data.len() {
-            take = self.expected;
+        let take = if self.expected < data.len() {
+            self.expected
         } else {
-            take = data.len();
-        }
+            data.len()
+        };
 
         self.expected -= take;
 
@@ -854,8 +836,8 @@ pub struct ChunkedBodyDecoder {
 
 impl ChunkedBodyDecoder {
     /// Create a new decoder for HTTP-like chunked bodies.
-    pub fn new(max_line_length: usize, ignore_data: bool) -> ChunkedBodyDecoder {
-        ChunkedBodyDecoder {
+    pub fn new(max_line_length: usize, ignore_data: bool) -> Self {
+        Self {
             state: ChunkedDecoderState::ChunkHeader,
             ldecoder: LineDecoder::new(b"\r\n", max_line_length),
             body: Vec::new(),
@@ -899,13 +881,11 @@ impl ChunkedBodyDecoder {
 
     /// Decode chunk body.
     fn decode_chunk_body(&mut self, data: &mut BytesMut) -> Result<Option<MessageBody>, Error> {
-        let take;
-
-        if self.expected < data.len() {
-            take = self.expected;
+        let take = if self.expected < data.len() {
+            self.expected
         } else {
-            take = data.len();
-        }
+            data.len()
+        };
 
         self.expected -= take;
 
@@ -928,7 +908,7 @@ impl ChunkedBodyDecoder {
         &mut self,
         data: &mut BytesMut,
     ) -> Result<Option<MessageBody>, Error> {
-        if let Some(_) = self.ldecoder.decode(data)? {
+        if self.ldecoder.decode(data)?.is_some() {
             self.state = ChunkedDecoderState::ChunkHeader;
         }
 

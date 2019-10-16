@@ -184,7 +184,7 @@ impl TlsConnector {
         let handshake = self
             .inner
             .configure()
-            .map_err(|err| HandshakeError::from(err))
+            .map_err(HandshakeError::from)
             .and_then(move |configuration| {
                 configuration
                     .verify_hostname(false)
@@ -198,7 +198,7 @@ impl TlsConnector {
 }
 
 impl From<SslConnector> for TlsConnector {
-    fn from(connector: SslConnector) -> TlsConnector {
-        TlsConnector { inner: connector }
+    fn from(connector: SslConnector) -> Self {
+        Self { inner: connector }
     }
 }

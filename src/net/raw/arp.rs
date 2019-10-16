@@ -52,19 +52,19 @@ impl ArpOperation {
     /// Get ARP operation code.
     pub fn code(self) -> u16 {
         match self {
-            ArpOperation::REQUEST => 1,
-            ArpOperation::REPLY => 2,
-            ArpOperation::UNKNOWN(op) => op,
+            Self::REQUEST => 1,
+            Self::REPLY => 2,
+            Self::UNKNOWN(op) => op,
         }
     }
 }
 
 impl From<u16> for ArpOperation {
-    fn from(v: u16) -> ArpOperation {
+    fn from(v: u16) -> Self {
         match v {
-            1 => ArpOperation::REQUEST,
-            2 => ArpOperation::REPLY,
-            op => ArpOperation::UNKNOWN(op),
+            1 => Self::REQUEST,
+            2 => Self::REPLY,
+            op => Self::UNKNOWN(op),
         }
     }
 }
@@ -80,13 +80,13 @@ impl ArpPacket {
         spa: &Ipv4Addr,
         tha: &MacAddr,
         tpa: &Ipv4Addr,
-    ) -> ArpPacket {
-        ArpPacket {
+    ) -> Self {
+        Self {
             htype: ARP_HTYPE_EHER,
             ptype: ARP_PTYPE_IPV4,
             hlen: 6,
             plen: 4,
-            oper: oper,
+            oper,
             sha: sha.octets().to_vec().into_boxed_slice(),
             spa: spa.octets().to_vec().into_boxed_slice(),
             tha: tha.octets().to_vec().into_boxed_slice(),
@@ -95,7 +95,7 @@ impl ArpPacket {
     }
 
     /// Parse given data.
-    pub fn parse(data: &[u8]) -> Result<ArpPacket> {
+    pub fn parse(data: &[u8]) -> Result<Self> {
         let size = mem::size_of::<RawArpPacketHeader>();
         if data.len() < size {
             Err(PacketParseError::from(
@@ -126,7 +126,7 @@ impl ArpPacket {
                 let tha = &data[offset_3..offset_3 + hlen];
                 let tpa = &data[offset_4..offset_4 + plen];
 
-                let res = ArpPacket {
+                let res = Self {
                     htype: u16::from_be(rh.htype),
                     ptype: u16::from_be(rh.ptype),
                     hlen: rh.hlen,
@@ -173,10 +173,10 @@ struct RawArpPacketHeader {
 
 impl RawArpPacketHeader {
     /// Create a new raw ARP packet header.
-    fn new(arp: &ArpPacket) -> RawArpPacketHeader {
+    fn new(arp: &ArpPacket) -> Self {
         let operation = arp.oper.code();
 
-        RawArpPacketHeader {
+        Self {
             htype: arp.htype.to_be(),
             ptype: arp.ptype.to_be(),
             hlen: arp.hlen,
@@ -212,12 +212,12 @@ pub mod scanner {
     impl Ipv4ArpScanner {
         /// Scan a given device and return list of all active hosts.
         pub fn scan_device(device: &EthernetDevice) -> pcap::Result<Vec<(MacAddr, Ipv4Addr)>> {
-            Ipv4ArpScanner::new(device).scan()
+            Self::new(device).scan()
         }
 
         /// Create a new scanner instance.
-        fn new(device: &EthernetDevice) -> Ipv4ArpScanner {
-            Ipv4ArpScanner {
+        fn new(device: &EthernetDevice) -> Self {
+            Self {
                 device: device.clone(),
                 scanner: Scanner::new(&device.name),
             }

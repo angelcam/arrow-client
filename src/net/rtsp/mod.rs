@@ -61,26 +61,26 @@ impl Display for Error {
 }
 
 impl From<String> for Error {
-    fn from(msg: String) -> Error {
-        Error { msg: msg }
+    fn from(msg: String) -> Self {
+        Self { msg }
     }
 }
 
 impl<'a> From<&'a str> for Error {
-    fn from(msg: &'a str) -> Error {
-        Error::from(msg.to_string())
+    fn from(msg: &'a str) -> Self {
+        Self::from(msg.to_string())
     }
 }
 
 impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Error {
-        Error::from(format!("IO error: {}", err))
+    fn from(err: io::Error) -> Self {
+        Self::from(format!("IO error: {}", err))
     }
 }
 
 impl From<generic::Error> for Error {
-    fn from(err: generic::Error) -> Error {
-        Error::from(err.description())
+    fn from(err: generic::Error) -> Self {
+        Self::from(err.description())
     }
 }
 
@@ -105,17 +105,17 @@ impl Method {
     /// Get method name.
     fn name(self) -> &'static str {
         match self {
-            Method::OPTIONS => "OPTIONS",
-            Method::DESCRIBE => "DESCRIBE",
-            Method::ANNOUNCE => "ANNOUNCE",
-            Method::SETUP => "SETUP",
-            Method::PLAY => "PLAY",
-            Method::PAUSE => "PAUSE",
-            Method::TEARDOWN => "TEARDOWN",
-            Method::GET_PARAMETER => "GET_PARAMETER",
-            Method::SET_PARAMETER => "SET_PARAMETER",
-            Method::REDIRECT => "REDIRECT",
-            Method::RECORD => "RECORD",
+            Self::OPTIONS => "OPTIONS",
+            Self::DESCRIBE => "DESCRIBE",
+            Self::ANNOUNCE => "ANNOUNCE",
+            Self::SETUP => "SETUP",
+            Self::PLAY => "PLAY",
+            Self::PAUSE => "PAUSE",
+            Self::TEARDOWN => "TEARDOWN",
+            Self::GET_PARAMETER => "GET_PARAMETER",
+            Self::SET_PARAMETER => "SET_PARAMETER",
+            Self::REDIRECT => "REDIRECT",
+            Self::RECORD => "RECORD",
         }
     }
 }
@@ -130,7 +130,7 @@ impl Scheme {
     /// Get default port for this URL scheme.
     fn default_port(self) -> u16 {
         match self {
-            Scheme::RTSP => 554,
+            Self::RTSP => 554,
         }
     }
 }
@@ -138,9 +138,9 @@ impl Scheme {
 impl FromStr for Scheme {
     type Err = Error;
 
-    fn from_str(method: &str) -> Result<Scheme, Error> {
+    fn from_str(method: &str) -> Result<Self, Error> {
         match &method.to_lowercase() as &str {
-            "rtsp" => Ok(Scheme::RTSP),
+            "rtsp" => Ok(Self::RTSP),
             _ => Err(Error::from("invalid URL scheme")),
         }
     }
@@ -160,7 +160,7 @@ pub struct Request {
 
 impl Request {
     /// Create a new RTSP request.
-    pub fn new(method: Method, url: &str, ignore_response_body: bool) -> Result<Request, Error> {
+    pub fn new(method: Method, url: &str, ignore_response_body: bool) -> Result<Self, Error> {
         let url = Url::from_str(url).map_err(|_| Error::from("malformed URL"))?;
 
         let scheme = Scheme::from_str(url.scheme())?;
@@ -176,34 +176,34 @@ impl Request {
             .set_header_field(("CSeq", 1))
             .set_header_field(("User-Agent", uagent));
 
-        let builder = Request {
+        let builder = Self {
             host: host.to_string(),
-            port: port,
-            inner: inner,
+            port,
+            inner,
             timeout: Some(Duration::from_secs(20)),
             max_line_length: 4096,
             max_header_lines: 1024,
-            ignore_response_body: ignore_response_body,
+            ignore_response_body,
         };
 
         Ok(builder)
     }
 
     /// Create a new OPTIONS request.
-    pub fn options(url: &str) -> Result<Request, Error> {
-        Request::new(Method::OPTIONS, url, true)
+    pub fn options(url: &str) -> Result<Self, Error> {
+        Self::new(Method::OPTIONS, url, true)
     }
 
     /// Create a new DESCRIBE request.
-    pub fn describe(url: &str) -> Result<Request, Error> {
-        let request = Request::new(Method::DESCRIBE, url, false)?
+    pub fn describe(url: &str) -> Result<Self, Error> {
+        let request = Self::new(Method::DESCRIBE, url, false)?
             .set_header_field(("Accept", "application/sdp"));
 
         Ok(request)
     }
 
     /// Set a given header field.
-    pub fn set_header_field<T>(mut self, field: T) -> Request
+    pub fn set_header_field<T>(mut self, field: T) -> Self
     where
         HeaderField: From<T>,
     {
@@ -238,7 +238,7 @@ impl Request {
             return FutureResponse::new(Err(err));
         }
 
-        let timeout = self.timeout.clone();
+        let timeout = self.timeout;
 
         let codec = ClientCodec::new(
             self.max_line_length,
@@ -248,18 +248,20 @@ impl Request {
 
         // single request-response cycle
         let response = TcpStream::connect(&addr.unwrap())
-            .map_err(|err| Error::from(err))
+            .map_err(Error::from)
             .and_then(move |stream| {
                 codec
                     .framed(stream)
                     .send(self.inner.build())
-                    .map_err(|err| Error::from(err))
+                    .map_err(Error::from)
                     .and_then(|stream| {
                         stream
                             .into_future()
                             .map_err(|(err, _)| err)
                             .and_then(|(response, _)| {
-                                response.ok_or(Error::from("server closed connection unexpectedly"))
+                                response.ok_or_else(|| {
+                                    Error::from("server closed connection unexpectedly")
+                                })
                             })
                     })
             });
@@ -289,7 +291,7 @@ pub struct Response {
 
 impl Response {
     /// Create a new RTSP response from a given generic response.
-    fn new(response: GenericResponse) -> Result<Response, Error> {
+    fn new(response: GenericResponse) -> Result<Self, Error> {
         {
             let header = response.header();
             let protocol = header.protocol();
@@ -304,7 +306,7 @@ impl Response {
             }
         }
 
-        let response = Response { inner: response };
+        let response = Self { inner: response };
 
         Ok(response)
     }
@@ -347,11 +349,11 @@ pub struct FutureResponse {
 
 impl FutureResponse {
     /// Create a new future response.
-    fn new<F>(future: F) -> FutureResponse
+    fn new<F>(future: F) -> Self
     where
         F: 'static + IntoFuture<Item = Response, Error = Error>,
     {
-        FutureResponse {
+        Self {
             inner: Box::new(future.into_future()),
         }
     }
@@ -376,18 +378,14 @@ struct ClientCodec {
 
 impl ClientCodec {
     /// Create a new RTSP client codec.
-    fn new(
-        max_line_length: usize,
-        max_header_lines: usize,
-        ignore_response_body: bool,
-    ) -> ClientCodec {
+    fn new(max_line_length: usize, max_header_lines: usize, ignore_response_body: bool) -> Self {
         let hdecoder = GenericResponseHeaderDecoder::new(max_line_length, max_header_lines);
 
-        ClientCodec {
-            hdecoder: hdecoder,
+        Self {
+            hdecoder,
             bdecoder: None,
             header: None,
-            ignore_response_body: ignore_response_body,
+            ignore_response_body,
         }
     }
 }
@@ -404,7 +402,7 @@ impl Decoder for ClientCodec {
                 if let Some(clength) = header.get_header_field("content-length") {
                     let clength = clength
                         .value()
-                        .ok_or(Error::from("missing Content-Length value"))?;
+                        .ok_or_else(|| Error::from("missing Content-Length value"))?;
                     let clength = usize::from_str(clength)
                         .map_err(|_| Error::from("unable to decode Content-Length"))?;
 

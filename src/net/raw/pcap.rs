@@ -46,13 +46,13 @@ pub struct PcapError {
 }
 
 impl PcapError {
-    unsafe fn from_cstr(msg: *const c_char) -> PcapError {
-        PcapError {
+    unsafe fn from_cstr(msg: *const c_char) -> Self {
+        Self {
             msg: utils::cstr_to_string(msg as *const _),
         }
     }
 
-    fn from_pcap(p: pcap_t) -> PcapError {
+    fn from_pcap(p: pcap_t) -> Self {
         unsafe {
             let cstr = pcap_geterr(p);
             Self::from_cstr(cstr)
@@ -73,8 +73,8 @@ impl Display for PcapError {
 }
 
 impl<'a> From<&'a str> for PcapError {
-    fn from(msg: &'a str) -> PcapError {
-        PcapError {
+    fn from(msg: &'a str) -> Self {
+        Self {
             msg: msg.to_string(),
         }
     }
@@ -164,8 +164,8 @@ struct CaptureBuilder {
 
 impl CaptureBuilder {
     /// Create a new CaptureBuilder for a given device.
-    fn new(dname: &str) -> Result<CaptureBuilder> {
-        let mut result = CaptureBuilder {
+    fn new(dname: &str) -> Result<Self> {
+        let mut result = Self {
             capture: Capture {
                 errbuf: Box::new([0; 4096]),
                 h: ptr::null_mut(),
@@ -185,7 +185,7 @@ impl CaptureBuilder {
     }
 
     /// Set promiscuous mode.
-    fn promisc(self, p: bool) -> CaptureBuilder {
+    fn promisc(self, p: bool) -> Self {
         unsafe {
             pcap_set_promisc(self.capture.h, p as c_int);
         }
@@ -193,7 +193,7 @@ impl CaptureBuilder {
     }
 
     /// Set packet buffer timeout.
-    fn timeout(self, ms: i32) -> CaptureBuilder {
+    fn timeout(self, ms: i32) -> Self {
         unsafe {
             pcap_set_timeout(self.capture.h, ms as c_int);
         }
@@ -253,7 +253,7 @@ impl Capture {
             } else {
                 // input/output for the poll function
                 let mut fds = pollfd {
-                    fd: fd,
+                    fd,
                     events: POLLIN,
                     revents: 0,
                 };
@@ -269,10 +269,7 @@ impl Capture {
 
         unsafe {
             let eb = errbuf.as_mut_ptr();
-            let nb = match non_blocking {
-                true => 1,
-                false => 0,
-            };
+            let nb = if non_blocking { 1 } else { 0 };
 
             if pcap_setnonblock(self.h, nb, eb) < 0 {
                 Err(PcapError::from_cstr(eb))
@@ -358,8 +355,8 @@ pub struct Scanner {
 
 impl Scanner {
     /// Create a new PCAP scanner for a given device.
-    pub fn new(device: &str) -> Scanner {
-        Scanner {
+    pub fn new(device: &str) -> Self {
+        Self {
             device: device.to_string(),
         }
     }

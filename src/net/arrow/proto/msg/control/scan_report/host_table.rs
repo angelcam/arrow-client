@@ -34,10 +34,10 @@ struct ElementHeader {
 }
 
 impl<'a> From<&'a Element> for ElementHeader {
-    fn from(element: &'a Element) -> ElementHeader {
+    fn from(element: &'a Element) -> Self {
         let ports = element.host.ports();
 
-        ElementHeader {
+        Self {
             flags: element.host.flags,
             mac: element.host.mac.octets(),
             ip_version: element.host.ip.version(),
@@ -49,7 +49,7 @@ impl<'a> From<&'a Element> for ElementHeader {
 
 impl Encode for ElementHeader {
     fn encode(&self, buf: &mut BytesMut) {
-        let be_header = ElementHeader {
+        let be_header = Self {
             flags: self.flags,
             mac: self.mac,
             ip_version: self.ip_version,
@@ -68,8 +68,8 @@ struct Element {
 
 impl Element {
     /// Create a new host table element.
-    fn new(host: HostRecord) -> Element {
-        Element { host: host }
+    fn new(host: HostRecord) -> Self {
+        Self { host }
     }
 }
 
@@ -98,8 +98,8 @@ struct HostTableHeader {
 }
 
 impl<'a> From<&'a HostTable> for HostTableHeader {
-    fn from(table: &'a HostTable) -> HostTableHeader {
-        HostTableHeader {
+    fn from(table: &'a HostTable) -> Self {
+        Self {
             count: table.hosts.len() as u32,
         }
     }
@@ -107,7 +107,7 @@ impl<'a> From<&'a HostTable> for HostTableHeader {
 
 impl Encode for HostTableHeader {
     fn encode(&self, buf: &mut BytesMut) {
-        let be_header = HostTableHeader {
+        let be_header = Self {
             count: self.count.to_be(),
         };
 
@@ -124,13 +124,10 @@ impl<I> From<I> for HostTable
 where
     I: IntoIterator<Item = HostRecord>,
 {
-    fn from(hosts: I) -> HostTable {
-        let hosts = hosts
-            .into_iter()
-            .map(|host| Element::new(host))
-            .collect::<Vec<_>>();
+    fn from(hosts: I) -> Self {
+        let hosts = hosts.into_iter().map(Element::new).collect::<Vec<_>>();
 
-        HostTable { hosts: hosts }
+        Self { hosts }
     }
 }
 

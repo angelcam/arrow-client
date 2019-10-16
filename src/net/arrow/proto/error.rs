@@ -41,14 +41,14 @@ impl Display for DecodeError {
 
 impl From<String> for DecodeError {
     /// Create a new DecodeError from a given error string.
-    fn from(msg: String) -> DecodeError {
-        DecodeError { msg: msg }
+    fn from(msg: String) -> Self {
+        Self { msg }
     }
 }
 
 impl<'a> From<&'a str> for DecodeError {
     /// Create a new DecodeError from a given error string.
-    fn from(msg: &'a str) -> DecodeError {
-        DecodeError::from(msg.to_string())
+    fn from(msg: &'a str) -> Self {
+        Self::from(msg.to_string())
     }
 }

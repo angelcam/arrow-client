@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fmt;
 ///! Network scanner for RTSP streams.
+use std::fmt;
 use std::io;
 use std::result;
 
@@ -48,11 +48,10 @@ use crate::svc_table::{Service, ServiceType};
 use crate::utils::logger::{BoxLogger, Logger};
 
 /// RTSP port candidates.
-static RTSP_PORT_CANDIDATES: &'static [u16] =
-    &[554, 88, 81, 555, 7447, 8554, 7070, 10554, 80, 6667];
+static RTSP_PORT_CANDIDATES: &[u16] = &[554, 88, 81, 555, 7447, 8554, 7070, 10554, 80, 6667];
 
 /// HTTP port candidates.
-static HTTP_PORT_CANDIDATES: &'static [u16] = &[80, 81, 8080, 8081, 8090];
+static HTTP_PORT_CANDIDATES: &[u16] = &[80, 81, 8080, 8081, 8090];
 
 /// Discovery error.
 #[derive(Debug, Clone)]
@@ -73,26 +72,26 @@ impl Display for DiscoveryError {
 }
 
 impl From<String> for DiscoveryError {
-    fn from(msg: String) -> DiscoveryError {
-        DiscoveryError { msg: msg }
+    fn from(msg: String) -> Self {
+        Self { msg }
     }
 }
 
 impl<'a> From<&'a str> for DiscoveryError {
-    fn from(msg: &'a str) -> DiscoveryError {
-        DiscoveryError::from(msg.to_string())
+    fn from(msg: &'a str) -> Self {
+        Self::from(msg.to_string())
     }
 }
 
 impl From<pcap::PcapError> for DiscoveryError {
-    fn from(err: pcap::PcapError) -> DiscoveryError {
-        DiscoveryError::from(format!("pcap error: {}", err.description()))
+    fn from(err: pcap::PcapError) -> Self {
+        Self::from(format!("pcap error: {}", err.description()))
     }
 }
 
 impl From<io::Error> for DiscoveryError {
-    fn from(err: io::Error) -> DiscoveryError {
-        DiscoveryError::from(format!("IO error: {}", err))
+    fn from(err: io::Error) -> Self {
+        Self::from(format!("IO error: {}", err))
     }
 }
 
@@ -109,7 +108,7 @@ pub fn scan_network(
     let mut runtime = tokio::runtime::current_thread::Runtime::new()
         .map_err(|err| DiscoveryError::from(format!("Asyn IO error: {}", err)))?;
 
-    let context = Context::new(logger.clone(), rtsp_paths, mjpeg_paths)?;
+    let context = Context::new(logger, rtsp_paths, mjpeg_paths)?;
 
     let rtsp_port_priorities = context.get_rtsp_port_priorities();
     let http_port_priorities = context.get_http_port_priorities();
@@ -133,10 +132,8 @@ pub fn scan_network(
 
     let mjpeg_services = http_services.clone();
 
-    let mjpeg_streams = runtime.block_on(find_mjpeg_streams(
-        context.clone(),
-        mjpeg_services.into_iter(),
-    ))?;
+    let mjpeg_streams =
+        runtime.block_on(find_mjpeg_streams(context, mjpeg_services.into_iter()))?;
 
     let mut hosts = HashSet::new();
 
@@ -185,7 +182,7 @@ impl ContextData {
         logger: BoxLogger,
         rtsp_paths: Arc<Vec<String>>,
         mjpeg_paths: Arc<Vec<String>>,
-    ) -> Result<ContextData> {
+    ) -> Result<Self> {
         let mut port_candidates = HashSet::<u16>::new();
         let mut rtsp_port_candidates = HashSet::<u16>::new();
         let mut http_port_candidates = HashSet::<u16>::new();
@@ -199,7 +196,7 @@ impl ContextData {
         let rtsp_port_priorities = get_port_priorities(RTSP_PORT_CANDIDATES);
         let http_port_priorities = get_port_priorities(HTTP_PORT_CANDIDATES);
 
-        let cdata = ContextData {
+        let cdata = Self {
             logger,
             port_candidates,
             rtsp_port_candidates,
@@ -242,10 +239,10 @@ impl Context {
         logger: BoxLogger,
         rtsp_paths: Arc<Vec<String>>,
         mjpeg_paths: Arc<Vec<String>>,
-    ) -> Result<Context> {
+    ) -> Result<Self> {
         let data = ContextData::new(logger, rtsp_paths, mjpeg_paths)?;
 
-        let context = Context {
+        let context = Self {
             data: Arc::new(data),
         };
 
@@ -259,7 +256,7 @@ impl Context {
 
     /// Get request timeout.
     fn get_request_timeout(&self) -> Duration {
-        self.data.request_timeout.clone()
+        self.data.request_timeout
     }
 
     /// Get all port candidates.
@@ -386,7 +383,7 @@ where
         _ => None,
     });
 
-    let candidates = context.get_port_candidates().iter().map(|port| *port);
+    let candidates = context.get_port_candidates().iter().cloned();
 
     let ports = PortCollection::new().add_all(candidates);
 
@@ -405,11 +402,11 @@ struct FutureResult<T> {
 
 impl<T> FutureResult<T> {
     /// Create a new future result from a given future.
-    fn new<F>(fut: F) -> FutureResult<T>
+    fn new<F>(fut: F) -> Self
     where
         F: 'static + Future<Item = T, Error = DiscoveryError>,
     {
-        FutureResult {
+        Self {
             inner: Box::new(fut),
         }
     }
@@ -428,8 +425,8 @@ impl<T> From<Result<T>> for FutureResult<T>
 where
     T: 'static,
 {
-    fn from(result: Result<T>) -> FutureResult<T> {
-        FutureResult::new(future::result(result))
+    fn from(result: Result<T>) -> Self {
+        Self::new(future::result(result))
     }
 }
 
@@ -444,41 +441,41 @@ enum StreamType {
 }
 
 impl From<RtspResponse> for StreamType {
-    fn from(response: RtspResponse) -> StreamType {
+    fn from(response: RtspResponse) -> Self {
         let status_code = response.status_code();
 
         if status_code == 200 {
             if is_supported_rtsp_service(response.body()) {
-                StreamType::Supported
+                Self::Supported
             } else {
-                StreamType::Unsupported
+                Self::Unsupported
             }
         } else if status_code == 401 {
-            StreamType::Locked
+            Self::Locked
         } else if status_code == 404 {
-            StreamType::NotFound
+            Self::NotFound
         } else {
-            StreamType::Error
+            Self::Error
         }
     }
 }
 
 impl From<HttpResponse> for StreamType {
-    fn from(response: HttpResponse) -> StreamType {
+    fn from(response: HttpResponse) -> Self {
         let status_code = response.status_code();
 
         if status_code == 200 {
             if is_supported_mjpeg_service(&response) {
-                StreamType::Supported
+                Self::Supported
             } else {
-                StreamType::Unsupported
+                Self::Unsupported
             }
         } else if status_code == 401 {
-            StreamType::Locked
+            Self::Locked
         } else if status_code == 404 {
-            StreamType::NotFound
+            Self::NotFound
         } else {
-            StreamType::Error
+            Self::Error
         }
     }
 }
@@ -578,7 +575,7 @@ where
 
     log_debug!(&mut logger, "looking for RTSP services");
 
-    filter_services(context.clone(), open_ports, |context, saddr| {
+    filter_services(context, open_ports, |context, saddr| {
         if context.is_rtsp_port_candidate(saddr.port()) {
             is_rtsp_service(context, saddr)
         } else {
@@ -599,7 +596,7 @@ where
 
     log_debug!(&mut logger, "looking for HTTP services");
 
-    filter_services(context.clone(), open_ports, |context, saddr| {
+    filter_services(context, open_ports, |context, saddr| {
         if context.is_http_port_candidate(saddr.port()) {
             is_http_service(context, saddr)
         } else {
@@ -655,15 +652,9 @@ where
         let port = saddr.port();
 
         if svc_map.contains_key(&ip) {
-            let old_port = svc_map.get(&ip).map(|&(_, _, port)| port).unwrap_or(0);
-            let old_priority = port_priorities
-                .get(&old_port)
-                .map(|priority| *priority)
-                .unwrap_or(0);
-            let new_priority = port_priorities
-                .get(&port)
-                .map(|priority| *priority)
-                .unwrap_or(0);
+            let old_port = svc_map.get(&ip).map_or(0, |&(_, _, port)| port);
+            let old_priority = port_priorities.get(&old_port).cloned().unwrap_or(0);
+            let new_priority = port_priorities.get(&port).cloned().unwrap_or(0);
 
             if new_priority > old_priority {
                 svc_map.insert(ip, (mac, ip, port));
@@ -720,8 +711,7 @@ fn find_rtsp_stream(context: Context, mac: MacAddr, addr: SocketAddr) -> FutureR
             }
 
             match svc.service_type() {
-                ServiceType::RTSP => Ok(false),
-                ServiceType::LockedRTSP => Ok(false),
+                ServiceType::RTSP | ServiceType::LockedRTSP => Ok(false),
                 _ => Ok(true),
             }
         })
@@ -791,8 +781,7 @@ fn get_rtsp_stream_type(
 /// Check if a given RTSP response is from a buggy Hi(I)pcam RTSP server.
 fn is_hipcam_rtsp_response(response: &RtspResponse) -> bool {
     match response.get_header_field_value("server") {
-        Some("HiIpcam/V100R003 VodServer/1.0.0") => true,
-        Some("Hipcam RealServer/V1.0") => true,
+        Some("HiIpcam/V100R003 VodServer/1.0.0") | Some("Hipcam RealServer/V1.0") => true,
         _ => false,
     }
 }

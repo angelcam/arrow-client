@@ -39,20 +39,20 @@ pub enum IcmpPacketType {
 impl IcmpPacketType {
     /// Get ICMP packet type code.
     fn code(&self) -> u8 {
-        match self {
-            &IcmpPacketType::Echo => ICMP_TYPE_ECHO,
-            &IcmpPacketType::EchoReply => ICMP_TYPE_ECHO_REPLY,
-            &IcmpPacketType::Unknown(pt) => pt,
+        match *self {
+            Self::Echo => ICMP_TYPE_ECHO,
+            Self::EchoReply => ICMP_TYPE_ECHO_REPLY,
+            Self::Unknown(pt) => pt,
         }
     }
 }
 
 impl From<u8> for IcmpPacketType {
-    fn from(code: u8) -> IcmpPacketType {
+    fn from(code: u8) -> Self {
         match code {
-            ICMP_TYPE_ECHO => IcmpPacketType::Echo,
-            ICMP_TYPE_ECHO_REPLY => IcmpPacketType::EchoReply,
-            pt => IcmpPacketType::Unknown(pt),
+            ICMP_TYPE_ECHO => Self::Echo,
+            ICMP_TYPE_ECHO_REPLY => Self::EchoReply,
+            pt => Self::Unknown(pt),
         }
     }
 }
@@ -67,11 +67,11 @@ pub struct IcmpPacket {
 
 impl IcmpPacket {
     /// Create a new echo request.
-    pub fn echo_request(id: u16, seq: u16, payload: &[u8]) -> IcmpPacket {
+    pub fn echo_request(id: u16, seq: u16, payload: &[u8]) -> Self {
         let id = id as u32;
         let seq = seq as u32;
 
-        IcmpPacket {
+        Self {
             icmp_type: IcmpPacketType::Echo,
             code: 0,
             rest: (id << 16) | seq,
@@ -80,12 +80,12 @@ impl IcmpPacket {
     }
 
     /// Create a new echo request without payload.
-    pub fn empty_echo_request(id: u16, seq: u16) -> IcmpPacket {
-        IcmpPacket::echo_request(id, seq, &[])
+    pub fn empty_echo_request(id: u16, seq: u16) -> Self {
+        Self::echo_request(id, seq, &[])
     }
 
     /// Parse an ICMP packet from given data.
-    pub fn parse(data: &[u8]) -> Result<IcmpPacket> {
+    pub fn parse(data: &[u8]) -> Result<Self> {
         let size = mem::size_of::<RawIcmpPacketHeader>();
 
         if data.len() < size {
@@ -100,7 +100,7 @@ impl IcmpPacket {
 
             let body = &data[size..];
 
-            let res = IcmpPacket {
+            let res = Self {
                 icmp_type: IcmpPacketType::from(rh.icmp_type),
                 code: rh.code,
                 rest: u32::from_be(rh.rest),
@@ -223,20 +223,20 @@ pub mod scanner {
     impl IcmpScanner {
         /// Scan a given device and return list of all active hosts.
         pub fn scan_device(device: &EthernetDevice) -> pcap::Result<Vec<(MacAddr, Ipv4Addr)>> {
-            IcmpScanner::new(device).scan()
+            Self::new(device).scan()
         }
 
         /// Create a new scanner instance.
-        fn new(device: &EthernetDevice) -> IcmpScanner {
+        fn new(device: &EthernetDevice) -> Self {
             let mask = device.netmask.as_u32();
             let addr = device.ip_addr.as_u32();
             let network = addr & mask;
 
-            IcmpScanner {
+            Self {
                 device: device.clone(),
                 scanner: Scanner::new(&device.name),
-                mask: mask,
-                network: network,
+                mask,
+                network,
             }
         }
 

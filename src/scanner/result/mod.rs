@@ -29,7 +29,7 @@ pub use self::host::HostRecord;
 type HostRecordIdentifier = (MacAddr, IpAddr);
 
 /// Scan report.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ScanResult {
     hosts: HashMap<HostRecordIdentifier, HostRecord>,
     services: HashMap<ServiceIdentifier, Service>,
@@ -37,21 +37,18 @@ pub struct ScanResult {
 
 impl ScanResult {
     /// Create a new network scan report.
-    pub fn new() -> ScanResult {
-        ScanResult {
-            hosts: HashMap::new(),
-            services: HashMap::new(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Add a given host.
     pub fn add_host(&mut self, mac: MacAddr, ip: IpAddr, flags: u8) {
         let key = (mac, ip);
 
-        if !self.hosts.contains_key(&key) {
-            self.hosts.insert(key, HostRecord::new(mac, ip, flags));
-        } else if let Some(host) = self.hosts.get_mut(&key) {
+        if let Some(host) = self.hosts.get_mut(&key) {
             host.flags |= flags;
+        } else {
+            self.hosts.insert(key, HostRecord::new(mac, ip, flags));
         }
     }
 
@@ -60,9 +57,9 @@ impl ScanResult {
     pub fn add_port(&mut self, mac: MacAddr, ip: IpAddr, port: u16) {
         let key = (mac, ip);
 
-        if !self.hosts.contains_key(&key) {
-            self.hosts.insert(key, HostRecord::new(mac, ip, 0));
-        }
+        self.hosts
+            .entry(key)
+            .or_insert_with(|| HostRecord::new(mac, ip, 0));
 
         if let Some(host) = self.hosts.get_mut(&key) {
             host.add_port(port);
@@ -90,13 +87,13 @@ impl ScanResult {
     }
 
     /// Merge with a given scan report.
-    pub fn merge(&mut self, other: ScanResult) {
+    pub fn merge(&mut self, other: Self) {
         for (key, other_host) in other.hosts {
-            if !self.hosts.contains_key(&key) {
-                self.hosts.insert(key, other_host);
-            } else if let Some(host) = self.hosts.get_mut(&key) {
+            if let Some(host) = self.hosts.get_mut(&key) {
                 host.add_ports(other_host.ports());
                 host.flags |= other_host.flags;
+            } else {
+                self.hosts.insert(key, other_host);
             }
         }
 
@@ -174,8 +171,8 @@ impl<'a> SocketAddrIterator<'a> {
         let saddr_iterator = host_iterator.next().map(|host| host.socket_addrs());
 
         SocketAddrIterator {
-            host_iterator: host_iterator,
-            saddr_iterator: saddr_iterator,
+            host_iterator,
+            saddr_iterator,
         }
     }
 }

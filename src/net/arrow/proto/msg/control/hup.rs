@@ -34,17 +34,17 @@ pub struct HupMessage {
 
 impl HupMessage {
     /// Create a new HUP message for a given session ID and error code.
-    pub fn new(session_id: u32, error_code: u32) -> HupMessage {
-        HupMessage {
+    pub fn new(session_id: u32, error_code: u32) -> Self {
+        Self {
             session_id: session_id & ((1 << 24) - 1),
-            error_code: error_code,
+            error_code,
         }
     }
 }
 
 impl Encode for HupMessage {
     fn encode(&self, buf: &mut BytesMut) {
-        let be_msg = HupMessage {
+        let be_msg = Self {
             session_id: self.session_id.to_be(),
             error_code: self.error_code.to_be(),
         };
@@ -55,24 +55,24 @@ impl Encode for HupMessage {
 
 impl MessageBody for HupMessage {
     fn len(&self) -> usize {
-        mem::size_of::<HupMessage>()
+        mem::size_of::<Self>()
     }
 }
 
 impl ControlMessageBody for HupMessage {}
 
 impl FromBytes for HupMessage {
-    fn from_bytes(bytes: &[u8]) -> Result<Option<HupMessage>, DecodeError> {
-        if bytes.len() != mem::size_of::<HupMessage>() {
+    fn from_bytes(bytes: &[u8]) -> Result<Option<Self>, DecodeError> {
+        if bytes.len() != mem::size_of::<Self>() {
             return Err(DecodeError::from(
                 "malformed Arrow Control Protocol HUP message",
             ));
         }
 
-        let ptr = bytes.as_ptr() as *const HupMessage;
+        let ptr = bytes.as_ptr() as *const Self;
         let msg = unsafe { &*ptr };
 
-        let res = HupMessage {
+        let res = Self {
             session_id: u32::from_be(msg.session_id),
             error_code: u32::from_be(msg.error_code),
         };

@@ -51,16 +51,16 @@ pub struct EthernetDevice {
 
 impl EthernetDevice {
     /// List all configured IPv4 network devices.
-    pub fn list() -> Vec<EthernetDevice> {
+    pub fn list() -> Vec<Self> {
         let mut result = Vec::new();
 
         unsafe {
             let devices = net_find_devices();
 
-            let mut device = devices.clone();
+            let mut device = devices;
 
             while !device.is_null() {
-                result.push(EthernetDevice::new(device));
+                result.push(Self::new(device));
                 device = net_get_next_device(device);
             }
 
@@ -71,8 +71,8 @@ impl EthernetDevice {
     }
 
     /// Create a new ethernet device instance from its raw counterpart.
-    unsafe fn new(dev: net_device) -> EthernetDevice {
-        EthernetDevice {
+    unsafe fn new(dev: net_device) -> Self {
+        Self {
             name: get_name(dev),
             mac_addr: get_mac_addr(dev),
             ip_addr: get_ipv4_addr(dev),

@@ -39,7 +39,7 @@ struct ElementHeader {
 }
 
 impl<'a> From<&'a Element> for ElementHeader {
-    fn from(element: &'a Element) -> ElementHeader {
+    fn from(element: &'a Element) -> Self {
         let service_type = element.service.service_type();
 
         let null_maddress = MacAddr::new(0, 0, 0, 0, 0, 0);
@@ -49,7 +49,7 @@ impl<'a> From<&'a Element> for ElementHeader {
         let saddress = element.service.address().unwrap_or(null_saddress);
         let iaddress = saddress.ip();
 
-        ElementHeader {
+        Self {
             svc_id: element.id,
             svc_type: service_type.code(),
             mac_addr: maddress.octets(),
@@ -62,7 +62,7 @@ impl<'a> From<&'a Element> for ElementHeader {
 
 impl Encode for ElementHeader {
     fn encode(&self, buf: &mut BytesMut) {
-        let be_header = ElementHeader {
+        let be_header = Self {
             svc_id: self.svc_id.to_be(),
             svc_type: self.svc_type.to_be(),
             mac_addr: self.mac_addr,
@@ -84,11 +84,8 @@ struct Element {
 
 impl Element {
     /// Create a new element for the simple service table.
-    fn new(id: u16, service: Service) -> Element {
-        Element {
-            id: id,
-            service: service,
-        }
+    fn new(id: u16, service: Service) -> Self {
+        Self { id, service }
     }
 }
 
@@ -121,14 +118,14 @@ impl<I> From<I> for SimpleServiceTable
 where
     I: IntoIterator<Item = (u16, Service)>,
 {
-    fn from(services: I) -> SimpleServiceTable {
+    fn from(services: I) -> Self {
         let mut map = HashMap::new();
 
         for (id, service) in services {
             map.insert(id, Element::new(id, service));
         }
 
-        SimpleServiceTable { map: map }
+        Self { map }
     }
 }
 

@@ -76,10 +76,10 @@ struct ExpectedAck {
 
 impl ExpectedAck {
     /// Create a new ACK message expectation.
-    fn new(message_id: u16) -> ExpectedAck {
-        ExpectedAck {
+    fn new(message_id: u16) -> Self {
+        Self {
             timestamp: time::precise_time_s(),
-            message_id: message_id,
+            message_id,
         }
     }
 
@@ -110,7 +110,7 @@ struct ArrowClientContext {
 
 impl ArrowClientContext {
     /// Create a new Arrow Client.
-    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel) -> ArrowClientContext {
+    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel) -> Self {
         let logger = app_context.get_logger();
         let svc_table = app_context.get_service_table();
 
@@ -123,12 +123,12 @@ impl ArrowClientContext {
 
         let t = time::precise_time_s();
 
-        let mut client = ArrowClientContext {
-            logger: logger,
-            app_context: app_context,
-            cmd_channel: cmd_channel,
-            svc_table: svc_table,
-            cmsg_factory: cmsg_factory,
+        let mut client = Self {
+            logger,
+            app_context,
+            cmd_channel,
+            svc_table,
+            cmsg_factory,
             sessions: session_manager,
             messages: VecDeque::new(),
             expected_acks: VecDeque::new(),
@@ -148,7 +148,7 @@ impl ArrowClientContext {
 
     /// Get redirect address (if any).
     fn get_redirect(&self) -> Option<String> {
-        self.redirect.as_ref().map(|r| r.clone())
+        self.redirect.as_ref().cloned()
     }
 
     /// Check if the client has been closed.
@@ -159,7 +159,7 @@ impl ArrowClientContext {
     /// Check if there is an ACK timeout.
     fn ack_timeout(&self) -> bool {
         match self.expected_acks.front() {
-            Some(ref expected_ack) => expected_ack.timeout(),
+            Some(expected_ack) => expected_ack.timeout(),
             None => false,
         }
     }
@@ -275,9 +275,9 @@ impl ArrowClientContext {
             ControlMessageType::GET_SCAN_REPORT => self.process_get_scan_report_message(msg),
             ControlMessageType::RESET_SVC_TABLE => self.process_command(Command::ResetServiceTable),
             ControlMessageType::SCAN_NETWORK => self.process_command(Command::ScanNetwork),
-            ControlMessageType::UNKNOWN => Err(ArrowError::other(format!(
-                "unknow control message received"
-            ))),
+            ControlMessageType::UNKNOWN => {
+                Err(ArrowError::other("unknow control message received"))
+            }
             mt => Err(ArrowError::other(format!(
                 "unexpected control message received: {:?}",
                 mt
@@ -540,8 +540,8 @@ struct ArrowClient {
 
 impl ArrowClient {
     /// Create a new instance of Arrow Client.
-    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel) -> ArrowClient {
-        let context = ArrowClientContext::new(app_context.clone(), cmd_channel);
+    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel) -> Self {
+        let context = ArrowClientContext::new(app_context, cmd_channel);
 
         let context = Arc::new(Mutex::new(context));
 
@@ -566,7 +566,7 @@ impl ArrowClient {
 
         tokio::spawn(events);
 
-        ArrowClient { context: context }
+        Self { context }
     }
 
     /// Get redirect address (if any).
@@ -630,9 +630,7 @@ pub fn connect(
                 addr1
             ))
         })
-        .and_then(|saddr| {
-            TcpStream::connect(&saddr).map_err(|err| ArrowError::connection_error(err))
-        })
+        .and_then(|saddr| TcpStream::connect(&saddr).map_err(ArrowError::connection_error))
         .and_then(move |socket| {
             app_context
                 .get_tls_connector()
@@ -642,7 +640,7 @@ pub fn connect(
         .and_then(|(socket, tls_connector)| {
             tls_connector
                 .connect_async(socket)
-                .map_err(|err| ArrowError::connection_error(err))
+                .map_err(ArrowError::connection_error)
         });
 
     Timeout::new(connection, Duration::from_secs(CONNECTION_TIMEOUT))
@@ -671,9 +669,9 @@ pub fn connect(
             sink.send_all(messages).and_then(|(_, pipe)| {
                 let (_, _, context) = pipe.unpipe();
 
-                context.get_redirect().ok_or(ArrowError::connection_error(
-                    "connection to Arrow Service lost",
-                ))
+                context
+                    .get_redirect()
+                    .ok_or_else(|| ArrowError::connection_error("connection to Arrow Service lost"))
             })
         })
 }

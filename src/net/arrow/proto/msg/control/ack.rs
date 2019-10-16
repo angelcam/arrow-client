@@ -31,14 +31,14 @@ pub struct AckMessage {
 
 impl AckMessage {
     /// Create a new ACK message for a given error code.
-    pub fn new(err: u32) -> AckMessage {
-        AckMessage { err: err }
+    pub fn new(err: u32) -> Self {
+        Self { err }
     }
 }
 
 impl Encode for AckMessage {
     fn encode(&self, buf: &mut BytesMut) {
-        let be_msg = AckMessage {
+        let be_msg = Self {
             err: self.err.to_be(),
         };
 
@@ -48,24 +48,24 @@ impl Encode for AckMessage {
 
 impl MessageBody for AckMessage {
     fn len(&self) -> usize {
-        mem::size_of::<AckMessage>()
+        mem::size_of::<Self>()
     }
 }
 
 impl ControlMessageBody for AckMessage {}
 
 impl FromBytes for AckMessage {
-    fn from_bytes(bytes: &[u8]) -> Result<Option<AckMessage>, DecodeError> {
-        if bytes.len() != mem::size_of::<AckMessage>() {
+    fn from_bytes(bytes: &[u8]) -> Result<Option<Self>, DecodeError> {
+        if bytes.len() != mem::size_of::<Self>() {
             return Err(DecodeError::from(
                 "malformed Arrow Control Protocol ACK message",
             ));
         }
 
-        let ptr = bytes.as_ptr() as *const AckMessage;
+        let ptr = bytes.as_ptr() as *const Self;
         let msg = unsafe { &*ptr };
 
-        let res = AckMessage {
+        let res = Self {
             err: u32::from_be(msg.err),
         };
 
