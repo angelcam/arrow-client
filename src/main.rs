@@ -41,7 +41,10 @@ where
 fn main() {
     let config = result_or_usage(Config::from_args(std::env::args()));
 
-    let (_, task) = ArrowClient::new(config);
+    let (client, task) = ArrowClient::new(config);
+
+    // forget the client, we want to run the application indefinitely
+    std::mem::forget(client);
 
     runtime::run(task);
 }
