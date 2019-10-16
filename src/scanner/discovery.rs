@@ -102,13 +102,14 @@ pub type Result<T> = result::Result<T, DiscoveryError>;
 /// services.
 pub fn scan_network(
     logger: BoxLogger,
+    discovery_whitelist: Arc<HashSet<String>>,
     rtsp_paths: Arc<Vec<String>>,
     mjpeg_paths: Arc<Vec<String>>,
 ) -> Result<ScanResult> {
     let mut runtime = tokio::runtime::current_thread::Runtime::new()
         .map_err(|err| DiscoveryError::from(format!("Asyn IO error: {}", err)))?;
 
-    let context = Context::new(logger, rtsp_paths, mjpeg_paths)?;
+    let context = Context::new(logger, discovery_whitelist, rtsp_paths, mjpeg_paths)?;
 
     let rtsp_port_priorities = context.get_rtsp_port_priorities();
     let http_port_priorities = context.get_http_port_priorities();
@@ -171,6 +172,7 @@ struct ContextData {
     http_port_candidates: HashSet<u16>,
     rtsp_port_priorities: HashMap<u16, usize>,
     http_port_priorities: HashMap<u16, usize>,
+    discovery_whitelist: Arc<HashSet<String>>,
     rtsp_paths: Arc<Vec<String>>,
     mjpeg_paths: Arc<Vec<String>>,
     request_timeout: Duration,
@@ -180,6 +182,7 @@ impl ContextData {
     /// Create new context data for the network scanner context.
     fn new(
         logger: BoxLogger,
+        discovery_whitelist: Arc<HashSet<String>>,
         rtsp_paths: Arc<Vec<String>>,
         mjpeg_paths: Arc<Vec<String>>,
     ) -> Result<Self> {
@@ -203,6 +206,7 @@ impl ContextData {
             http_port_candidates,
             rtsp_port_priorities,
             http_port_priorities,
+            discovery_whitelist,
             rtsp_paths,
             mjpeg_paths,
             request_timeout: Duration::from_millis(2000),
@@ -237,10 +241,11 @@ impl Context {
     /// Create a new network scanner context.
     fn new(
         logger: BoxLogger,
+        discovery_whitelist: Arc<HashSet<String>>,
         rtsp_paths: Arc<Vec<String>>,
         mjpeg_paths: Arc<Vec<String>>,
     ) -> Result<Self> {
-        let data = ContextData::new(logger, rtsp_paths, mjpeg_paths)?;
+        let data = ContextData::new(logger, discovery_whitelist, rtsp_paths, mjpeg_paths)?;
 
         let context = Self {
             data: Arc::new(data),
@@ -284,6 +289,11 @@ impl Context {
         &self.data.http_port_priorities
     }
 
+    /// Get discovery whitelist.
+    fn get_discovery_whitelist(&self) -> Arc<HashSet<String>> {
+        self.data.discovery_whitelist.clone()
+    }
+
     /// Get RTSP paths.
     fn get_rtsp_paths(&self) -> Arc<Vec<String>> {
         self.data.rtsp_paths.clone()
@@ -298,6 +308,8 @@ impl Context {
 /// Find open ports on all available hosts within all local networks
 /// accessible directly from this host.
 fn find_open_ports(scanner: Context) -> ScanResult {
+    let discovery_whitelist = scanner.get_discovery_whitelist();
+
     let mut logger = scanner.get_logger();
 
     let mut report = ScanResult::new();
@@ -305,17 +317,19 @@ fn find_open_ports(scanner: Context) -> ScanResult {
     let devices = EthernetDevice::list();
 
     for dev in devices {
-        let res = find_open_ports_in_network(scanner.clone(), &dev);
+        if discovery_whitelist.is_empty() || discovery_whitelist.contains(&dev.name) {
+            let res = find_open_ports_in_network(scanner.clone(), &dev);
 
-        if let Err(err) = res {
-            log_warn!(
-                &mut logger,
-                "unable to find open ports in local network on interface {}: {}",
-                dev.name,
-                err
-            );
-        } else if let Ok(res) = res {
-            report.merge(res);
+            if let Err(err) = res {
+                log_warn!(
+                    &mut logger,
+                    "unable to find open ports in local network on interface {}: {}",
+                    dev.name,
+                    err
+                );
+            } else if let Ok(res) = res {
+                report.merge(res);
+            }
         }
     }
 

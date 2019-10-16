@@ -223,6 +223,7 @@ fn network_scanner_thread(mut app_context: ApplicationContext) {
 
     let slogger = logger.clone();
 
+    let discovery_whitelist = app_context.get_discovery_whitelist();
     let rtsp_paths = app_context.get_rtsp_paths();
     let mjpeg_paths = app_context.get_mjpeg_paths();
 
@@ -234,7 +235,7 @@ fn network_scanner_thread(mut app_context: ApplicationContext) {
         &mut logger,
         Severity::WARN,
         "network scanner error",
-        discovery::scan_network(slogger, rtsp_paths, mjpeg_paths),
+        discovery::scan_network(slogger, discovery_whitelist, rtsp_paths, mjpeg_paths),
     );
 
     if let Some(result) = result {
