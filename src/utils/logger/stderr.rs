@@ -30,20 +30,11 @@ pub struct StderrLogger {
 
 impl StderrLogger {
     /// Create a new stderr logger with log level set to INFO.
-    pub fn new() -> Self {
+    pub fn new(pretty: bool) -> Self {
         Self {
             level: Severity::INFO,
             stderr: std::io::stderr(),
-            pretty: false,
-        }
-    }
-
-    /// Create a new stderr logger with color formatted messages.
-    pub fn new_pretty() -> Self {
-        Self {
-            level: Severity::INFO,
-            stderr: std::io::stderr(),
-            pretty: true,
+            pretty,
         }
     }
 }

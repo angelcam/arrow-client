@@ -201,7 +201,7 @@ impl ConfigBuilder {
 
         let mac = self
             .arrow_mac
-            .map(|mac| Ok(mac))
+            .map(Ok)
             .unwrap_or_else(get_first_mac)
             .map_err(|_| ConfigError::new("unable to get any network interface MAC address"))?;
 
@@ -309,8 +309,8 @@ impl ConfigParser {
     fn create_logger(&self) -> Result<BoxLogger, ConfigError> {
         let logger = match self.logger_type {
             LoggerType::Syslog => BoxLogger::new(Syslog::new()),
-            LoggerType::Stderr => BoxLogger::new(StderrLogger::new()),
-            LoggerType::StderrPretty => BoxLogger::new(StderrLogger::new_pretty()),
+            LoggerType::Stderr => BoxLogger::new(StderrLogger::new(false)),
+            LoggerType::StderrPretty => BoxLogger::new(StderrLogger::new(true)),
             LoggerType::FileLogger => {
                 FileLogger::new(&self.log_file, self.log_file_size, self.log_file_rotations)
                     .map(BoxLogger::new)
@@ -664,12 +664,7 @@ pub struct PersistentConfig {
 impl PersistentConfig {
     /// Create a new instance of persistent configuration.
     pub fn new() -> Self {
-        Self {
-            uuid: Uuid::new_v4(),
-            passwd: Uuid::new_v4(),
-            version: 0,
-            svc_table: SharedServiceTable::new(),
-        }
+        Self::default()
     }
 
     /// Get client public identity.
@@ -682,8 +677,19 @@ impl PersistentConfig {
     #[doc(hidden)]
     pub fn to_skeleton(&self) -> Self {
         Self {
-            uuid: self.uuid.clone(),
-            passwd: self.passwd.clone(),
+            uuid: self.uuid,
+            passwd: self.passwd,
+            version: 0,
+            svc_table: SharedServiceTable::new(),
+        }
+    }
+}
+
+impl Default for PersistentConfig {
+    fn default() -> Self {
+        Self {
+            uuid: Uuid::new_v4(),
+            passwd: Uuid::new_v4(),
             version: 0,
             svc_table: SharedServiceTable::new(),
         }

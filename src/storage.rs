@@ -266,7 +266,7 @@ impl Storage for DefaultStorage {
         // if there is no skeleton, create a new config
         let config = config
             .or(config_skeleton)
-            .map(|cfg| Ok(cfg))
+            .map(Ok)
             .unwrap_or_else(|| self.create_configuration())?;
 
         // if there is no skeleton, create one from the config

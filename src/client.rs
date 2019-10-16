@@ -55,6 +55,7 @@ struct ArrowMainTask {
 
 impl ArrowMainTask {
     /// Create a new task.
+    #[allow(clippy::new_ret_no_self)]
     fn new(
         app_context: ApplicationContext,
         cmd_channel: CommandChannel,
@@ -236,8 +237,8 @@ fn wait_for_retry(
 /// otherwise exit with exit code 1.
 fn diagnose_connection_result(connection_result: &Result<String, ArrowError>) -> ! {
     match connection_result {
-        &Ok(_) => process::exit(0),
-        &Err(ref err) => match err.kind() {
+        Ok(_) => process::exit(0),
+        Err(err) => match err.kind() {
             ErrorKind::Unauthorized => process::exit(0),
             _ => process::exit(1),
         },

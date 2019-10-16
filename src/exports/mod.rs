@@ -38,14 +38,14 @@ pub struct NativeArrowClient {
 /// Create a new Arrow client from a given config. The function takes ownership
 /// of the config and the storage.
 #[no_mangle]
-pub extern "C" fn ac__arrow_client__new(
+pub unsafe extern "C" fn ac__arrow_client__new(
     builder: *mut ConfigBuilder,
     storage: *mut NativeStorage,
     arrow_service_address: *const c_char,
 ) -> *mut NativeArrowClient {
-    let builder = unsafe { Box::from_raw(builder) };
-    let storage = unsafe { Box::from_raw(storage) };
-    let arrow_service_address = unsafe { CStr::from_ptr(arrow_service_address as _) };
+    let builder = Box::from_raw(builder);
+    let storage = Box::from_raw(storage);
+    let arrow_service_address = CStr::from_ptr(arrow_service_address as _);
 
     if let Ok(addr) = arrow_service_address.to_str() {
         if let Ok(config) = (*builder).build(*storage, addr) {
@@ -65,16 +65,18 @@ pub extern "C" fn ac__arrow_client__new(
 
 /// Free (and close) a given Arrow client.
 #[no_mangle]
-pub extern "C" fn ac__arrow_client__free(client: *mut NativeArrowClient) {
-    unsafe { Box::from_raw(client) };
+pub unsafe extern "C" fn ac__arrow_client__free(client: *mut NativeArrowClient) {
+    Box::from_raw(client);
 }
 
 /// Start a given Arrow client in the background and return a join handle. The
 /// function does nothing if the client has been already started. The returned
 /// join handle must be either freed or awaited.
 #[no_mangle]
-pub extern "C" fn ac__arrow_client__start(client: *mut NativeArrowClient) -> *mut JoinHandle<()> {
-    let client = unsafe { &mut *client };
+pub unsafe extern "C" fn ac__arrow_client__start(
+    client: *mut NativeArrowClient,
+) -> *mut JoinHandle<()> {
+    let client = &mut *client;
 
     if let Some(task) = client.task.take() {
         let handle = thread::spawn(move || runtime::run(task));
@@ -88,8 +90,8 @@ pub extern "C" fn ac__arrow_client__start(client: *mut NativeArrowClient) -> *mu
 /// Start a given Arrow client blocking the current thread. The function does
 /// nothing if the client has been already started.
 #[no_mangle]
-pub extern "C" fn ac__arrow_client__start_blocking(client: *mut NativeArrowClient) {
-    let client = unsafe { &mut *client };
+pub unsafe extern "C" fn ac__arrow_client__start_blocking(client: *mut NativeArrowClient) {
+    let client = &mut *client;
 
     if let Some(task) = client.task.take() {
         runtime::run(task)
@@ -98,22 +100,22 @@ pub extern "C" fn ac__arrow_client__start_blocking(client: *mut NativeArrowClien
 
 /// Close a given Arrow client.
 #[no_mangle]
-pub extern "C" fn ac__arrow_client__close(client: *mut NativeArrowClient) {
-    let client = unsafe { &mut *client };
+pub unsafe extern "C" fn ac__arrow_client__close(client: *mut NativeArrowClient) {
+    let client = &mut *client;
 
     client.client.close();
 }
 
 /// Free a given Arrow client join handle.
 #[no_mangle]
-pub extern "C" fn ac__arrow_client_join_handle__free(handle: *mut JoinHandle<()>) {
-    unsafe { Box::from_raw(handle) };
+pub unsafe extern "C" fn ac__arrow_client_join_handle__free(handle: *mut JoinHandle<()>) {
+    Box::from_raw(handle);
 }
 
 /// Await a given Arrow client join handle.
 #[no_mangle]
-pub extern "C" fn ac__arrow_client_join_handle__join(handle: *mut JoinHandle<()>) {
-    let handle = unsafe { Box::from_raw(handle) };
+pub unsafe extern "C" fn ac__arrow_client_join_handle__join(handle: *mut JoinHandle<()>) {
+    let handle = Box::from_raw(handle);
 
     (*handle).join().unwrap_or_default()
 }
