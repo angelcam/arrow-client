@@ -136,14 +136,14 @@ impl ConfigBuilder {
     }
 
     /// Set logger.
-    pub fn logger(mut self, logger: BoxLogger) -> Self {
+    pub fn logger(&mut self, logger: BoxLogger) -> &mut Self {
         self.logger = Some(logger);
         self
     }
 
     /// Set MAC address. (The MAC address can be used as a client identifier in the pairing
     /// process).
-    pub fn mac_address(mut self, mac_addr: Option<MacAddr>) -> Self {
+    pub fn mac_address(&mut self, mac_addr: Option<MacAddr>) -> &mut Self {
         self.arrow_mac = mac_addr;
         self
     }
@@ -155,7 +155,7 @@ impl ConfigBuilder {
     }
 
     /// Set a collection of static services.
-    pub fn services<T>(mut self, services: T) -> Self
+    pub fn services<T>(&mut self, services: T) -> &mut Self
     where
         Vec<Service>: From<T>,
     {
@@ -164,19 +164,19 @@ impl ConfigBuilder {
     }
 
     /// Set diagnostic mode.
-    pub fn diagnostic_mode(mut self, enabled: bool) -> Self {
+    pub fn diagnostic_mode(&mut self, enabled: bool) -> &mut Self {
         self.diagnostic_mode = enabled;
         self
     }
 
     /// Enable/disable automatic service discovery.
-    pub fn discovery(mut self, enabled: bool) -> Self {
+    pub fn discovery(&mut self, enabled: bool) -> &mut Self {
         self.discovery = enabled;
         self
     }
 
     /// Enable/disable verbose logging.
-    pub fn verbose(mut self, enabled: bool) -> Self {
+    pub fn verbose(&mut self, enabled: bool) -> &mut Self {
         self.verbose = enabled;
         self
     }
@@ -345,14 +345,17 @@ impl ConfigParser {
             .ca_certificates(self.ca_certificates)
             .build();
 
-        let config = Config::builder()
+        let mut config_builder = Config::builder();
+
+        config_builder
             .logger(logger)
             .mac_address(self.arrow_mac)
             .services(self.services)
             .diagnostic_mode(self.diagnostic_mode)
             .discovery(self.discovery)
-            .verbose(self.verbose)
-            .build(storage, self.arrow_svc_addr)?;
+            .verbose(self.verbose);
+
+        let config = config_builder.build(storage, self.arrow_svc_addr)?;
 
         Ok(config)
     }

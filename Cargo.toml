@@ -12,6 +12,9 @@ discovery = ["lazy_static"]
 threads = ["tokio-threadpool"]
 all = ["discovery", "threads"]
 
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
+
 [dependencies]
 bytes        = "0.4"
 farmhash     = "1.1"
