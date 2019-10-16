@@ -43,6 +43,7 @@ pub mod config;
 pub mod context;
 
 #[doc(hidden)]
+#[cfg(feature = "exports")]
 pub mod exports;
 
 #[doc(hidden)]
