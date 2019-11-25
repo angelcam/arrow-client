@@ -123,19 +123,18 @@ impl ArrowMainTask {
 
             Box::new(futures::future::ok(()))
         } else if let Err(err) = res {
-            if err.kind() == ErrorKind::Unauthorized {
+            let cstate = if err.kind() == ErrorKind::Unauthorized {
                 log_info!(
                     &mut self.logger,
                     "connection rejected by the remote service {}; is the client paired?",
                     self.current_addr
                 );
+
+                ConnectionState::Unauthorized
             } else {
                 log_warn!(&mut self.logger, "{}", err.description());
-            }
 
-            let cstate = match err.kind() {
-                ErrorKind::Unauthorized => ConnectionState::Unauthorized,
-                _ => ConnectionState::Disconnected,
+                ConnectionState::Disconnected
             };
 
             self.app_context.set_connection_state(cstate);
