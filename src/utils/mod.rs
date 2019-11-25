@@ -95,12 +95,19 @@ pub fn slice_as_bytes<T: Sized>(data: &[T]) -> &[u8] {
     unsafe { slice::from_raw_parts(ptr as *const u8, size * data.len()) }
 }
 
-/// Convert a given typed pointer into a new vector (copying the dats).
+/// Convert a given typed pointer into a new vector (copying the data).
+///
+/// # Safety
+/// The given pointer MUST point to an array that contains at least `len`
+/// elements. Each element is expected to be of size T.
 pub unsafe fn vec_from_raw_parts<T: Clone>(ptr: *const T, len: usize) -> Vec<T> {
     slice::from_raw_parts(ptr, len).to_vec()
 }
 
 /// Convert a given C-string pointer to a new instance of String.
+///
+/// # Safety
+/// The given pointer MUST point to a NULL terminated C string.
 pub unsafe fn cstr_to_string(ptr: *const i8) -> String {
     let cstr = CStr::from_ptr(ptr as *const _);
     let slice = String::from_utf8_lossy(cstr.to_bytes());
