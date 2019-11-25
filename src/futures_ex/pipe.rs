@@ -63,7 +63,7 @@ where
 
     fn try_start_send(&mut self, item: T::Item) -> Poll<(), U::SinkError> {
         debug_assert!(self.buffered.is_none());
-        if let AsyncSink::NotReady(item) = r#try!(self.sink.start_send(item)) {
+        if let AsyncSink::NotReady(item) = self.sink.start_send(item)? {
             self.buffered = Some(item);
             return Ok(Async::NotReady);
         }
@@ -71,7 +71,7 @@ where
     }
 
     fn feed_sink(&mut self) -> Poll<(), U::SinkError> {
-        match r#try!(self.poll_stream_item()) {
+        match self.poll_stream_item()? {
             Async::Ready(Some(item)) => self.try_start_send(item),
             Async::Ready(None) => self.sink.close(),
             // NOTE: we MUST return NotReady here even if the poll_complete()
@@ -95,11 +95,11 @@ where
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         // make sure that we feed the sink at least once on every poll to avoid
         // congestion of the input stream
-        r#try!(self.feed_sink());
+        self.feed_sink()?;
 
         loop {
             // try to poll the output stream
-            match r#try!(self.sink.poll()) {
+            match self.sink.poll()? {
                 Async::Ready(ready) => return Ok(Async::Ready(ready)),
                 Async::NotReady => (),
             }
