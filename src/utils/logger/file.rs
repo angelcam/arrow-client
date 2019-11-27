@@ -17,6 +17,7 @@
 use std::fs;
 use std::io;
 
+use std::fmt::Arguments;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -79,7 +80,7 @@ impl InternalFileLogger {
 }
 
 impl Logger for InternalFileLogger {
-    fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str) {
+    fn log(&mut self, file: &str, line: u32, s: Severity, msg: Arguments) {
         let t = time::strftime("%F %T", &time::now()).unwrap();
 
         let severity = match s {
@@ -146,7 +147,7 @@ impl FileLogger {
 }
 
 impl Logger for FileLogger {
-    fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str) {
+    fn log(&mut self, file: &str, line: u32, s: Severity, msg: Arguments) {
         self.shared.lock().unwrap().log(file, line, s, msg)
     }
 

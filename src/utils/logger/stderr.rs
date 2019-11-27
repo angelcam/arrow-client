@@ -15,6 +15,8 @@
 //! stderr logger definitions.
 
 use std;
+
+use std::fmt::Arguments;
 use std::io::{Stderr, Write};
 
 use time;
@@ -50,7 +52,7 @@ impl Clone for StderrLogger {
 }
 
 impl Logger for StderrLogger {
-    fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str) {
+    fn log(&mut self, file: &str, line: u32, s: Severity, msg: Arguments) {
         let t = time::strftime("%F %T", &time::now()).unwrap();
 
         let severity = match s {

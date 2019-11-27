@@ -17,6 +17,7 @@
 use std::ptr;
 
 use std::ffi::CString;
+use std::fmt::Arguments;
 use std::sync::Once;
 
 use libc::{c_char, c_int, c_void};
@@ -67,7 +68,7 @@ impl Default for Syslog {
 }
 
 impl Logger for Syslog {
-    fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str) {
+    fn log(&mut self, file: &str, line: u32, s: Severity, msg: Arguments) {
         let msg = format!("[{}:{}] {}", file, line, msg);
         let cstr_fmt = CString::new("%s").unwrap();
         let cstr_msg = CString::new(msg).unwrap();

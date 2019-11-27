@@ -16,31 +16,33 @@
 
 macro_rules! log {
     ($logger:expr, $severity:expr, $( $arg:tt )*) => {
-        $logger.log(file!(), line!(), $severity, &format!($($arg)*))
+        $logger.log(file!(), line!(), $severity, format_args!($($arg)*))
     };
 }
 
 macro_rules! log_debug {
     ($logger:expr, $( $arg:tt )*) => {
-        $logger.debug(file!(), line!(), &format!($($arg)*))
+        $logger.debug(file!(), line!(), format_args!($($arg)*))
     };
 }
 
 macro_rules! log_info {
     ($logger:expr, $( $arg:tt )*) => {
-        $logger.info(file!(), line!(), &format!($($arg)*))
+        $logger.info(file!(), line!(), format_args!($($arg)*))
     };
 }
 
 macro_rules! log_warn {
     ($logger:expr, $( $arg:tt )*) => {
-        $logger.warn(file!(), line!(), &format!($($arg)*))
+        $logger.warn(file!(), line!(), format_args!($($arg)*))
     };
 }
 
 pub mod file;
 pub mod stderr;
 pub mod syslog;
+
+use std::fmt::Arguments;
 
 /// Log message severity.
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -59,7 +61,7 @@ const ERROR: Severity = Severity::ERROR;
 /// Common trait for application loggers.
 pub trait Logger: Send {
     /// Log a given message with a given severity.
-    fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str);
+    fn log(&mut self, file: &str, line: u32, s: Severity, msg: Arguments);
 
     /// Set minimum log level.
     ///
@@ -70,22 +72,22 @@ pub trait Logger: Send {
     fn get_level(&self) -> Severity;
 
     /// Log a given debug message.
-    fn debug(&mut self, file: &str, line: u32, msg: &str) {
+    fn debug(&mut self, file: &str, line: u32, msg: Arguments) {
         self.log(file, line, DEBUG, msg)
     }
 
     /// Log a given info message.
-    fn info(&mut self, file: &str, line: u32, msg: &str) {
+    fn info(&mut self, file: &str, line: u32, msg: Arguments) {
         self.log(file, line, INFO, msg)
     }
 
     /// Log a given warning message.
-    fn warn(&mut self, file: &str, line: u32, msg: &str) {
+    fn warn(&mut self, file: &str, line: u32, msg: Arguments) {
         self.log(file, line, WARN, msg)
     }
 
     /// Log a given error message.
-    fn error(&mut self, file: &str, line: u32, msg: &str) {
+    fn error(&mut self, file: &str, line: u32, msg: Arguments) {
         self.log(file, line, ERROR, msg)
     }
 }
@@ -128,7 +130,7 @@ impl Clone for BoxLogger {
 }
 
 impl Logger for BoxLogger {
-    fn log(&mut self, file: &str, line: u32, s: Severity, msg: &str) {
+    fn log(&mut self, file: &str, line: u32, s: Severity, msg: Arguments) {
         self.logger.log(file, line, s, msg)
     }
 
@@ -156,7 +158,7 @@ impl Default for DummyLogger {
 }
 
 impl Logger for DummyLogger {
-    fn log(&mut self, _: &str, _: u32, _: Severity, _: &str) {}
+    fn log(&mut self, _: &str, _: u32, _: Severity, _: Arguments) {}
 
     fn set_level(&mut self, s: Severity) {
         self.level = s;
@@ -176,7 +178,7 @@ mod tests {
     }
 
     impl Logger for TestLogger {
-        fn log(&mut self, _: &str, _: u32, s: Severity, _: &str) {
+        fn log(&mut self, _: &str, _: u32, s: Severity, _: Arguments) {
             self.last_severity = s;
         }
 
