@@ -14,6 +14,7 @@
 
 use std::fmt;
 
+use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
 use std::sync::{Arc, Mutex};
 
@@ -163,6 +164,15 @@ impl ApplicationContext {
     /// Get network discovery settings.
     pub fn get_discovery(&self) -> bool {
         self.data.lock().unwrap().get_config().get_discovery()
+    }
+
+    /// Get network discovery whitelist.
+    pub fn get_discovery_whitelist(&self) -> Arc<HashSet<String>> {
+        self.data
+            .lock()
+            .unwrap()
+            .get_config()
+            .get_discovery_whitelist()
     }
 
     /// Check if the application is in the diagnostic mode.

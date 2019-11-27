@@ -19,9 +19,11 @@ use std::io;
 use std::process;
 use std::str;
 
+use std::collections::HashSet;
 use std::env::Args;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::iter::FromIterator;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -119,6 +121,7 @@ pub struct ConfigBuilder {
     services: Vec<Service>,
     diagnostic_mode: bool,
     discovery: bool,
+    discovery_whitelist: HashSet<String>,
     verbose: bool,
 }
 
@@ -131,6 +134,7 @@ impl ConfigBuilder {
             services: Vec::new(),
             diagnostic_mode: false,
             discovery: false,
+            discovery_whitelist: HashSet::new(),
             verbose: false,
         }
     }
@@ -155,11 +159,11 @@ impl ConfigBuilder {
     }
 
     /// Set a collection of static services.
-    pub fn services<T>(&mut self, services: T) -> &mut Self
+    pub fn services<I>(&mut self, services: I) -> &mut Self
     where
-        Vec<Service>: From<T>,
+        I: IntoIterator<Item = Service>,
     {
-        self.services = Vec::from(services);
+        self.services = Vec::from_iter(services);
         self
     }
 
@@ -172,6 +176,16 @@ impl ConfigBuilder {
     /// Enable/disable automatic service discovery.
     pub fn discovery(&mut self, enabled: bool) -> &mut Self {
         self.discovery = enabled;
+        self
+    }
+
+    /// Set a given discovery whitelist (i.e. a set of network interfaces which
+    /// can be used for automatic service discovery).
+    pub fn discovery_whitelist<I>(&mut self, whitelist: I) -> &mut Self
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.discovery_whitelist = HashSet::from_iter(whitelist);
         self
     }
 
@@ -227,6 +241,7 @@ impl ConfigBuilder {
             arrow_svc_addr: arrow_service_address.to_string(),
             diagnostic_mode: self.diagnostic_mode,
             discovery: self.discovery,
+            discovery_whitelist: Arc::new(self.discovery_whitelist),
             rtsp_paths: Arc::new(rtsp_paths.unwrap_or_default()),
             mjpeg_paths: Arc::new(mjpeg_paths.unwrap_or_default()),
             default_svc_table: config.svc_table.clone(),
@@ -273,6 +288,7 @@ struct ConfigParser {
     mjpeg_paths_file: String,
     log_file: String,
     discovery: bool,
+    discovery_whitelist: Vec<String>,
     verbose: bool,
     diagnostic_mode: bool,
     log_file_size: usize,
@@ -297,6 +313,7 @@ impl ConfigParser {
             mjpeg_paths_file: MJPEG_PATHS_FILE.to_string(),
             log_file: String::new(),
             discovery: false,
+            discovery_whitelist: Vec::new(),
             verbose: false,
             diagnostic_mode: false,
             log_file_size: 10 * 1024,
@@ -353,6 +370,7 @@ impl ConfigParser {
             .services(self.services)
             .diagnostic_mode(self.diagnostic_mode)
             .discovery(self.discovery)
+            .discovery_whitelist(self.discovery_whitelist)
             .verbose(self.verbose);
 
         let config = config_builder.build(storage, self.arrow_svc_addr)?;
@@ -371,6 +389,7 @@ impl ConfigParser {
             match arg as &str {
                 "-c" => self.ca_certificates(&mut args)?,
                 "-d" => self.discovery()?,
+                "-D" => self.discovery_whitelist(&mut args)?,
                 "-i" => self.interface(&mut args)?,
                 "-r" => self.rtsp_service(&mut args)?,
                 "-m" => self.mjpeg_service(&mut args)?,
@@ -446,6 +465,22 @@ impl ConfigParser {
             return Err(ConfigError::new("unknown argument: \"-d\""));
         }
 
+        self.discovery = true;
+
+        Ok(())
+    }
+
+    /// Process the discovery argument.
+    fn discovery_whitelist(&mut self, args: &mut Args) -> Result<(), ConfigError> {
+        if !cfg!(feature = "discovery") {
+            return Err(ConfigError::new("unknown argument: \"-D\""));
+        }
+
+        let iface = args
+            .next()
+            .ok_or_else(|| ConfigError::new("network interface name expected"))?;
+
+        self.discovery_whitelist.push(iface);
         self.discovery = true;
 
         Ok(())
@@ -760,6 +795,7 @@ pub struct Config {
     arrow_svc_addr: String,
     diagnostic_mode: bool,
     discovery: bool,
+    discovery_whitelist: Arc<HashSet<String>>,
     rtsp_paths: Arc<Vec<String>>,
     mjpeg_paths: Arc<Vec<String>>,
     svc_table: SharedServiceTable,
@@ -808,6 +844,12 @@ impl Config {
     #[doc(hidden)]
     pub fn get_discovery(&self) -> bool {
         self.discovery
+    }
+
+    /// Get network discovery whitelist.
+    #[doc(hidden)]
+    pub fn get_discovery_whitelist(&self) -> Arc<HashSet<String>> {
+        self.discovery_whitelist.clone()
     }
 
     /// Check if the application is in the diagnostic mode.
@@ -1090,6 +1132,8 @@ pub fn usage(exit_code: i32) -> ! {
     println!("              .pem\n");
     if cfg!(feature = "discovery") {
         println!("    -d        automatic service discovery");
+        println!("    -D iface  limit automatic service discovery only on a given network");
+        println!("              interface (implies -d; can be used multiple times)");
     }
     println!("    -r URL    add a given RTSP service");
     println!("    -m URL    add a given MJPEG service");
