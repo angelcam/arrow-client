@@ -226,7 +226,12 @@ fn wait_for_retry(
 ) -> Box<dyn Future<Item = (), Error = ()> + Send + Sync> {
     match connection_retry {
         ConnectionRetry::Timeout(t) if t > Duration::from_millis(500) => {
-            log_info!(logger, "retrying in {}.{:03} seconds", t.as_secs(), t.subsec_millis());
+            log_info!(
+                logger,
+                "retrying in {}.{:03} seconds",
+                t.as_secs(),
+                t.subsec_millis()
+            );
 
             let sleep = Delay::new(Instant::now() + t).map_err(|_| ());
 
