@@ -93,6 +93,7 @@ pub struct Service {
 
 impl Service {
     /// Create a new Control Protocol service.
+    #[doc(hidden)]
     pub fn control() -> Service {
         Self {
             svc_type: ServiceType::ControlProtocol,
@@ -218,6 +219,7 @@ impl Service {
     }
 
     /// Convert service to service identifier.
+    #[doc(hidden)]
     pub fn to_service_identifier(&self) -> ServiceIdentifier {
         ServiceIdentifier {
             svc_type: self.service_type(),

@@ -141,6 +141,32 @@ impl Logger for BoxLogger {
     }
 }
 
+/// A dummy logger that will drop everything.
+#[derive(Copy, Clone)]
+pub struct DummyLogger {
+    level: Severity,
+}
+
+impl Default for DummyLogger {
+    fn default() -> Self {
+        Self {
+            level: Severity::DEBUG,
+        }
+    }
+}
+
+impl Logger for DummyLogger {
+    fn log(&mut self, _: &str, _: u32, _: Severity, _: &str) {}
+
+    fn set_level(&mut self, s: Severity) {
+        self.level = s;
+    }
+
+    fn get_level(&self) -> Severity {
+        self.level
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

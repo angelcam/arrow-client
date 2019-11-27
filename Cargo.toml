@@ -10,7 +10,11 @@ edition = "2018"
 [features]
 discovery = ["lazy_static"]
 threads = ["tokio-threadpool"]
-all = ["discovery", "threads"]
+exports = []
+all = ["discovery", "threads", "exports"]
+
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
 bytes        = "0.4"

@@ -28,6 +28,18 @@ pub struct AddrParseError {
     msg: String,
 }
 
+impl AddrParseError {
+    /// Create a new error.
+    fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
+    }
+}
+
 impl Error for AddrParseError {
     fn description(&self) -> &str {
         &self.msg
@@ -37,14 +49,6 @@ impl Error for AddrParseError {
 impl Display for AddrParseError {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
         f.write_str(self.description())
-    }
-}
-
-impl<'a> From<&'a str> for AddrParseError {
-    fn from(msg: &'a str) -> Self {
-        Self {
-            msg: msg.to_string(),
-        }
     }
 }
 
@@ -101,7 +105,7 @@ impl FromStr for MacAddr {
             .split(':')
             .map(|x| {
                 u8::from_str_radix(x, 16).or_else(|_| {
-                    Err(AddrParseError::from(
+                    Err(AddrParseError::new(
                         "unable to parse a MAC address, invalid octet",
                     ))
                 })
@@ -117,7 +121,7 @@ impl FromStr for MacAddr {
                 octets[5].clone()?,
             ))
         } else {
-            Err(AddrParseError::from(
+            Err(AddrParseError::new(
                 "unable to parse a MAC address, invalid number of octets",
             ))
         }

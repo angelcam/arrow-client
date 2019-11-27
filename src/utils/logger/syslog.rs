@@ -47,14 +47,22 @@ pub struct Syslog {
     level: Severity,
 }
 
-/// Create a new syslog logger with log level set to INFO.
-pub fn new() -> Syslog {
-    SYSLOG_INIT.call_once(|| unsafe {
-        openlog(ptr::null(), LOG_CONS | LOG_PID, LOG_USER);
-    });
+impl Syslog {
+    /// Create a new syslog logger with log level set to INFO.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 
-    Syslog {
-        level: Severity::INFO,
+impl Default for Syslog {
+    fn default() -> Self {
+        SYSLOG_INIT.call_once(|| unsafe {
+            openlog(ptr::null(), LOG_CONS | LOG_PID, LOG_USER);
+        });
+
+        Self {
+            level: Severity::INFO,
+        }
     }
 }
 
