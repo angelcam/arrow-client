@@ -15,6 +15,7 @@
 use std::slice;
 
 use std::ffi::CString;
+use std::fmt::Arguments;
 use std::sync::{Arc, Mutex};
 
 use libc::{c_char, c_int, c_void};
@@ -45,7 +46,9 @@ impl CallbackLoggerContext {
     }
 
     /// Log message.
-    fn log(&self, file: &str, line: u32, severity: Severity, msg: &str) {
+    fn log(&self, file: &str, line: u32, severity: Severity, msg: Arguments) {
+        let msg = std::fmt::format(msg);
+
         let file = CString::new(file).unwrap();
         let msg = CString::new(msg).unwrap();
 
@@ -79,7 +82,7 @@ impl CallbackLogger {
 }
 
 impl Logger for CallbackLogger {
-    fn log(&mut self, file: &str, line: u32, severity: Severity, msg: &str) {
+    fn log(&mut self, file: &str, line: u32, severity: Severity, msg: Arguments) {
         self.context.lock().unwrap().log(file, line, severity, msg)
     }
 

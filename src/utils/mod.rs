@@ -140,6 +140,7 @@ mod tests {
     use super::*;
     use crate::utils::logger::*;
     use std::ffi::CString;
+    use std::fmt::Arguments;
 
     /// This logger does nothing but holds the severity level.
     #[derive(Debug, Copy, Clone)]
@@ -157,7 +158,7 @@ mod tests {
     }
 
     impl Logger for DummyLogger {
-        fn log(&mut self, _: &str, _: u32, _: Severity, _: &str) {}
+        fn log(&mut self, _: &str, _: u32, _: Severity, _: Arguments) {}
 
         fn set_level(&mut self, s: Severity) {
             self.level = s;
