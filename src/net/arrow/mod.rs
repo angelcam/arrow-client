@@ -20,8 +20,6 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use time;
-
 use futures::task;
 
 use futures::future::Future;
@@ -56,10 +54,10 @@ pub use self::error::{ArrowError, ErrorKind};
 
 use crate::net::utils::get_socket_address_async;
 
-const ACK_TIMEOUT: f64 = 20.0;
-const CONNECTION_TIMEOUT: u64 = 20;
-const PING_PERIOD: f64 = 60.0;
-const UPDATE_CHECK_PERIOD: f64 = 5.0;
+const ACK_TIMEOUT: Duration = Duration::from_secs(20);
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
+const PING_PERIOD: Duration = Duration::from_secs(60);
+const UPDATE_CHECK_PERIOD: Duration = Duration::from_secs(5);
 
 /// Arrow Protocol states.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -70,7 +68,7 @@ enum ProtocolState {
 
 /// Helper struct for expected ACK messages.
 struct ExpectedAck {
-    timestamp: f64,
+    timestamp: Instant,
     message_id: u16,
 }
 
@@ -78,14 +76,14 @@ impl ExpectedAck {
     /// Create a new ACK message expectation.
     fn new(message_id: u16) -> Self {
         Self {
-            timestamp: time::precise_time_s(),
+            timestamp: Instant::now(),
             message_id,
         }
     }
 
     /// Check if it's too late for the ACK.
     fn timeout(&self) -> bool {
-        (self.timestamp + ACK_TIMEOUT) < time::precise_time_s()
+        self.timestamp.elapsed() >= ACK_TIMEOUT
     }
 }
 
@@ -103,8 +101,8 @@ struct ArrowClientContext {
     task: Option<Task>,
     redirect: Option<String>,
     closed: bool,
-    last_ping: f64,
-    last_update_chck: f64,
+    last_ping: Instant,
+    last_update_chck: Instant,
     last_stable_ver: usize,
 }
 
@@ -121,7 +119,7 @@ impl ArrowClientContext {
         let cmsg_factory = ControlMessageFactory::new();
         let session_manager = SessionManager::new(app_context.clone(), cmsg_factory.clone());
 
-        let t = time::precise_time_s();
+        let now = Instant::now();
 
         let mut client = Self {
             logger,
@@ -136,8 +134,8 @@ impl ArrowClientContext {
             task: None,
             redirect: None,
             closed: false,
-            last_ping: t,
-            last_update_chck: t,
+            last_ping: now,
+            last_update_chck: now,
             last_stable_ver: 0,
         };
 
@@ -166,14 +164,12 @@ impl ArrowClientContext {
 
     /// Trigger all periodical tasks.
     fn time_event(&mut self) {
-        let t = time::precise_time_s();
-
         if self.state == ProtocolState::Established {
-            if (self.last_ping + PING_PERIOD) < t {
+            if self.last_ping.elapsed() >= PING_PERIOD {
                 self.send_ping_message();
             }
 
-            if (self.last_update_chck + UPDATE_CHECK_PERIOD) < t {
+            if self.last_update_chck.elapsed() >= UPDATE_CHECK_PERIOD {
                 self.check_for_updates();
             }
 
@@ -192,7 +188,7 @@ impl ArrowClientContext {
             self.send_update_message();
         }
 
-        self.last_update_chck = time::precise_time_s();
+        self.last_update_chck = Instant::now();
     }
 
     /// Insert a given Control Protocol message into the output message queue.
@@ -250,7 +246,7 @@ impl ArrowClientContext {
 
         self.send_unconfirmed_control_message(msg);
 
-        self.last_ping = time::precise_time_s();
+        self.last_ping = Instant::now();
     }
 
     /// Process a given Control Protocol message.
@@ -643,7 +639,7 @@ pub fn connect(
                 .map_err(ArrowError::connection_error)
         });
 
-    Timeout::new(connection, Duration::from_secs(CONNECTION_TIMEOUT))
+    Timeout::new(connection, CONNECTION_TIMEOUT)
         .map_err(move |err| {
             if err.is_elapsed() {
                 ArrowError::connection_error(format!(
