@@ -36,10 +36,10 @@ use crate::net::raw::ether::MacAddr;
 use crate::utils::logger::{BoxLogger, Logger};
 
 /// Connection retry timeout.
-const RETRY_TIMEOUT: f64 = 60.0;
+const RETRY_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Get maximum duration of the pairing mode.
-const PAIRING_MODE_TIMEOUT: f64 = 1200.0;
+const PAIRING_MODE_TIMEOUT: Duration = Duration::from_secs(1200);
 
 /// This future ensures maintaining connection with a remote Arrow Service.
 struct ArrowMainTask {
@@ -48,8 +48,8 @@ struct ArrowMainTask {
     logger: BoxLogger,
     default_addr: String,
     current_addr: String,
-    last_attempt: f64,
-    pairing_mode_timeout: f64,
+    last_attempt: Instant,
+    pairing_mode_timeout: Instant,
     diagnostic_mode: bool,
 }
 
@@ -64,9 +64,9 @@ impl ArrowMainTask {
         let addr = app_context.get_arrow_service_address();
         let diagnostic_mode = app_context.get_diagnostic_mode();
 
-        let t = time::precise_time_s();
+        let now = Instant::now();
 
-        let pairing_mode_timeout = t + PAIRING_MODE_TIMEOUT;
+        let pairing_mode_timeout = now + PAIRING_MODE_TIMEOUT;
 
         let task = ArrowMainTask {
             app_context,
@@ -74,7 +74,7 @@ impl ArrowMainTask {
             logger,
             default_addr: addr.clone(),
             current_addr: addr,
-            last_attempt: t,
+            last_attempt: now,
             pairing_mode_timeout,
             diagnostic_mode,
         };
@@ -98,7 +98,7 @@ impl ArrowMainTask {
             self.current_addr
         );
 
-        self.last_attempt = time::precise_time_s();
+        self.last_attempt = Instant::now();
 
         self.app_context
             .set_connection_state(ConnectionState::Connected);
@@ -155,7 +155,7 @@ impl ArrowMainTask {
 /// connection attempts because of a specified reason.
 #[derive(Debug, Copy, Clone)]
 enum ConnectionRetry {
-    Timeout(f64),
+    Timeout(Duration),
     Suspend(SuspendReason),
 }
 
@@ -178,32 +178,44 @@ impl SuspendReason {
 /// Process a given connection error and return a ConnectionRetry instance.
 fn process_connection_error(
     connection_error: ArrowError,
-    last_attempt: f64,
-    pairing_mode_timeout: f64,
+    last_attempt: Instant,
+    pairing_mode_timeout: Instant,
 ) -> ConnectionRetry {
-    let t = time::precise_time_s();
+    let now = Instant::now();
 
     match connection_error.kind() {
         // the client is not authorized to access the service yet; check the
         // pairing mode timeout
-        ErrorKind::Unauthorized => match pairing_mode_timeout {
-            // retry every 10 seconds in the first 10 minutes since the first
-            // "unauthorized" response
-            timeout if t < (timeout - 600.0) => ConnectionRetry::Timeout(10.0),
-            // retry every 30 seconds after the first 10 minutes since the
-            // first "unauthorized" response
-            timeout if t < timeout => ConnectionRetry::Timeout(30.0),
-            // suspend the thread after the first 20 minutes since the client
-            // thread start
-            _ => ConnectionRetry::Suspend(SuspendReason::NotInPairingMode),
-        },
+        ErrorKind::Unauthorized => {
+            if (now + Duration::from_secs(600)) < pairing_mode_timeout {
+                // retry every 10 seconds in the first 10 minutes since the
+                // first "unauthorized" response
+                ConnectionRetry::Timeout(Duration::from_secs(10))
+            } else if now < pairing_mode_timeout {
+                // retry every 30 seconds after the first 10 minutes since the
+                // first "unauthorized" response
+                ConnectionRetry::Timeout(Duration::from_secs(30))
+            } else {
+                // suspend the thread after the first 20 minutes since the
+                // client thread start
+                ConnectionRetry::Suspend(SuspendReason::NotInPairingMode)
+            }
+        }
         // suspend the thread if the version of the Arrow Protocol is not
         // supported by either side
         ErrorKind::UnsupportedProtocolVersion => {
             ConnectionRetry::Suspend(SuspendReason::UnsupportedProtocolVersion)
         }
         // in all other cases
-        _ => ConnectionRetry::Timeout(RETRY_TIMEOUT + last_attempt - t),
+        _ => {
+            let next_attempt = last_attempt + RETRY_TIMEOUT;
+
+            if next_attempt > now {
+                ConnectionRetry::Timeout(next_attempt - now)
+            } else {
+                ConnectionRetry::Timeout(Duration::from_secs(0))
+            }
+        }
     }
 }
 
@@ -213,11 +225,15 @@ fn wait_for_retry(
     connection_retry: ConnectionRetry,
 ) -> Box<dyn Future<Item = (), Error = ()> + Send + Sync> {
     match connection_retry {
-        ConnectionRetry::Timeout(t) if t > 0.5 => {
-            log_info!(logger, "retrying in {:.3} seconds", t);
+        ConnectionRetry::Timeout(t) if t > Duration::from_millis(500) => {
+            log_info!(
+                logger,
+                "retrying in {}.{:03} seconds",
+                t.as_secs(),
+                t.subsec_millis()
+            );
 
-            let time = Duration::from_millis((t * 1000.0) as u64);
-            let sleep = Delay::new(Instant::now() + time).map_err(|_| ());
+            let sleep = Delay::new(Instant::now() + t).map_err(|_| ());
 
             Box::new(sleep)
         }

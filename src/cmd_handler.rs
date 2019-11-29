@@ -16,14 +16,13 @@
 use std::thread;
 
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use futures::{Future, Poll, Stream};
 
 use futures::sync::mpsc;
 
 use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-
-use time;
 
 #[cfg(feature = "discovery")]
 use crate::scanner::discovery;
@@ -38,7 +37,7 @@ use crate::utils::logger::{BoxLogger, Logger};
 use crate::utils::logger::Severity;
 
 /// Network scan period.
-const NETWORK_SCAN_PERIOD: f64 = 300.0;
+const NETWORK_SCAN_PERIOD: Duration = Duration::from_secs(300);
 
 /// Different command types that the command handler can receive.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -85,7 +84,7 @@ struct CommandHandlerContext {
     app_context: ApplicationContext,
     logger: BoxLogger,
     cmd_sender: CommandSender,
-    last_nw_scan: f64,
+    last_nw_scan: Instant,
     scanner: Option<JoinHandle<()>>,
 }
 
@@ -94,13 +93,13 @@ impl CommandHandlerContext {
     fn new(app_context: ApplicationContext, cmd_sender: CommandSender) -> Self {
         let logger = app_context.get_logger();
 
-        let t = time::precise_time_s();
+        let now = Instant::now();
 
         Self {
             app_context,
             logger,
             cmd_sender,
-            last_nw_scan: t - 300.0,
+            last_nw_scan: now - NETWORK_SCAN_PERIOD,
             scanner: None,
         }
     }
@@ -129,9 +128,7 @@ impl CommandHandlerContext {
 
     /// Trigger periodic netork scan.
     fn periodic_network_scan(&mut self) {
-        let t = time::precise_time_s();
-
-        if (self.last_nw_scan + NETWORK_SCAN_PERIOD) < t {
+        if self.last_nw_scan.elapsed() >= NETWORK_SCAN_PERIOD {
             self.scan_network();
         }
     }
@@ -171,7 +168,7 @@ impl CommandHandlerContext {
             }
         }
 
-        self.last_nw_scan = time::precise_time_s();
+        self.last_nw_scan = Instant::now();
     }
 }
 
