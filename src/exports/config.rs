@@ -14,84 +14,11 @@
 
 use std::slice;
 
-use std::ffi::CString;
-use std::fmt::Arguments;
-use std::sync::{Arc, Mutex};
-
-use libc::{c_char, c_int, c_void};
+use libc::c_int;
 
 use crate::config::{Config, ConfigBuilder};
 use crate::net::raw::ether::MacAddr;
-use crate::utils::logger::{BoxLogger, Logger, Severity};
-
-/// Type alias for log callbacks.
-type LogCallback = extern "C" fn(
-    opaque: *mut c_void,
-    file: *const c_char,
-    line: u32,
-    severity: u32,
-    msg: *const c_char,
-);
-
-/// Internal context for callback-based loggers.
-struct CallbackLoggerContext {
-    callback: LogCallback,
-    opaque: *mut c_void,
-}
-
-impl CallbackLoggerContext {
-    /// Create a new context.
-    fn new(callback: LogCallback, opaque: *mut c_void) -> Self {
-        Self { callback, opaque }
-    }
-
-    /// Log message.
-    fn log(&self, file: &str, line: u32, severity: Severity, msg: Arguments) {
-        let msg = std::fmt::format(msg);
-
-        let file = CString::new(file).unwrap();
-        let msg = CString::new(msg).unwrap();
-
-        (self.callback)(
-            self.opaque,
-            file.as_ptr() as _,
-            line,
-            severity as u32,
-            msg.as_ptr() as _,
-        );
-    }
-}
-
-unsafe impl Send for CallbackLoggerContext {}
-
-/// Callback-based logger. The callback does not have to be thread-safe. The
-/// logger will handle all necessary locking. However, the given opaque MUST
-/// be thread safe.
-#[derive(Clone)]
-struct CallbackLogger {
-    context: Arc<Mutex<CallbackLoggerContext>>,
-}
-
-impl CallbackLogger {
-    /// Create a new logger.
-    fn new(callback: LogCallback, opaque: *mut c_void) -> Self {
-        Self {
-            context: Arc::new(Mutex::new(CallbackLoggerContext::new(callback, opaque))),
-        }
-    }
-}
-
-impl Logger for CallbackLogger {
-    fn log(&mut self, file: &str, line: u32, severity: Severity, msg: Arguments) {
-        self.context.lock().unwrap().log(file, line, severity, msg)
-    }
-
-    fn set_level(&mut self, _: Severity) {}
-
-    fn get_level(&self) -> Severity {
-        Severity::DEBUG
-    }
-}
+use crate::utils::logger::BoxLogger;
 
 /// Create a new Arrow client config.
 #[no_mangle]
@@ -105,16 +32,15 @@ pub unsafe extern "C" fn ac__config__free(config: *mut ConfigBuilder) {
     Box::from_raw(config);
 }
 
-/// Set log callback.
+/// Set logger. The function takes ownership of a given logger.
 #[no_mangle]
-pub unsafe extern "C" fn ac__config__set_log_callback(
+pub unsafe extern "C" fn ac__config__set_logger(
     config: *mut ConfigBuilder,
-    callback: LogCallback,
-    opaque: *mut c_void,
+    logger: *mut BoxLogger,
 ) {
-    let builder = &mut *config;
+    let logger = Box::from_raw(logger);
 
-    builder.logger(BoxLogger::new(CallbackLogger::new(callback, opaque)));
+    (&mut *config).logger(*logger);
 }
 
 /// Set MAC address. The `mac_address` parameter is expected to be a an array
@@ -132,9 +58,7 @@ pub unsafe extern "C" fn ac__config__set_mac_address(
 
     let mac_address = mac_address.map(MacAddr::from_slice);
 
-    let builder = &mut *config;
-
-    builder.mac_address(mac_address);
+    (&mut *config).mac_address(mac_address);
 }
 
 /// Enable/disable diagnostic mode.
@@ -143,23 +67,17 @@ pub unsafe extern "C" fn ac__config__set_diagnostic_mode(
     config: *mut ConfigBuilder,
     enabled: c_int,
 ) {
-    let builder = &mut *config;
-
-    builder.diagnostic_mode(enabled != 0);
+    (&mut *config).diagnostic_mode(enabled != 0);
 }
 
 /// Enable/disable automatic service discovery.
 #[no_mangle]
 pub unsafe extern "C" fn ac__config__set_discovery(config: *mut ConfigBuilder, enabled: c_int) {
-    let builder = &mut *config;
-
-    builder.discovery(enabled != 0);
+    (&mut *config).discovery(enabled != 0);
 }
 
 /// Enable/disable verbose mode.
 #[no_mangle]
 pub unsafe extern "C" fn ac__config__set_verbose(config: *mut ConfigBuilder, enabled: c_int) {
-    let builder = &mut *config;
-
-    builder.verbose(enabled != 0);
+    (&mut *config).verbose(enabled != 0);
 }

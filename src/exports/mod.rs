@@ -13,9 +13,11 @@
 // limitations under the License.
 
 pub mod config;
+pub mod logger;
 pub mod storage;
 
 use std::ptr;
+use std::str;
 use std::thread;
 
 use std::ffi::CStr;
@@ -27,7 +29,25 @@ use crate::runtime;
 
 use crate::client::{ArrowClient, ArrowClientTask};
 use crate::config::ConfigBuilder;
-use crate::exports::storage::NativeStorage;
+use crate::exports::storage::DynStorage;
+
+/// Helper function.
+unsafe fn optional_cstr_to_str<'a>(s: *const c_char) -> Option<&'a str> {
+    if s.is_null() {
+        return None;
+    }
+
+    let s = CStr::from_ptr(s);
+
+    Some(str::from_utf8_unchecked(s.to_bytes()))
+}
+
+/// Helper function.
+unsafe fn cstr_to_str<'a>(s: *const c_char) -> &'a str {
+    let s = CStr::from_ptr(s);
+
+    str::from_utf8_unchecked(s.to_bytes())
+}
 
 /// Helper struct.
 pub struct NativeArrowClient {
@@ -40,27 +60,25 @@ pub struct NativeArrowClient {
 #[no_mangle]
 pub unsafe extern "C" fn ac__arrow_client__new(
     builder: *mut ConfigBuilder,
-    storage: *mut NativeStorage,
+    storage: *mut DynStorage,
     arrow_service_address: *const c_char,
 ) -> *mut NativeArrowClient {
     let builder = Box::from_raw(builder);
     let storage = Box::from_raw(storage);
-    let arrow_service_address = CStr::from_ptr(arrow_service_address as _);
+    let arrow_service_address = cstr_to_str(arrow_service_address);
 
-    if let Ok(addr) = arrow_service_address.to_str() {
-        if let Ok(config) = (*builder).build(*storage, addr) {
-            let (client, task) = ArrowClient::new(config);
+    if let Ok(config) = builder.build(storage, arrow_service_address) {
+        let (client, task) = ArrowClient::new(config);
 
-            let res = NativeArrowClient {
-                client,
-                task: Some(task),
-            };
+        let res = NativeArrowClient {
+            client,
+            task: Some(task),
+        };
 
-            return Box::into_raw(Box::new(res));
-        }
+        Box::into_raw(Box::new(res))
+    } else {
+        ptr::null_mut()
     }
-
-    ptr::null_mut()
 }
 
 /// Free (and close) a given Arrow client.
@@ -101,21 +119,19 @@ pub unsafe extern "C" fn ac__arrow_client__start_blocking(client: *mut NativeArr
 /// Close a given Arrow client.
 #[no_mangle]
 pub unsafe extern "C" fn ac__arrow_client__close(client: *mut NativeArrowClient) {
-    let client = &mut *client;
-
-    client.client.close();
+    (&mut *client).client.close();
 }
 
-/// Free a given Arrow client join handle.
+/// Free a given join handle.
 #[no_mangle]
-pub unsafe extern "C" fn ac__arrow_client_join_handle__free(handle: *mut JoinHandle<()>) {
+pub unsafe extern "C" fn ac__join_handle__free(handle: *mut JoinHandle<()>) {
     Box::from_raw(handle);
 }
 
-/// Await a given Arrow client join handle.
+/// Await a given join handle.
 #[no_mangle]
-pub unsafe extern "C" fn ac__arrow_client_join_handle__join(handle: *mut JoinHandle<()>) {
+pub unsafe extern "C" fn ac__join_handle__join(handle: *mut JoinHandle<()>) {
     let handle = Box::from_raw(handle);
 
-    (*handle).join().unwrap_or_default()
+    handle.join().unwrap_or_default()
 }

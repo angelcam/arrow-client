@@ -347,20 +347,22 @@ impl ConfigParser {
     fn build(self) -> Result<Config, ConfigError> {
         // because of the lock file, we need to create the storage builder before creating the
         // logger
-        let storage_builder = DefaultStorage::builder(&self.config_file, self.lock_file.as_ref())
-            .map_err(ConfigError::new)?;
+        let mut storage_builder =
+            DefaultStorage::builder(&self.config_file, self.lock_file.as_ref())
+                .map_err(ConfigError::new)?;
 
         let logger = self.create_logger()?;
 
-        let storage = storage_builder
+        storage_builder
             .logger(logger.clone())
             .config_skeleton_file(Some(self.config_file_skel))
             .connection_state_file(Some(self.state_file))
             .identity_file(self.identity_file)
             .rtsp_paths_file(Some(self.rtsp_paths_file))
             .mjpeg_paths_file(Some(self.mjpeg_paths_file))
-            .ca_certificates(self.ca_certificates)
-            .build();
+            .ca_certificates(self.ca_certificates);
+
+        let storage = storage_builder.build();
 
         let mut config_builder = Config::builder();
 
