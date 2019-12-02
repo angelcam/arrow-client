@@ -21,10 +21,10 @@ use std::ffi::CStr;
 use libc::{c_char, c_int, c_void, size_t};
 
 use openssl::ssl::SslConnectorBuilder;
-use openssl::x509::X509;
 
 use crate::config::PersistentConfig;
 use crate::context::ConnectionState;
+use crate::exports::storage::DynStorage;
 use crate::storage::Storage;
 use crate::utils::json::{FromJson, ToJson};
 
@@ -56,8 +56,8 @@ type LoadPaths = unsafe extern "C" fn(
 /// Type alias.
 type FreePaths = unsafe extern "C" fn(opaque: *mut c_void, paths: *mut *mut c_char, len: size_t);
 
-/// Storage based on native functions.
-pub struct NativeStorage {
+/// Custom storage based on native functions.
+pub struct CustomStorage {
     opaque: *mut c_void,
     save_configuration: Option<SaveConfiguration>,
     load_configuration: Option<LoadConfiguration>,
@@ -70,7 +70,7 @@ pub struct NativeStorage {
     free_mjpeg_paths: Option<FreePaths>,
 }
 
-impl NativeStorage {
+impl CustomStorage {
     /// Create a new native storage.
     fn new(opaque: *mut c_void) -> Self {
         Self {
@@ -88,7 +88,7 @@ impl NativeStorage {
     }
 }
 
-impl Storage for NativeStorage {
+impl Storage for CustomStorage {
     fn save_configuration(&mut self, config: &PersistentConfig) -> Result<(), io::Error> {
         if let Some(func) = self.save_configuration {
             let mut data = Vec::new();
@@ -198,7 +198,7 @@ impl Storage for NativeStorage {
     }
 }
 
-unsafe impl Send for NativeStorage {}
+unsafe impl Send for CustomStorage {}
 
 /// Helper function for loading paths.
 fn load_paths(
@@ -241,37 +241,39 @@ fn load_paths(
     Ok(paths)
 }
 
-/// Create a new storage.
+/// Create a new custom storage builder.
 #[no_mangle]
-pub unsafe extern "C" fn ac__storage__new(opaque: *mut c_void) -> *mut NativeStorage {
-    Box::into_raw(Box::new(NativeStorage::new(opaque)))
+pub unsafe extern "C" fn ac__custom_storage_builder__new(
+    opaque: *mut c_void,
+) -> *mut CustomStorage {
+    Box::into_raw(Box::new(CustomStorage::new(opaque)))
 }
 
-/// Free the storage.
+/// Free the storage builder.
 #[no_mangle]
-pub unsafe extern "C" fn ac__storage__free(storage: *mut NativeStorage) {
-    Box::from_raw(storage);
+pub unsafe extern "C" fn ac__custom_storage_builder__free(builder: *mut CustomStorage) {
+    Box::from_raw(builder);
 }
 
 /// Set function for saving client configuration.
 #[no_mangle]
-pub unsafe extern "C" fn ac__storage__set_save_configuration_func(
-    storage: *mut NativeStorage,
+pub unsafe extern "C" fn ac__custom_storage_builder__set_save_configuration_func(
+    builder: *mut CustomStorage,
     func: SaveConfiguration,
 ) {
-    let storage = &mut *storage;
+    let storage = &mut *builder;
 
     storage.save_configuration = Some(func);
 }
 
 /// Set function for loading client configuration.
 #[no_mangle]
-pub unsafe extern "C" fn ac__storage__set_load_configuration_func(
-    storage: *mut NativeStorage,
+pub unsafe extern "C" fn ac__custom_storage_builder__set_load_configuration_func(
+    builder: *mut CustomStorage,
     load: LoadConfiguration,
     free: Option<FreeConfiguration>,
 ) {
-    let storage = &mut *storage;
+    let storage = &mut *builder;
 
     storage.load_configuration = Some(load);
     storage.free_configuration = free;
@@ -279,23 +281,23 @@ pub unsafe extern "C" fn ac__storage__set_load_configuration_func(
 
 /// Set function for saving client connection state.
 #[no_mangle]
-pub unsafe extern "C" fn ac__storage__set_save_connection_state_func(
-    storage: *mut NativeStorage,
+pub unsafe extern "C" fn ac__custom_storage_builder__set_save_connection_state_func(
+    builder: *mut CustomStorage,
     func: SaveConnectionState,
 ) {
-    let storage = &mut *storage;
+    let storage = &mut *builder;
 
     storage.save_connection_state = Some(func);
 }
 
 /// Set function for loading RTSP paths.
 #[no_mangle]
-pub unsafe extern "C" fn ac__storage__set_load_rtsp_paths_func(
-    storage: *mut NativeStorage,
+pub unsafe extern "C" fn ac__custom_storage_builder__set_load_rtsp_paths_func(
+    builder: *mut CustomStorage,
     load: LoadPaths,
     free: Option<FreePaths>,
 ) {
-    let storage = &mut *storage;
+    let storage = &mut *builder;
 
     storage.load_rtsp_paths = Some(load);
     storage.free_rtsp_paths = free;
@@ -303,12 +305,12 @@ pub unsafe extern "C" fn ac__storage__set_load_rtsp_paths_func(
 
 /// Set function for loading MJPEG paths.
 #[no_mangle]
-pub unsafe extern "C" fn ac__storage__set_load_mjpeg_paths_func(
-    storage: *mut NativeStorage,
+pub unsafe extern "C" fn ac__custom_storage_builder__set_load_mjpeg_paths_func(
+    builder: *mut CustomStorage,
     load: LoadPaths,
     free: Option<FreePaths>,
 ) {
-    let storage = &mut *storage;
+    let storage = &mut *builder;
 
     storage.load_mjpeg_paths = Some(load);
     storage.free_mjpeg_paths = free;
@@ -316,70 +318,21 @@ pub unsafe extern "C" fn ac__storage__set_load_mjpeg_paths_func(
 
 /// Set function for loading CA certificates.
 #[no_mangle]
-pub unsafe extern "C" fn ac__storage__set_load_ca_certificates_func(
-    storage: *mut NativeStorage,
+pub unsafe extern "C" fn ac__custom_storage_builder__set_load_ca_certificates_func(
+    builder: *mut CustomStorage,
     func: LoadCACertificates,
 ) {
-    let storage = &mut *storage;
+    let storage = &mut *builder;
 
     storage.load_ca_certificates = Some(func);
 }
 
-/// Load a given CA certificate file.
+/// Build the storage.
 #[no_mangle]
-pub unsafe extern "C" fn ac__ca_cert_storage__load_ca_file(
-    cert_storage: *mut SslConnectorBuilder,
-    file: *const c_char,
-) -> c_int {
-    let cert_storage = &mut *cert_storage;
-    let file_cstr = CStr::from_ptr(file as _);
+pub unsafe extern "C" fn ac__custom_storage_builder__build(
+    builder: *mut CustomStorage,
+) -> *mut DynStorage {
+    let builder = Box::from_raw(builder);
 
-    if let Ok(file) = file_cstr.to_str() {
-        cert_storage
-            .set_ca_file(file)
-            .map(|_| 0)
-            .unwrap_or(libc::EINVAL)
-    } else {
-        libc::EINVAL
-    }
-}
-
-/// Load a given PEM certificate.
-#[no_mangle]
-pub unsafe extern "C" fn ac__ca_cert_storage__load_pem(
-    cert_storage: *mut SslConnectorBuilder,
-    pem: *const u8,
-    size: size_t,
-) -> c_int {
-    let cert_storage = &mut *cert_storage;
-    let data = slice::from_raw_parts(pem, size as _);
-
-    if let Ok(cert) = X509::from_pem(data) {
-        cert_storage
-            .add_client_ca(&cert)
-            .map(|_| 0)
-            .unwrap_or(libc::EINVAL)
-    } else {
-        libc::EINVAL
-    }
-}
-
-/// Load a given DER certificate.
-#[no_mangle]
-pub unsafe extern "C" fn ac__ca_cert_storage__load_der(
-    cert_storage: *mut SslConnectorBuilder,
-    der: *const u8,
-    size: size_t,
-) -> c_int {
-    let cert_storage = &mut *cert_storage;
-    let data = slice::from_raw_parts(der, size as _);
-
-    if let Ok(cert) = X509::from_der(data) {
-        cert_storage
-            .add_client_ca(&cert)
-            .map(|_| 0)
-            .unwrap_or(libc::EINVAL)
-    } else {
-        libc::EINVAL
-    }
+    Box::into_raw(Box::new(*builder))
 }
