@@ -34,6 +34,7 @@ use crate::context::{ApplicationContext, ConnectionState};
 use crate::net::arrow::{ArrowError, ErrorKind};
 use crate::net::raw::ether::MacAddr;
 use crate::utils::logger::{BoxLogger, Logger};
+use crate::ArrowClientEventListener;
 
 /// Connection retry timeout.
 const RETRY_TIMEOUT: Duration = Duration::from_secs(60);
@@ -363,6 +364,14 @@ impl ArrowClient {
     /// Check if the client is currently scanning network.
     pub fn is_scanning(&self) -> bool {
         self.application_context.is_scanning()
+    }
+
+    /// Add a new event listener.
+    pub fn add_event_listener<T>(&mut self, listener: T)
+    where
+        T: 'static + ArrowClientEventListener + Send,
+    {
+        self.application_context.add_event_listener(listener)
     }
 
     /// Close the Arrow client.

@@ -17,17 +17,28 @@ typedef void LogCallback(
     uint32_t severity,
     const char *msg);
 
+typedef void ConnectionStateCallback(void* opaque, int state);
+typedef void NetworkScannerStateCallback(void* opaque, int state);
+
 typedef int LoadCACertificates(void *opaque, CACertStorage *cert_storage);
 typedef int LoadConfiguration(void *opaque, char **configuration);
-typedef void FreeConfiguration(void *opaque, char *configuration);
 typedef int LoadPaths(void *opaque, char ***paths, size_t *len);
-typedef void FreePaths(void *opaque, char **paths, size_t len);
 typedef int SaveConfiguration(void *opaque, const char *configuration);
 typedef int SaveConnectionState(void *opaque, int state);
 
 #define CONNECTION_STATE_DISCONNECTED   0
 #define CONNECTION_STATE_CONNECTED      1
 #define CONNECTION_STATE_UNAUTHORIZED   2
+
+/**
+ * Allocate a block of memory with a given size.
+ */
+void* ac__malloc(size_t size);
+
+/**
+ * Free a given block of memory.
+ */
+void ac__free(void* ptr);
 
 /**
  * Create a new Arrow client from a given config and storage. The function
@@ -60,6 +71,36 @@ void ac__arrow_client__start_blocking(ArrowClient* client);
  * Close a given Arrow client.
  */
 void ac__arrow_client__close(ArrowClient* client);
+
+/**
+ * Add a given connection state callback.
+ */
+void ac__arrow_client__add_connection_state_callback(
+    ArrowClient* client,
+    ConnectionStateCallback* callback,
+    void* opaque);
+
+/**
+ * Add a given network scanner state callback.
+ */
+void ac__arrow_client__add_network_scanner_state_callback(
+    ArrowClient* client,
+    NetworkScannerStateCallback* callback,
+    void* opaque);
+
+/**
+ * Get Arrow client UUID. The given buffer must have enough space to store at
+ * least 16 bytes.
+ */
+void ac__arrow_client__get_uuid(const ArrowClient* client, uint8_t* uuid);
+
+/**
+ * Get MAC address used for Arrow client identification. The given buffer must
+ * have enough space to store at least 6 bytes.
+ */
+void ac__arrow_client__get_mac_address(
+    const ArrowClient* client,
+    uint8_t* uuid);
 
 /**
  * Free a given join handle.
@@ -115,7 +156,7 @@ Logger* ac__logger__custom(LogCallback* callback, void* opaque);
 /**
  * Create a new syslog logger.
  */
-Logger* ac__logger__syslog();
+Logger* ac__logger__syslog(void);
 
 /**
  * Create a new stderr logger.
@@ -158,11 +199,11 @@ void ac__custom_storage_builder__set_save_configuration_func(
 /**
  * Set function for loading client configuration. If the load function responds
  * with NULL configuration, a new configuration will be created automatically.
+ * The function must allocate the configuration using `ac__malloc()`.
  */
 void ac__custom_storage_builder__set_load_configuration_func(
     CustomStorageBuilder* builder,
-    LoadConfiguration* load,
-    FreeConfiguration* free);
+    LoadConfiguration* load);
 
 /**
  * Set function for saving client connection state.
@@ -172,20 +213,20 @@ void ac__custom_storage_builder__set_save_connection_state_func(
     SaveConnectionState* func);
 
 /**
- * Set function for loading RTSP paths.
+ * Set function for loading RTSP paths. The function must allocate the paths
+ * using `ac__malloc()`.
  */
 void ac__custom_storage_builder__set_load_rtsp_paths_func(
     CustomStorageBuilder* builder,
-    LoadPaths* load,
-    FreePaths* free);
+    LoadPaths* load);
 
 /**
- * Set function for loading MJPEG paths.
+ * Set function for loading MJPEG paths. The function must allocate the paths
+ * using `ac__malloc()`.
  */
 void ac__custom_storage_builder__set_load_mjpeg_paths_func(
     CustomStorageBuilder* builder,
-    LoadPaths* load,
-    FreePaths* free);
+    LoadPaths* load);
 
 /**
  * Set function for loading CA certificates.

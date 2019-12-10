@@ -64,6 +64,7 @@ pub mod storage;
 pub mod svc_table;
 
 pub use client::{ArrowClient, ArrowClientTask};
+pub use context::ApplicationEventListener as ArrowClientEventListener;
 pub use context::ConnectionState;
 
 pub mod logger {

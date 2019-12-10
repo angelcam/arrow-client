@@ -68,42 +68,6 @@ pub trait Storage {
     ) -> Result<(), io::Error>;
 }
 
-impl<T> Storage for Box<T>
-where
-    T: Storage + ?Sized,
-{
-    fn save_configuration(&mut self, config: &PersistentConfig) -> Result<(), io::Error> {
-        self.as_mut().save_configuration(config)
-    }
-
-    fn create_configuration(&mut self) -> Result<PersistentConfig, io::Error> {
-        self.as_mut().create_configuration()
-    }
-
-    fn load_configuration(&mut self) -> Result<PersistentConfig, io::Error> {
-        self.as_mut().load_configuration()
-    }
-
-    fn save_connection_state(&mut self, state: ConnectionState) -> Result<(), io::Error> {
-        self.as_mut().save_connection_state(state)
-    }
-
-    fn load_rtsp_paths(&mut self) -> Result<Vec<String>, io::Error> {
-        self.as_mut().load_rtsp_paths()
-    }
-
-    fn load_mjpeg_paths(&mut self) -> Result<Vec<String>, io::Error> {
-        self.as_mut().load_mjpeg_paths()
-    }
-
-    fn load_ca_certificates(
-        &mut self,
-        ssl_connector_builder: &mut SslConnectorBuilder,
-    ) -> Result<(), io::Error> {
-        self.as_mut().load_ca_certificates(ssl_connector_builder)
-    }
-}
-
 /// Builder for the default client storage.
 pub struct DefaultStorageBuilder {
     config_file: String,

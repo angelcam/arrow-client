@@ -53,6 +53,15 @@ impl Display for ConnectionState {
     }
 }
 
+/// Listener for application events.
+pub trait ApplicationEventListener {
+    /// Report new connection state.
+    fn connection_state_changed(&mut self, _: ConnectionState) {}
+
+    /// Report new network scanner state.
+    fn network_scanner_state_changed(&mut self, _: bool) {}
+}
+
 /// Internal data of the application context.
 struct ApplicationContextData {
     logger: BoxLogger,
@@ -60,6 +69,7 @@ struct ApplicationContextData {
     scanning: bool,
     scan_result: ScanResult,
     connection_state: ConnectionState,
+    event_listeners: Vec<Box<dyn ApplicationEventListener + Send>>,
 }
 
 impl ApplicationContextData {
@@ -71,6 +81,7 @@ impl ApplicationContextData {
             scanning: false,
             scan_result: ScanResult::new(),
             connection_state: ConnectionState::Disconnected,
+            event_listeners: Vec::new(),
         }
     }
 
@@ -119,6 +130,31 @@ impl ApplicationContextData {
         self.connection_state = state;
 
         self.config.update_connection_state(state);
+    }
+
+    /// Add a new event listener.
+    fn add_event_listener<T>(&mut self, listener: T)
+    where
+        T: 'static + ApplicationEventListener + Send,
+    {
+        self.event_listeners.push(Box::new(listener));
+    }
+
+    /// Add all given event listeners.
+    fn add_event_listeners(
+        &mut self,
+        mut listeners: Vec<Box<dyn ApplicationEventListener + Send>>,
+    ) {
+        for listener in self.event_listeners.drain(..) {
+            listeners.push(listener);
+        }
+
+        std::mem::replace(&mut self.event_listeners, listeners);
+    }
+
+    /// Get all event listeners.
+    fn take_event_listeners(&mut self) -> Vec<Box<dyn ApplicationEventListener + Send>> {
+        std::mem::replace(&mut self.event_listeners, Vec::new())
     }
 }
 
@@ -206,7 +242,24 @@ impl ApplicationContext {
 
     /// Set the state of the network scanner thread.
     pub fn set_scanning(&mut self, scanning: bool) {
-        self.data.lock().unwrap().set_scanning(scanning)
+        let mut data = self.data.lock().unwrap();
+
+        if scanning == data.is_scanning() {
+            return;
+        }
+
+        data.set_scanning(scanning);
+
+        let mut listeners = data.take_event_listeners();
+
+        // make sure that we are not holding the mutex
+        std::mem::drop(data);
+
+        for listener in &mut listeners {
+            listener.network_scanner_state_changed(scanning);
+        }
+
+        self.data.lock().unwrap().add_event_listeners(listeners);
     }
 
     /// Check if the network scanner thread is running right now.
@@ -257,6 +310,31 @@ impl ApplicationContext {
 
     /// Set connection state.
     pub fn set_connection_state(&mut self, state: ConnectionState) {
-        self.data.lock().unwrap().set_connection_state(state)
+        let mut data = self.data.lock().unwrap();
+
+        if state == data.get_connection_state() {
+            return;
+        }
+
+        data.set_connection_state(state);
+
+        let mut listeners = data.take_event_listeners();
+
+        // make sure that we are not holding the mutex
+        std::mem::drop(data);
+
+        for listener in &mut listeners {
+            listener.connection_state_changed(state);
+        }
+
+        self.data.lock().unwrap().add_event_listeners(listeners);
+    }
+
+    /// Add a new event listener.
+    pub fn add_event_listener<T>(&mut self, listener: T)
+    where
+        T: 'static + ApplicationEventListener + Send,
+    {
+        self.data.lock().unwrap().add_event_listener(listener)
     }
 }
