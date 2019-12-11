@@ -16,6 +16,7 @@ pub mod config;
 pub mod logger;
 pub mod mem;
 pub mod storage;
+pub mod svc_table;
 
 use std::ptr;
 use std::slice;
@@ -32,6 +33,7 @@ use crate::runtime;
 use crate::client::{ArrowClient, ArrowClientTask};
 use crate::config::ConfigBuilder;
 use crate::exports::storage::DynStorage;
+use crate::exports::svc_table::NativeServiceTable;
 use crate::{ArrowClientEventListener, ConnectionState};
 
 /// Helper function.
@@ -235,6 +237,28 @@ pub unsafe extern "C" fn ac__arrow_client__get_mac_address(
     let buffer = slice::from_raw_parts_mut(buffer, mac.len());
 
     buffer.copy_from_slice(&mac);
+}
+
+/// Get client service table.
+#[no_mangle]
+pub unsafe extern "C" fn ac__arrow_client__get_service_table(
+    client: *const NativeArrowClient,
+) -> *mut NativeServiceTable {
+    let table = (&*client).client.get_service_table();
+
+    Box::into_raw(Box::new(NativeServiceTable::from(table)))
+}
+
+/// Scan the local network.
+#[no_mangle]
+pub unsafe extern "C" fn ac__arrow_client__scan_network(client: *mut NativeArrowClient) {
+    (&mut *client).client.scan_network();
+}
+
+/// Clear the service table and scan the local network again.
+#[no_mangle]
+pub unsafe extern "C" fn ac__arrow_client__rescan_network(client: *mut NativeArrowClient) {
+    (&mut *client).client.rescan_network();
 }
 
 /// Free a given join handle.

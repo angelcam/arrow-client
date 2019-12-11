@@ -33,6 +33,7 @@ use crate::config::Config;
 use crate::context::{ApplicationContext, ConnectionState};
 use crate::net::arrow::{ArrowError, ErrorKind};
 use crate::net::raw::ether::MacAddr;
+use crate::svc_table::Service;
 use crate::utils::logger::{BoxLogger, Logger};
 use crate::ArrowClientEventListener;
 
@@ -279,6 +280,8 @@ impl Future for ArrowClientTask {
 pub struct ArrowClient {
     application_context: ApplicationContext,
 
+    command_channel: Option<CommandChannel>,
+
     cancel_main_task: Option<Sender<()>>,
     cancel_nw_scan: Option<Sender<()>>,
 }
@@ -289,24 +292,24 @@ impl ArrowClient {
         let context = ApplicationContext::new(config);
 
         // create command handler
-        let (tx, rx) = cmd_handler::new(context.clone());
-
-        let cmd_channel = tx.clone();
+        let (cmd_channel, cmd_handler) = cmd_handler::new(context.clone());
 
         let (cancel_main_task, main_task_cancelled) = futures::sync::oneshot::channel();
         let (cancel_nw_scan, nw_scan_cancelled) = futures::sync::oneshot::channel();
 
         // create Arrow client main task
-        let arrow_main_task = ArrowMainTask::new(context.clone(), cmd_channel)
+        let arrow_main_task = ArrowMainTask::new(context.clone(), cmd_channel.clone())
             .select(main_task_cancelled.map_err(|_| ()))
             .then(|_| Ok(()));
 
         let interval = Duration::from_millis(1000);
 
+        let nw_scan_cmd_channel = cmd_channel.clone();
+
         // schedule periodic network scan
         let periodic_network_scan = Interval::new(Instant::now() + interval, interval)
             .for_each(move |_| {
-                tx.send(Command::PeriodicNetworkScan);
+                nw_scan_cmd_channel.send(Command::PeriodicNetworkScan);
 
                 Ok(())
             })
@@ -317,7 +320,7 @@ impl ArrowClient {
         let ctx = context.clone();
 
         let task = futures::future::lazy(move || {
-            tokio::spawn(rx);
+            tokio::spawn(cmd_handler);
             tokio::spawn(periodic_network_scan);
 
             let mut logger = ctx.get_logger();
@@ -338,6 +341,8 @@ impl ArrowClient {
 
         let arrow_client = Self {
             application_context: context,
+
+            command_channel: Some(cmd_channel),
 
             cancel_main_task: Some(cancel_main_task),
             cancel_nw_scan: Some(cancel_nw_scan),
@@ -366,12 +371,42 @@ impl ArrowClient {
         self.application_context.is_scanning()
     }
 
+    /// Get current service table.
+    pub fn get_service_table(&self) -> Vec<(u16, Service)> {
+        self.application_context
+            .get_service_table()
+            .visible()
+            .filter_map(|(id, svc)| {
+                if svc.is_control() {
+                    None
+                } else {
+                    Some((id, svc))
+                }
+            })
+            .collect()
+    }
+
     /// Add a new event listener.
     pub fn add_event_listener<T>(&mut self, listener: T)
     where
         T: 'static + ArrowClientEventListener + Send,
     {
         self.application_context.add_event_listener(listener)
+    }
+
+    /// Scan the local network.
+    pub fn scan_network(&mut self) {
+        if let Some(channel) = self.command_channel.as_ref() {
+            channel.send(Command::ScanNetwork);
+        }
+    }
+
+    /// Clear the service table and scan the local network again.
+    pub fn rescan_network(&mut self) {
+        if let Some(channel) = self.command_channel.as_ref() {
+            channel.send(Command::ResetServiceTable);
+            channel.send(Command::ScanNetwork);
+        }
     }
 
     /// Close the Arrow client.
@@ -383,6 +418,9 @@ impl ArrowClient {
         if let Some(cancel) = self.cancel_main_task.take() {
             cancel.send(()).unwrap_or_default()
         }
+
+        // we need to drop also the command channel in order to stop the related background task
+        self.command_channel = None;
     }
 }
 

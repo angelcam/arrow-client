@@ -9,6 +9,26 @@ typedef void Storage;
 typedef void CustomStorageBuilder;
 typedef void DefaultStorageBuilder;
 typedef void CACertStorage;
+typedef void ServiceTable;
+typedef void Service;
+
+#define SEVERITY_DEBUG      0
+#define SEVERITY_INFO       1
+#define SEVERITY_WARN       2
+#define SEVERITY_ERROR      3
+
+#define CONNECTION_STATE_DISCONNECTED   0
+#define CONNECTION_STATE_CONNECTED      1
+#define CONNECTION_STATE_UNAUTHORIZED   2
+
+#define SERVICE_TYPE_RTSP               0x0001
+#define SERVICE_TYPE_RTSP_LOCKED        0x0002
+#define SERVICE_TYPE_RTSP_UNKNOWN       0x0003
+#define SERVICE_TYPE_RTSP_UNSUPPORTED   0x0004
+#define SERVICE_TYPE_HTTP               0x0005
+#define SERVICE_TYPE_MJPEG              0x0006
+#define SERVICE_TYPE_MJPEG_LOCKED       0x0007
+#define SERVICE_TYPE_TCP                0xffff
 
 typedef void LogCallback(
     void *opaque,
@@ -25,10 +45,6 @@ typedef int LoadConfiguration(void *opaque, char **configuration);
 typedef int LoadPaths(void *opaque, char ***paths, size_t *len);
 typedef int SaveConfiguration(void *opaque, const char *configuration);
 typedef int SaveConnectionState(void *opaque, int state);
-
-#define CONNECTION_STATE_DISCONNECTED   0
-#define CONNECTION_STATE_CONNECTED      1
-#define CONNECTION_STATE_UNAUTHORIZED   2
 
 /**
  * Allocate a block of memory with a given size.
@@ -101,6 +117,21 @@ void ac__arrow_client__get_uuid(const ArrowClient* client, uint8_t* uuid);
 void ac__arrow_client__get_mac_address(
     const ArrowClient* client,
     uint8_t* uuid);
+
+/**
+ * Get client service table.
+ */
+ServiceTable* ac__arrow_client__get_service_table(const ArrowClient* client);
+
+/**
+ * Scan the local network.
+ */
+void ac__arrow_client__scan_network(ArrowClient* client);
+
+/**
+ * Clear the service table and scan the local network again.
+ */
+void ac__arrow_client__rescan_network(ArrowClient* client);
 
 /**
  * Free a given join handle.
@@ -335,5 +366,60 @@ int ac__ca_cert_storage__load_pem(
     CACertStorage* cert_storage,
     const uint8_t* pem,
     size_t size);
+
+/**
+ * Free the service table.
+ */
+void ac__service_table__free(ServiceTable* table);
+
+/**
+ * Get number of services in the table.
+ */
+size_t ac__service_table__get_service_count(const ServiceTable* table);
+
+/**
+ * Get service at a given index.
+ */
+const Service* ac__service_table__get_service(
+    const ServiceTable* table,
+    size_t index);
+
+/**
+ * Get service ID.
+ */
+uint16_t ac__service__get_id(const Service* service);
+
+/**
+ * Get service type.
+ */
+uint16_t ac__service__get_type(const Service* service);
+
+/**
+ * Get service MAC address. The given buffer must have enough space to store at
+ * least 6 bytes.
+ */
+void ac__service__get_mac_address(const Service* service, uint8_t* buffer);
+
+/**
+ * Get version of the service IP address.
+ */
+uint8_t ac__service__get_ip_version(const Service* service);
+
+/**
+ * Get service IP address. The given buffer must have enough space to store at
+ * least 4 bytes for IPv4 address or 16 bytes for IPv6 address. Version of the
+ * IP address is returned.
+ */
+uint8_t ac__service__get_ip_address(const Service* service, uint8_t* buffer);
+
+/**
+ * Get service port.
+ */
+uint16_t ac__service__get_port(const Service* service);
+
+/**
+ * Get service path/endpoint (may be NULL).
+ */
+const char* ac__service__get_path(const Service* service);
 
 #endif /* ARROW_CLIENT_H */
