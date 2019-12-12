@@ -105,12 +105,7 @@ impl NetworkScannerStateListener {
 
 impl ArrowClientEventListener for NetworkScannerStateListener {
     fn network_scanner_state_changed(&mut self, scanning: bool) {
-        let s = match scanning {
-            true => 1,
-            false => 0,
-        };
-
-        unsafe { (self.callback)(self.opaque, s) }
+        unsafe { (self.callback)(self.opaque, c_int::from(scanning)) }
     }
 }
 

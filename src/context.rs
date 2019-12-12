@@ -58,7 +58,7 @@ pub trait ApplicationEventListener {
     /// Report new connection state.
     fn connection_state_changed(&mut self, _: ConnectionState) {}
 
-    /// Report new network scanner state.
+    /// Report new network scanner state (`true` means that the network scanner is running).
     fn network_scanner_state_changed(&mut self, _: bool) {}
 }
 
