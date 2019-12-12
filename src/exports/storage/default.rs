@@ -120,6 +120,7 @@ pub unsafe extern "C" fn ac__default_storage_builder__build(
     builder: *mut DefaultStorageBuilder,
 ) -> *mut DynStorage {
     let builder = Box::from_raw(builder);
+    let storage = DynStorage::new(builder.build());
 
-    Box::into_raw(Box::new(builder.build()))
+    Box::into_raw(Box::new(storage))
 }

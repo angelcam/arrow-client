@@ -9,6 +9,26 @@ typedef void Storage;
 typedef void CustomStorageBuilder;
 typedef void DefaultStorageBuilder;
 typedef void CACertStorage;
+typedef void ServiceTable;
+typedef void Service;
+
+#define SEVERITY_DEBUG      0
+#define SEVERITY_INFO       1
+#define SEVERITY_WARN       2
+#define SEVERITY_ERROR      3
+
+#define CONNECTION_STATE_DISCONNECTED   0
+#define CONNECTION_STATE_CONNECTED      1
+#define CONNECTION_STATE_UNAUTHORIZED   2
+
+#define SERVICE_TYPE_RTSP               0x0001
+#define SERVICE_TYPE_RTSP_LOCKED        0x0002
+#define SERVICE_TYPE_RTSP_UNKNOWN       0x0003
+#define SERVICE_TYPE_RTSP_UNSUPPORTED   0x0004
+#define SERVICE_TYPE_HTTP               0x0005
+#define SERVICE_TYPE_MJPEG              0x0006
+#define SERVICE_TYPE_MJPEG_LOCKED       0x0007
+#define SERVICE_TYPE_TCP                0xffff
 
 typedef void LogCallback(
     void *opaque,
@@ -17,17 +37,24 @@ typedef void LogCallback(
     uint32_t severity,
     const char *msg);
 
+typedef void ConnectionStateCallback(void* opaque, int state);
+typedef void NetworkScannerStateCallback(void* opaque, int state);
+
 typedef int LoadCACertificates(void *opaque, CACertStorage *cert_storage);
 typedef int LoadConfiguration(void *opaque, char **configuration);
-typedef void FreeConfiguration(void *opaque, char *configuration);
 typedef int LoadPaths(void *opaque, char ***paths, size_t *len);
-typedef void FreePaths(void *opaque, char **paths, size_t len);
 typedef int SaveConfiguration(void *opaque, const char *configuration);
 typedef int SaveConnectionState(void *opaque, int state);
 
-#define CONNECTION_STATE_DISCONNECTED   0
-#define CONNECTION_STATE_CONNECTED      1
-#define CONNECTION_STATE_UNAUTHORIZED   2
+/**
+ * Allocate a block of memory with a given size.
+ */
+void* ac__malloc(size_t size);
+
+/**
+ * Free a given block of memory.
+ */
+void ac__free(void* ptr);
 
 /**
  * Create a new Arrow client from a given config and storage. The function
@@ -60,6 +87,51 @@ void ac__arrow_client__start_blocking(ArrowClient* client);
  * Close a given Arrow client.
  */
 void ac__arrow_client__close(ArrowClient* client);
+
+/**
+ * Add a given connection state callback.
+ */
+void ac__arrow_client__add_connection_state_callback(
+    ArrowClient* client,
+    ConnectionStateCallback* callback,
+    void* opaque);
+
+/**
+ * Add a given network scanner state callback.
+ */
+void ac__arrow_client__add_network_scanner_state_callback(
+    ArrowClient* client,
+    NetworkScannerStateCallback* callback,
+    void* opaque);
+
+/**
+ * Get Arrow client UUID. The given buffer must have enough space to store at
+ * least 16 bytes.
+ */
+void ac__arrow_client__get_uuid(const ArrowClient* client, uint8_t* uuid);
+
+/**
+ * Get MAC address used for Arrow client identification. The given buffer must
+ * have enough space to store at least 6 bytes.
+ */
+void ac__arrow_client__get_mac_address(
+    const ArrowClient* client,
+    uint8_t* uuid);
+
+/**
+ * Get client service table.
+ */
+ServiceTable* ac__arrow_client__get_service_table(const ArrowClient* client);
+
+/**
+ * Scan the local network.
+ */
+void ac__arrow_client__scan_network(ArrowClient* client);
+
+/**
+ * Clear the service table and scan the local network again.
+ */
+void ac__arrow_client__rescan_network(ArrowClient* client);
 
 /**
  * Free a given join handle.
@@ -115,7 +187,7 @@ Logger* ac__logger__custom(LogCallback* callback, void* opaque);
 /**
  * Create a new syslog logger.
  */
-Logger* ac__logger__syslog();
+Logger* ac__logger__syslog(void);
 
 /**
  * Create a new stderr logger.
@@ -158,11 +230,11 @@ void ac__custom_storage_builder__set_save_configuration_func(
 /**
  * Set function for loading client configuration. If the load function responds
  * with NULL configuration, a new configuration will be created automatically.
+ * The function must allocate the configuration using `ac__malloc()`.
  */
 void ac__custom_storage_builder__set_load_configuration_func(
     CustomStorageBuilder* builder,
-    LoadConfiguration* load,
-    FreeConfiguration* free);
+    LoadConfiguration* load);
 
 /**
  * Set function for saving client connection state.
@@ -172,20 +244,20 @@ void ac__custom_storage_builder__set_save_connection_state_func(
     SaveConnectionState* func);
 
 /**
- * Set function for loading RTSP paths.
+ * Set function for loading RTSP paths. The function must allocate the paths
+ * using `ac__malloc()`.
  */
 void ac__custom_storage_builder__set_load_rtsp_paths_func(
     CustomStorageBuilder* builder,
-    LoadPaths* load,
-    FreePaths* free);
+    LoadPaths* load);
 
 /**
- * Set function for loading MJPEG paths.
+ * Set function for loading MJPEG paths. The function must allocate the paths
+ * using `ac__malloc()`.
  */
 void ac__custom_storage_builder__set_load_mjpeg_paths_func(
     CustomStorageBuilder* builder,
-    LoadPaths* load,
-    FreePaths* free);
+    LoadPaths* load);
 
 /**
  * Set function for loading CA certificates.
@@ -294,5 +366,60 @@ int ac__ca_cert_storage__load_pem(
     CACertStorage* cert_storage,
     const uint8_t* pem,
     size_t size);
+
+/**
+ * Free the service table.
+ */
+void ac__service_table__free(ServiceTable* table);
+
+/**
+ * Get number of services in the table.
+ */
+size_t ac__service_table__get_service_count(const ServiceTable* table);
+
+/**
+ * Get service at a given index.
+ */
+const Service* ac__service_table__get_service(
+    const ServiceTable* table,
+    size_t index);
+
+/**
+ * Get service ID.
+ */
+uint16_t ac__service__get_id(const Service* service);
+
+/**
+ * Get service type.
+ */
+uint16_t ac__service__get_type(const Service* service);
+
+/**
+ * Get service MAC address. The given buffer must have enough space to store at
+ * least 6 bytes.
+ */
+void ac__service__get_mac_address(const Service* service, uint8_t* buffer);
+
+/**
+ * Get version of the service IP address.
+ */
+uint8_t ac__service__get_ip_version(const Service* service);
+
+/**
+ * Get service IP address. The given buffer must have enough space to store at
+ * least 4 bytes for IPv4 address or 16 bytes for IPv6 address. Version of the
+ * IP address is returned.
+ */
+uint8_t ac__service__get_ip_address(const Service* service, uint8_t* buffer);
+
+/**
+ * Get service port.
+ */
+uint16_t ac__service__get_port(const Service* service);
+
+/**
+ * Get service path/endpoint (may be NULL).
+ */
+const char* ac__service__get_path(const Service* service);
 
 #endif /* ARROW_CLIENT_H */

@@ -40,16 +40,25 @@ type LogCallback = extern "C" fn(
 struct CallbackLoggerContext {
     callback: LogCallback,
     opaque: *mut c_void,
+    level: Severity,
 }
 
 impl CallbackLoggerContext {
     /// Create a new context.
     fn new(callback: LogCallback, opaque: *mut c_void) -> Self {
-        Self { callback, opaque }
+        Self {
+            callback,
+            opaque,
+            level: Severity::INFO,
+        }
     }
 
     /// Log message.
     fn log(&self, file: &str, line: u32, severity: Severity, msg: Arguments) {
+        if severity < self.level {
+            return;
+        }
+
         let msg = std::fmt::format(msg);
 
         let file = CString::new(file).unwrap();
@@ -89,10 +98,16 @@ impl Logger for CallbackLogger {
         self.context.lock().unwrap().log(file, line, severity, msg)
     }
 
-    fn set_level(&mut self, _: Severity) {}
+    fn set_level(&mut self, level: Severity) {
+        let mut context = self.context.lock().unwrap();
+
+        context.level = level;
+    }
 
     fn get_level(&self) -> Severity {
-        Severity::DEBUG
+        let context = self.context.lock().unwrap();
+
+        context.level
     }
 }
 
