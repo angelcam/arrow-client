@@ -267,10 +267,21 @@ impl ConfigBuilder {
 
 /// Type of the logger backend that should be used.
 enum LoggerType {
+    #[cfg(target_os = "linux")]
     Syslog,
     Stderr,
     StderrPretty,
     FileLogger,
+}
+
+impl Default for LoggerType {
+    fn default() -> Self {
+        if cfg!(target_os = "linux") {
+            Self::Syslog
+        } else {
+            Self::Stderr
+        }
+    }
 }
 
 /// Builder for application configuration.
@@ -304,7 +315,7 @@ impl ConfigParser {
             arrow_svc_addr: String::new(),
             ca_certificates: Vec::new(),
             services: Vec::new(),
-            logger_type: LoggerType::Syslog,
+            logger_type: LoggerType::default(),
             config_file: CONFIG_FILE.to_string(),
             config_file_skel: CONFIG_FILE_SKELETON.to_string(),
             identity_file: None,
@@ -325,6 +336,7 @@ impl ConfigParser {
     /// Create a new logger.
     fn create_logger(&self) -> Result<BoxLogger, ConfigError> {
         let logger = match self.logger_type {
+            #[cfg(target_os = "linux")]
             LoggerType::Syslog => BoxLogger::new(Syslog::new()),
             LoggerType::Stderr => BoxLogger::new(StderrLogger::new(false)),
             LoggerType::StderrPretty => BoxLogger::new(StderrLogger::new(true)),

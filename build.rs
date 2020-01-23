@@ -19,8 +19,14 @@ use std::env;
 use cc::Build;
 
 fn main() {
+    let devices_src = if cfg!(target_os = "linux") {
+        "src/net/raw/devices-linux.c"
+    } else {
+        panic!("Unsupported OS")
+    };
+
     Build::new()
-        .file("src/net/raw/devices.c")
+        .file(devices_src)
         .compile("net_devices");
 
     if cfg!(feature = "discovery") {
