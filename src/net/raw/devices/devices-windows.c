@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 click2stream, Inc.
+ * Copyright 2020 Angelcam, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ static net_device* get_device_info(const IP_ADAPTER_ADDRESSES* adapter) {
     }
 
     res->name = string_dup(adapter->AdapterName);
-    
+
     memcpy(res->mac_address, adapter->PhysicalAddress, MAC_ADDR_SIZE);
 
     ipv4_address = find_ipv4_unicast_address(adapter);
