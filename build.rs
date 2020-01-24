@@ -20,12 +20,16 @@ use cc::Build;
 
 fn main() {
     let devices_src = if cfg!(target_os = "linux") {
-        "src/net/raw/devices-linux.c"
+        "src/net/raw/devices/devices-linux.c"
+    } else if cfg!(target_os = "windows") {
+        "src/net/raw/devices/devices-windows.c"
     } else {
         panic!("Unsupported OS")
     };
 
     Build::new()
+        .include("src/net/raw/devices")
+        .file("src/net/raw/devices/devices-common.c")
         .file(devices_src)
         .compile("net_devices");
 

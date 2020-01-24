@@ -47,6 +47,7 @@ use crate::storage::{DefaultStorage, Storage};
 use crate::svc_table::{SharedServiceTable, SharedServiceTableRef};
 use crate::utils::logger::file::FileLogger;
 use crate::utils::logger::stderr::StderrLogger;
+#[cfg(target_os = "linux")]
 use crate::utils::logger::syslog::Syslog;
 use crate::utils::logger::{BoxLogger, DummyLogger, Logger, Severity};
 use crate::utils::RuntimeError;
@@ -275,12 +276,14 @@ enum LoggerType {
 }
 
 impl Default for LoggerType {
+    #[cfg(target_os = "linux")]
     fn default() -> Self {
-        if cfg!(target_os = "linux") {
-            Self::Syslog
-        } else {
-            Self::Stderr
-        }
+        Self::Syslog
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn default() -> Self {
+        Self::Stderr
     }
 }
 
