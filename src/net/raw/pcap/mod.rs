@@ -63,14 +63,14 @@ lazy_static! {
     static ref TC: Mutex<()> = Mutex::new(());
 }
 
-/// TODO
+/// PCAP error.
 #[derive(Debug, Clone)]
 pub struct PcapError {
     msg: String,
 }
 
 impl PcapError {
-    ///
+    /// Create a new error with a given error message.
     pub fn new<T>(msg: T) -> Self
     where
         T: ToString,
@@ -93,16 +93,16 @@ impl Error for PcapError {
     }
 }
 
-///
+/// Common result type for this module.
 pub type Result<T> = std::result::Result<T, PcapError>;
 
-///
+/// Capture builder.
 struct CaptureBuilder {
     inner: Capture,
 }
 
 impl CaptureBuilder {
-    ///
+    /// Create a new capture builder for a given device.
     fn new(device: &str) -> Self {
         let device = CString::new(device).unwrap();
 
@@ -117,7 +117,7 @@ impl CaptureBuilder {
         Self { inner: capture }
     }
 
-    ///
+    /// Set maximum packet length (longer packets will be truncated).
     pub fn max_packet_length(self, max_packet_length: usize) -> Self {
         unsafe {
             pcap_wrapper__set_max_packet_length(self.inner.ptr, max_packet_length as _);
@@ -126,7 +126,8 @@ impl CaptureBuilder {
         self
     }
 
-    ///
+    /// Set read timeout in milliseconds (i.e. the amount of time that the `read_packet()` method
+    /// can block).
     pub fn read_timeout(self, read_timeout: u64) -> Self {
         unsafe {
             pcap_wrapper__set_read_timeout(self.inner.ptr, read_timeout);
@@ -135,7 +136,7 @@ impl CaptureBuilder {
         self
     }
 
-    ///
+    /// Set packet filter.
     pub fn filter(self, filter: Option<&str>) -> Self {
         let filter = filter.map(|s| CString::new(s).unwrap());
 
@@ -150,7 +151,7 @@ impl CaptureBuilder {
         self
     }
 
-    ///
+    /// Activate the capture.
     pub fn activate(self) -> Result<Capture> {
         let _ = TC.lock().unwrap();
 
@@ -164,18 +165,19 @@ impl CaptureBuilder {
     }
 }
 
-///
+/// Capture handle that can be used for reading and writing raw packets.
 struct Capture {
     ptr: *mut c_void,
 }
 
 impl Capture {
-    ///
+    /// Get a builder.
     pub fn builder(device: &str) -> CaptureBuilder {
         CaptureBuilder::new(device)
     }
 
-    ///
+    /// Read one packet. The packet will be appended to a given buffer. True will be returned if a
+    /// packet was read, false will be returned in case of timeout.
     pub fn read_packet(&mut self, buffer: &mut BytesMut) -> Result<bool> {
         let buffer_ptr: *mut BytesMut = buffer;
 
@@ -189,7 +191,7 @@ impl Capture {
         }
     }
 
-    ///
+    /// Write a given packet to the underlying network device.
     pub fn write_packet(&mut self, packet: &[u8]) -> Result<()> {
         let data = packet.as_ptr();
         let size = packet.len();
@@ -203,7 +205,7 @@ impl Capture {
         }
     }
 
-    ///
+    /// Get last error.
     fn get_last_error(&self) -> PcapError {
         unsafe {
             let ptr = pcap_wrapper__get_last_error(self.ptr);
@@ -220,6 +222,7 @@ impl Drop for Capture {
     }
 }
 
+/// Helper callback for getting packet data.
 unsafe extern "C" fn read_packet_callback(
     opaque: *mut c_void,
     data: *const u8,
