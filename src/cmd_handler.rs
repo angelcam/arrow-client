@@ -84,7 +84,7 @@ struct CommandHandlerContext {
     app_context: ApplicationContext,
     logger: BoxLogger,
     cmd_sender: CommandSender,
-    last_nw_scan: Instant,
+    last_nw_scan: Option<Instant>,
     scanner: Option<JoinHandle<()>>,
 }
 
@@ -93,13 +93,11 @@ impl CommandHandlerContext {
     fn new(app_context: ApplicationContext, cmd_sender: CommandSender) -> Self {
         let logger = app_context.get_logger();
 
-        let now = Instant::now();
-
         Self {
             app_context,
             logger,
             cmd_sender,
-            last_nw_scan: now - NETWORK_SCAN_PERIOD,
+            last_nw_scan: None,
             scanner: None,
         }
     }
@@ -128,7 +126,12 @@ impl CommandHandlerContext {
 
     /// Trigger periodic netork scan.
     fn periodic_network_scan(&mut self) {
-        if self.last_nw_scan.elapsed() >= NETWORK_SCAN_PERIOD {
+        let time_since_last_nw_scan = self
+            .last_nw_scan
+            .map(|i| i.elapsed())
+            .unwrap_or(NETWORK_SCAN_PERIOD);
+
+        if time_since_last_nw_scan >= NETWORK_SCAN_PERIOD {
             self.scan_network();
         }
     }
@@ -168,7 +171,7 @@ impl CommandHandlerContext {
             }
         }
 
-        self.last_nw_scan = Instant::now();
+        self.last_nw_scan = Some(Instant::now());
     }
 }
 
