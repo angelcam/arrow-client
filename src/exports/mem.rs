@@ -31,8 +31,10 @@ pub unsafe extern "C" fn ac__malloc(size: size_t) -> *mut c_void {
 /// Free a given block of memory.
 #[no_mangle]
 pub unsafe extern "C" fn ac__free(ptr: *mut c_void) {
+    let ptr = ptr as *mut u8;
+
     let layout_size = std::mem::size_of::<Layout>() as isize;
-    let block = ptr.offset(-layout_size) as *mut u8;
+    let block = ptr.offset(-layout_size);
     let layout = *(block as *mut Layout);
 
     std::alloc::dealloc(block, layout);

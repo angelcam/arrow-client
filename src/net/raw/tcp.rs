@@ -77,9 +77,8 @@ impl TcpPacket {
             ))
         } else {
             let ptr = data.as_ptr();
-            let ptr = ptr as *const RawTcpPacketHeader;
 
-            let rh = unsafe { &*ptr };
+            let rh = unsafe { &*(ptr as *const RawTcpPacketHeader) };
 
             let doffset_flags = u16::from_be(rh.doffset_flags);
             let doffset = doffset_flags >> 12;

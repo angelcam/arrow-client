@@ -95,9 +95,8 @@ impl Ipv4PacketHeader {
             ))
         } else {
             let ptr = data.as_ptr();
-            let ptr = ptr as *const RawIpv4PacketHeader;
 
-            let rh = unsafe { &*ptr };
+            let rh = unsafe { &*(ptr as *const RawIpv4PacketHeader) };
 
             let flags_foffset = u16::from_be(rh.flags_foffset);
             let ihl = rh.vihl & 0x0f;
