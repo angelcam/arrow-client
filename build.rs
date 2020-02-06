@@ -12,17 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate cc;
-
 use std::env;
 
 use cc::Build;
 
 fn main() {
-    let devices_src = if cfg!(target_os = "linux") {
-        "src/net/raw/devices/devices-linux.c"
+    let platform = if cfg!(target_os = "linux") {
+        "linux"
     } else if cfg!(target_os = "windows") {
-        "src/net/raw/devices/devices-windows.c"
+        "windows"
     } else {
         panic!("Unsupported OS")
     };
@@ -30,11 +28,32 @@ fn main() {
     Build::new()
         .include("src/net/raw/devices")
         .file("src/net/raw/devices/devices-common.c")
-        .file(devices_src)
+        .file(&format!("src/net/raw/devices/devices-{}.c", platform))
         .compile("net_devices");
 
     if cfg!(feature = "discovery") {
-        link("pcap");
+        let mut wrapper_builder = Build::new();
+
+        if cfg!(target_os = "windows") {
+            let lib = vcpkg::Config::new()
+                .cargo_metadata(true)
+                .emit_includes(false)
+                .copy_dlls(false)
+                .find_package("winpcap")
+                .unwrap();
+
+            for include in lib.include_paths {
+                wrapper_builder.include(include);
+            }
+        } else {
+            link("pcap");
+        }
+
+        wrapper_builder
+            .include("src/net/raw/pcap")
+            .file("src/net/raw/pcap/wrapper-common.c")
+            .file(&format!("src/net/raw/pcap/wrapper-{}.c", platform))
+            .compile("pcap_wrapper");
     }
 }
 

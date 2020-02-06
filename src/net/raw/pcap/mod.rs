@@ -1,0 +1,336 @@
+// Copyright 2015 click2stream, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! PCAP network scanner definitions.
+
+use std::fmt;
+use std::ptr;
+use std::slice;
+use std::thread;
+
+use std::error::Error;
+use std::ffi::{CStr, CString};
+use std::fmt::{Display, Formatter};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use bytes::{Bytes, BytesMut};
+
+use libc::{c_char, c_int, c_void, size_t};
+
+use crate::net::raw::ether::packet::EtherPacket;
+
+type PacketCallback = unsafe extern "C" fn(
+    opaque: *mut c_void,
+    data: *const u8,
+    data_length: size_t,
+    packet_length: size_t,
+);
+
+extern "C" {
+    fn pcap_wrapper__new(device: *const c_char) -> *mut c_void;
+    fn pcap_wrapper__free(wrapper: *mut c_void);
+
+    fn pcap_wrapper__get_last_error(wrapper: *const c_void) -> *const c_char;
+
+    fn pcap_wrapper__set_filter(wrapper: *mut c_void, filter: *const c_char) -> c_int;
+    fn pcap_wrapper__set_max_packet_length(wrapper: *mut c_void, max_packet_length: size_t);
+    fn pcap_wrapper__set_read_timeout(wrapper: *mut c_void, read_timeout: u64);
+
+    fn pcap_wrapper__open(wrapper: *mut c_void) -> c_int;
+
+    fn pcap_wrapper__read_packet(
+        wrapper: *mut c_void,
+        callback: PacketCallback,
+        opaque: *mut c_void,
+    ) -> c_int;
+    fn pcap_wrapper__write_packet(wrapper: *mut c_void, data: *const u8, size: size_t) -> c_int;
+}
+
+lazy_static! {
+    /// PCAP context for synchronizing thread unsafe calls.
+    static ref TC: Mutex<()> = Mutex::new(());
+}
+
+/// TODO
+#[derive(Debug, Clone)]
+pub struct PcapError {
+    msg: String,
+}
+
+impl PcapError {
+    ///
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
+    }
+}
+
+impl Display for PcapError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.write_str(&self.msg)
+    }
+}
+
+impl Error for PcapError {
+    fn description(&self) -> &str {
+        &self.msg
+    }
+}
+
+///
+pub type Result<T> = std::result::Result<T, PcapError>;
+
+///
+struct CaptureBuilder {
+    inner: Capture,
+}
+
+impl CaptureBuilder {
+    ///
+    fn new(device: &str) -> Self {
+        let device = CString::new(device).unwrap();
+
+        let ptr = unsafe { pcap_wrapper__new(device.as_ptr()) };
+
+        if ptr.is_null() {
+            panic!("Unable to allocate PCAP capture device");
+        }
+
+        let capture = Capture { ptr };
+
+        Self { inner: capture }
+    }
+
+    ///
+    pub fn max_packet_length(self, max_packet_length: usize) -> Self {
+        unsafe {
+            pcap_wrapper__set_max_packet_length(self.inner.ptr, max_packet_length as _);
+        }
+
+        self
+    }
+
+    ///
+    pub fn read_timeout(self, read_timeout: u64) -> Self {
+        unsafe {
+            pcap_wrapper__set_read_timeout(self.inner.ptr, read_timeout);
+        }
+
+        self
+    }
+
+    ///
+    pub fn filter(self, filter: Option<&str>) -> Self {
+        let filter = filter.map(|s| CString::new(s).unwrap());
+
+        let filter_ptr = filter.as_ref().map(|f| f.as_ptr()).unwrap_or(ptr::null());
+
+        let ret = unsafe { pcap_wrapper__set_filter(self.inner.ptr, filter_ptr) };
+
+        if ret != 0 {
+            panic!("Unable to allocate a packet filter");
+        }
+
+        self
+    }
+
+    ///
+    pub fn activate(self) -> Result<Capture> {
+        let _ = TC.lock().unwrap();
+
+        let ret = unsafe { pcap_wrapper__open(self.inner.ptr) };
+
+        if ret == 0 {
+            Ok(self.inner)
+        } else {
+            Err(self.inner.get_last_error())
+        }
+    }
+}
+
+///
+struct Capture {
+    ptr: *mut c_void,
+}
+
+impl Capture {
+    ///
+    pub fn builder(device: &str) -> CaptureBuilder {
+        CaptureBuilder::new(device)
+    }
+
+    ///
+    pub fn read_packet(&mut self, buffer: &mut BytesMut) -> Result<bool> {
+        let buffer_ptr: *mut BytesMut = buffer;
+
+        let ret =
+            unsafe { pcap_wrapper__read_packet(self.ptr, read_packet_callback, buffer_ptr as _) };
+
+        if ret >= 0 {
+            Ok(ret > 0)
+        } else {
+            Err(self.get_last_error())
+        }
+    }
+
+    ///
+    pub fn write_packet(&mut self, packet: &[u8]) -> Result<()> {
+        let data = packet.as_ptr();
+        let size = packet.len();
+
+        let ret = unsafe { pcap_wrapper__write_packet(self.ptr, data, size as _) };
+
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err(self.get_last_error())
+        }
+    }
+
+    ///
+    fn get_last_error(&self) -> PcapError {
+        unsafe {
+            let ptr = pcap_wrapper__get_last_error(self.ptr);
+            let msg = CStr::from_ptr(ptr);
+
+            PcapError::new(msg.to_string_lossy())
+        }
+    }
+}
+
+impl Drop for Capture {
+    fn drop(&mut self) {
+        unsafe { pcap_wrapper__free(self.ptr) }
+    }
+}
+
+unsafe extern "C" fn read_packet_callback(
+    opaque: *mut c_void,
+    data: *const u8,
+    data_length: size_t,
+    _: size_t,
+) {
+    let buffer_ptr = opaque as *mut BytesMut;
+
+    let data = slice::from_raw_parts(data, data_length as _);
+
+    (*buffer_ptr).extend_from_slice(data);
+}
+
+/// PCAP packet scanner (implementation of a send-receive service).
+pub struct Scanner {
+    device: String,
+}
+
+impl Scanner {
+    /// Create a new PCAP scanner for a given device.
+    pub fn new(device: &str) -> Self {
+        Self {
+            device: device.to_string(),
+        }
+    }
+
+    /// Send all packets from a given iterator and receive all packets
+    /// according to a given filter.
+    pub fn sr<F>(
+        &mut self,
+        filter: &str,
+        packet_generator: F,
+        read_timeout: Duration,
+        stop_after: Option<Duration>,
+    ) -> Result<Vec<EtherPacket>>
+    where
+        F: FnMut() -> Option<Bytes>,
+    {
+        let device = self.device.clone();
+        let filter = filter.to_string();
+
+        let t = thread::spawn(move || packet_listener(&device, &filter, read_timeout, stop_after));
+
+        send_packets(&self.device, packet_generator)?;
+
+        t.join().unwrap()
+    }
+}
+
+/// Listen for incoming packets matching a given filter until no packets are read for a given
+/// soft timeout or until a given hard timeout expires.
+///
+/// # Arguments
+/// * `device` - device name
+/// * `filter` - packet filter expression
+/// * `packet_timeout` - a soft timeout that will stop the listener if no packet is received for
+///   given duration
+/// * `total_timeout` - a hard timeout that will stop the listener when it expires
+fn packet_listener(
+    device: &str,
+    filter: &str,
+    packet_timeout: Duration,
+    total_timeout: Option<Duration>,
+) -> Result<Vec<EtherPacket>> {
+    let mut cap = Capture::builder(device)
+        .max_packet_length(65_536)
+        .read_timeout(100)
+        .filter(Some(filter))
+        .activate()?;
+
+    let start_time = Instant::now();
+
+    let mut last_packet_time = Instant::now();
+    let mut buffer = BytesMut::new();
+    let mut res = Vec::new();
+
+    loop {
+        if cap.read_packet(&mut buffer)? {
+            last_packet_time = Instant::now();
+
+            if let Ok(packet) = EtherPacket::parse(buffer.as_ref()) {
+                res.push(packet);
+            }
+
+            buffer.clear();
+        }
+
+        if let Some(timeout) = total_timeout {
+            if start_time.elapsed() > timeout {
+                break;
+            }
+        }
+
+        if last_packet_time.elapsed() > packet_timeout {
+            break;
+        }
+    }
+
+    Ok(res)
+}
+
+/// Send all packets using a given network device.
+fn send_packets<F>(device: &str, mut packet_generator: F) -> Result<()>
+where
+    F: FnMut() -> Option<Bytes>,
+{
+    let mut cap = Capture::builder(device).activate()?;
+
+    while let Some(pkt) = packet_generator() {
+        cap.write_packet(pkt.as_ref())?;
+    }
+
+    Ok(())
+}
