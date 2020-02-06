@@ -22,7 +22,10 @@ use libc::{c_char, c_int, c_void, size_t};
 
 use crate::utils::logger::file::FileLogger;
 use crate::utils::logger::stderr::StderrLogger;
+
+#[cfg(target_os = "linux")]
 use crate::utils::logger::syslog::Syslog;
+
 use crate::utils::logger::{BoxLogger, Logger, Severity};
 
 use crate::exports::cstr_to_str;
@@ -123,6 +126,7 @@ pub unsafe extern "C" fn ac__logger__custom(
 }
 
 /// Create a new syslog logger.
+#[cfg(target_os = "linux")]
 #[no_mangle]
 pub unsafe extern "C" fn ac__logger__syslog() -> *mut BoxLogger {
     Box::into_raw(Box::new(BoxLogger::new(Syslog::new())))
