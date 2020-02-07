@@ -20,7 +20,7 @@
 
 #include "wrapper.h"
 
-static char* str_dup(const char* s) {
+static char* string_dup(const char* s) {
     char* res;
     size_t len;
 
@@ -29,7 +29,12 @@ static char* str_dup(const char* s) {
     }
 
     len = strlen(s);
+
     res = malloc(len + 1);
+    if (!res) {
+        return NULL;
+    }
+
     memcpy(res, s, len);
     res[len] = 0;
 
@@ -38,14 +43,12 @@ static char* str_dup(const char* s) {
 
 Wrapper* pcap_wrapper__new(const char* device) {
     Wrapper* wrapper = malloc(sizeof(Wrapper));
-
     if (!wrapper) {
         goto err;
     }
-
     memset(wrapper, 0, sizeof(Wrapper));
 
-    wrapper->device = str_dup(device);
+    wrapper->device = string_dup(device);
     if (!wrapper->device) {
         goto err;
     }
@@ -149,8 +152,7 @@ int pcap_wrapper__set_filter(Wrapper* wrapper, const char* filter) {
         free(wrapper->filter);
     }
 
-    wrapper->filter = str_dup(filter);
-
+    wrapper->filter = string_dup(filter);
     if (!wrapper->filter) {
         return ENOMEM;
     }
