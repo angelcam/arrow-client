@@ -41,7 +41,7 @@ macro_rules! log_warn {
 pub mod file;
 pub mod stderr;
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "windows"))]
 pub mod syslog;
 
 use std::fmt::Arguments;
