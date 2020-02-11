@@ -22,11 +22,10 @@
 #include "utils.h"
 
 Wrapper* pcap_wrapper__new(const char* device) {
-    Wrapper* wrapper = malloc(sizeof(Wrapper));
+    Wrapper* wrapper = calloc(1, sizeof(Wrapper));
     if (!wrapper) {
         goto err;
     }
-    memset(wrapper, 0, sizeof(Wrapper));
 
     wrapper->device = string_dup(device);
     if (!wrapper->device) {
