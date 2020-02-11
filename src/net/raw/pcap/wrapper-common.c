@@ -19,27 +19,7 @@
 #include <errno.h>
 
 #include "wrapper.h"
-
-static char* string_dup(const char* s) {
-    char* res;
-    size_t len;
-
-    if (!s) {
-        return NULL;
-    }
-
-    len = strlen(s);
-
-    res = malloc(len + 1);
-    if (!res) {
-        return NULL;
-    }
-
-    memcpy(res, s, len);
-    res[len] = 0;
-
-    return res;
-}
+#include "utils.h"
 
 Wrapper* pcap_wrapper__new(const char* device) {
     Wrapper* wrapper = malloc(sizeof(Wrapper));

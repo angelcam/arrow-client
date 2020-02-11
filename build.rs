@@ -28,6 +28,7 @@ fn main() {
     };
 
     Build::new()
+        .include("src")
         .include("src/net/raw/devices")
         .file("src/net/raw/devices/devices-common.c")
         .file(&format!("src/net/raw/devices/devices-{}.c", platform))
@@ -75,6 +76,7 @@ fn main() {
         }
 
         wrapper_builder
+            .include("src")
             .include("src/net/raw/pcap")
             .file("src/net/raw/pcap/wrapper-common.c")
             .file(&format!("src/net/raw/pcap/wrapper-{}.c", platform))

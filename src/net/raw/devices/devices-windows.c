@@ -22,6 +22,7 @@
 #pragma comment(lib, "IPHLPAPI.lib")
 
 #include "devices.h"
+#include "devices-utils.h"
 #include "utils.h"
 
 static const IP_ADAPTER_UNICAST_ADDRESS* find_ipv4_unicast_address(const IP_ADAPTER_ADDRESSES* adapter) {

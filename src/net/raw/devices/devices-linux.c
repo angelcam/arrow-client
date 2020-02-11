@@ -25,6 +25,7 @@
 #include <ifaddrs.h>
 
 #include "devices.h"
+#include "devices-utils.h"
 #include "utils.h"
 
 static int get_mac_address(int fd, const char* dname, unsigned char* buffer) {

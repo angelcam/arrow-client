@@ -17,30 +17,6 @@
 #ifndef ARROW_CLIENT_DEVICES_UTILS_H
 #define ARROW_CLIENT_DEVICES_UTILS_H
 
-#include "devices.h"
-
-static char* string_dup(const char* str) {
-    char* result;
-    size_t len;
-
-    if (!str) {
-        return NULL;
-    }
-
-    len = strlen(str);
-
-    result = malloc(len + 1);
-
-    if (!result) {
-        return NULL;
-    }
-
-    memcpy(result, str, len);
-    result[len] = 0;
-
-    return result;
-}
-
 static int get_ipv4_record(struct sockaddr* addr, unsigned char* buffer) {
     struct sockaddr_in* inet_addr;
 
