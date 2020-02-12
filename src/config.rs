@@ -47,7 +47,10 @@ use crate::storage::{DefaultStorage, Storage};
 use crate::svc_table::{SharedServiceTable, SharedServiceTableRef};
 use crate::utils::logger::file::FileLogger;
 use crate::utils::logger::stderr::StderrLogger;
+
+#[cfg(not(target_os = "windows"))]
 use crate::utils::logger::syslog::Syslog;
+
 use crate::utils::logger::{BoxLogger, DummyLogger, Logger, Severity};
 use crate::utils::RuntimeError;
 
@@ -267,10 +270,24 @@ impl ConfigBuilder {
 
 /// Type of the logger backend that should be used.
 enum LoggerType {
+    #[cfg(not(target_os = "windows"))]
     Syslog,
+
     Stderr,
     StderrPretty,
     FileLogger,
+}
+
+impl Default for LoggerType {
+    #[cfg(not(target_os = "windows"))]
+    fn default() -> Self {
+        Self::Syslog
+    }
+
+    #[cfg(target_os = "windows")]
+    fn default() -> Self {
+        Self::Stderr
+    }
 }
 
 /// Builder for application configuration.
@@ -304,7 +321,7 @@ impl ConfigParser {
             arrow_svc_addr: String::new(),
             ca_certificates: Vec::new(),
             services: Vec::new(),
-            logger_type: LoggerType::Syslog,
+            logger_type: LoggerType::default(),
             config_file: CONFIG_FILE.to_string(),
             config_file_skel: CONFIG_FILE_SKELETON.to_string(),
             identity_file: None,
@@ -325,7 +342,9 @@ impl ConfigParser {
     /// Create a new logger.
     fn create_logger(&self) -> Result<BoxLogger, ConfigError> {
         let logger = match self.logger_type {
+            #[cfg(not(target_os = "windows"))]
             LoggerType::Syslog => BoxLogger::new(Syslog::new()),
+
             LoggerType::Stderr => BoxLogger::new(StderrLogger::new(false)),
             LoggerType::StderrPretty => BoxLogger::new(StderrLogger::new(true)),
             LoggerType::FileLogger => {

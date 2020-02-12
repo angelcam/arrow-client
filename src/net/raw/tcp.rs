@@ -77,9 +77,8 @@ impl TcpPacket {
             ))
         } else {
             let ptr = data.as_ptr();
-            let ptr = ptr as *const RawTcpPacketHeader;
 
-            let rh = unsafe { &*ptr };
+            let rh = unsafe { &*(ptr as *const RawTcpPacketHeader) };
 
             let doffset_flags = u16::from_be(rh.doffset_flags);
             let doffset = doffset_flags >> 12;
@@ -211,6 +210,7 @@ pub mod scanner {
 
     use std::net::Ipv4Addr;
     use std::ops::Range;
+    use std::time::Duration;
 
     use bytes::Bytes;
 
@@ -380,7 +380,12 @@ pub mod scanner {
                  tcp[tcpflags] & tcp-ack != 0",
                 self.device.ip_addr, sport
             );
-            let packets = self.scanner.sr(&filter, &mut generator, 2000)?;
+            let packets = self.scanner.sr(
+                &filter,
+                &mut generator,
+                Duration::from_secs(2),
+                Some(Duration::from_secs(20)),
+            )?;
 
             let mut services = Vec::new();
 

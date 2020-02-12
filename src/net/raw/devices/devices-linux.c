@@ -24,34 +24,9 @@
 #include <netinet/in.h>
 #include <ifaddrs.h>
 
-#define MAC_ADDR_SIZE       6
-#define IPV4_ADDR_SIZE      4
-
-typedef struct net_device {
-    char* name;
-    unsigned char ipv4_address[IPV4_ADDR_SIZE];
-    unsigned char ipv4_netmask[IPV4_ADDR_SIZE];
-    unsigned char mac_address[MAC_ADDR_SIZE];
-    struct net_device* next;
-} net_device;
-
-static char * string_dup(const char* str) {
-    char* result;
-    size_t len;
-
-    if (!str)
-        return NULL;
-
-    len = strlen(str);
-    result = malloc(len + 1);
-    if (!result)
-        return NULL;
-
-    memcpy(result, str, len);
-    result[len] = 0;
-
-    return result;
-}
+#include "devices.h"
+#include "devices-utils.h"
+#include "utils.h"
 
 static int get_mac_address(int fd, const char* dname, unsigned char* buffer) {
     struct ifreq dconf;
@@ -69,42 +44,14 @@ static int get_mac_address(int fd, const char* dname, unsigned char* buffer) {
     return 0;
 }
 
-static int get_ipv4_record(struct sockaddr *addr, unsigned char* buffer) {
-    struct sockaddr_in* inet_addr;
-
-    if (addr->sa_family != AF_INET)
-        return -1;
-
-    inet_addr = (struct sockaddr_in*)addr;
-
-    memcpy(buffer, &inet_addr->sin_addr, IPV4_ADDR_SIZE);
-
-    return 0;
-}
-
-void net_free_device_list(struct net_device* dev) {
-    struct net_device* tmp;
-    while (dev) {
-        tmp = dev;
-        dev = dev->next;
-        free(tmp->name);
-        free(tmp);
-    }
-}
-
 static struct net_device * get_device_info(int fd, struct ifaddrs* ifaddrs) {
-    struct net_device* result;
+    struct net_device* result = net_new_device();
 
-    result = malloc(sizeof(net_device));
     if (!result)
         return NULL;
 
-    memset(result, 0, sizeof(net_device));
-
-    if (!(result->name = string_dup(ifaddrs->ifa_name))) {
-        free(result);
-        return NULL;
-    }
+    if (!(result->name = string_dup(ifaddrs->ifa_name)))
+        goto err;
 
     if (get_mac_address(fd, result->name, result->mac_address) != 0)
         goto err;
@@ -150,32 +97,4 @@ err:
     close(fd);
 
     return result;
-}
-
-const char * net_get_name(const struct net_device* dev) {
-    return dev->name;
-}
-
-const unsigned char * net_get_ipv4_address(const struct net_device* dev) {
-    return dev->ipv4_address;
-}
-
-const unsigned char * net_get_ipv4_netmask(const struct net_device* dev) {
-    return dev->ipv4_netmask;
-}
-
-const unsigned char * net_get_mac_address(const struct net_device* dev) {
-    return dev->mac_address;
-}
-
-const struct net_device * net_get_next_device(const struct net_device* dev) {
-    return dev->next;
-}
-
-size_t net_get_mac_addr_size() {
-    return MAC_ADDR_SIZE;
-}
-
-size_t net_get_ipv4_addr_size() {
-    return IPV4_ADDR_SIZE;
 }

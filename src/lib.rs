@@ -71,6 +71,9 @@ pub use svc_table::Service;
 pub mod logger {
     pub use crate::utils::logger::file::FileLogger;
     pub use crate::utils::logger::stderr::StderrLogger;
+
+    #[cfg(not(target_os = "windows"))]
     pub use crate::utils::logger::syslog::Syslog;
+
     pub use crate::utils::logger::{BoxLogger, CloneableLogger, DummyLogger, Logger, Severity};
 }

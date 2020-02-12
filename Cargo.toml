@@ -40,7 +40,8 @@ version  = "0.7"
 features = ["v4"]
 
 [build-dependencies]
-cc = "1.0"
+cc    = "1.0"
+vcpkg = "0.2"
 
 [profile.dev]
 opt-level = 0

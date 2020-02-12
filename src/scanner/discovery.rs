@@ -347,6 +347,7 @@ fn find_open_ports_in_network(context: Context, device: &EthernetDevice) -> Resu
         "running ARP scan in local network on interface {}",
         device.name
     );
+
     for (mac, ip) in Ipv4ArpScanner::scan_device(device)? {
         report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ARP);
     }
@@ -356,6 +357,7 @@ fn find_open_ports_in_network(context: Context, device: &EthernetDevice) -> Resu
         "running ICMP echo scan in local network on interface {}",
         device.name
     );
+
     for (mac, ip) in IcmpScanner::scan_device(device)? {
         report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ICMP);
     }

@@ -190,6 +190,7 @@ pub mod scanner {
     use super::*;
 
     use std::net::Ipv4Addr;
+    use std::time::Duration;
 
     use bytes::Bytes;
 
@@ -266,7 +267,12 @@ pub mod scanner {
 
             let filter = format!("arp and ether dst {}", self.device.mac_addr);
 
-            let packets = self.scanner.sr(&filter, &mut generator, 2000)?;
+            let packets = self.scanner.sr(
+                &filter,
+                &mut generator,
+                Duration::from_secs(2),
+                Some(Duration::from_secs(20)),
+            )?;
 
             let mut hosts = Vec::new();
 
