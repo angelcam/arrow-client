@@ -48,6 +48,8 @@ pub fn sum_slice<T: Sized>(data: &[T]) -> u32 {
 }
 
 /// Sum given raw data as 16-bit unsigned big endian numbers.
+#[allow(clippy::missing_safety_doc)]
+#[allow(clippy::cast_ptr_alignment)]
 pub unsafe fn sum_raw_be(data: *const u8, size: usize) -> u32 {
     let sdata = slice::from_raw_parts(data as *const u16, size >> 1);
     let slice = slice::from_raw_parts(data, size);

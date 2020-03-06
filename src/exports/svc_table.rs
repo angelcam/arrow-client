@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(clippy::missing_safety_doc)]
+
 use std::ptr;
 use std::slice;
 
@@ -89,7 +91,7 @@ pub unsafe extern "C" fn ac__service_table__free(table: *mut NativeServiceTable)
 pub unsafe extern "C" fn ac__service_table__get_service_count(
     table: *const NativeServiceTable,
 ) -> size_t {
-    (&*table).services.len() as _
+    (*table).services.len() as _
 }
 
 /// Get service at a given index.
@@ -99,21 +101,20 @@ pub unsafe extern "C" fn ac__service_table__get_service(
     index: size_t,
 ) -> *const NativeService {
     let table = &*table;
-    let svc = &table.services[index as usize];
 
-    svc
+    &table.services[index as usize]
 }
 
 /// Get service ID.
 #[no_mangle]
 pub unsafe extern "C" fn ac__service__get_id(service: *const NativeService) -> u16 {
-    (&*service).service_id
+    (*service).service_id
 }
 
 /// Get service type.
 #[no_mangle]
 pub unsafe extern "C" fn ac__service__get_type(service: *const NativeService) -> u16 {
-    (&*service).service_type
+    (*service).service_type
 }
 
 /// Get service MAC address. The given buffer must have enough space to store at least 6 bytes.
@@ -122,7 +123,7 @@ pub unsafe extern "C" fn ac__service__get_mac_address(
     service: *const NativeService,
     buffer: *mut u8,
 ) {
-    let mac = (&*service).mac_address.octets();
+    let mac = (*service).mac_address.octets();
     let buffer = slice::from_raw_parts_mut(buffer, mac.len());
 
     buffer.copy_from_slice(&mac);
@@ -131,7 +132,7 @@ pub unsafe extern "C" fn ac__service__get_mac_address(
 /// Get version of the service IP address.
 #[no_mangle]
 pub unsafe extern "C" fn ac__service__get_ip_version(service: *const NativeService) -> u8 {
-    (&*service).ip_address.version()
+    (*service).ip_address.version()
 }
 
 /// Get service IP address. The given buffer must have enough space to store at least 4 bytes for
@@ -141,7 +142,7 @@ pub unsafe extern "C" fn ac__service__get_ip_address(
     service: *const NativeService,
     buffer: *mut u8,
 ) -> u8 {
-    let addr = (&*service).ip_address;
+    let addr = (*service).ip_address;
 
     match addr {
         IpAddr::V4(addr) => {
@@ -164,13 +165,13 @@ pub unsafe extern "C" fn ac__service__get_ip_address(
 /// Get service port.
 #[no_mangle]
 pub unsafe extern "C" fn ac__service__get_port(service: *const NativeService) -> u16 {
-    (&*service).port
+    (*service).port
 }
 
 /// Get service path/endpoint (may be NULL).
 #[no_mangle]
 pub unsafe extern "C" fn ac__service__get_path(service: *const NativeService) -> *const c_char {
-    if let Some(path) = (&*service).path.as_ref() {
+    if let Some(path) = (*service).path.as_ref() {
         path.as_ptr() as _
     } else {
         ptr::null()

@@ -38,8 +38,8 @@ pub enum IcmpPacketType {
 
 impl IcmpPacketType {
     /// Get ICMP packet type code.
-    fn code(&self) -> u8 {
-        match *self {
+    fn code(self) -> u8 {
+        match self {
             Self::Echo => ICMP_TYPE_ECHO,
             Self::EchoReply => ICMP_TYPE_ECHO_REPLY,
             Self::Unknown(pt) => pt,

@@ -17,6 +17,7 @@ use std::fmt;
 use std::io;
 use std::result;
 
+use std::collections::hash_map::RandomState;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -102,7 +103,7 @@ pub type Result<T> = result::Result<T, DiscoveryError>;
 /// services.
 pub fn scan_network(
     logger: BoxLogger,
-    discovery_whitelist: Arc<HashSet<String>>,
+    discovery_whitelist: Arc<HashSet<String, RandomState>>,
     rtsp_paths: Arc<Vec<String>>,
     mjpeg_paths: Arc<Vec<String>>,
 ) -> Result<ScanResult> {
@@ -224,8 +225,8 @@ fn get_port_priorities(ports: &[u16]) -> HashMap<u16, usize> {
 
     let len = ports.len();
 
-    for i in 0..len {
-        res.insert(ports[i], len - i);
+    for (index, port) in ports.iter().enumerate() {
+        res.insert(*port, len - index);
     }
 
     res
@@ -401,7 +402,7 @@ where
 
     let candidates = context.get_port_candidates().iter().cloned();
 
-    let ports = PortCollection::new().add_all(candidates);
+    let ports = PortCollection::new().push_all(candidates);
 
     let res = TcpPortScanner::scan_ipv4_hosts(device, hosts, &ports)?
         .into_iter()
@@ -667,17 +668,19 @@ where
         let ip = saddr.ip();
         let port = saddr.port();
 
-        if svc_map.contains_key(&ip) {
-            let old_port = svc_map.get(&ip).map_or(0, |&(_, _, port)| port);
-            let old_priority = port_priorities.get(&old_port).cloned().unwrap_or(0);
-            let new_priority = port_priorities.get(&port).cloned().unwrap_or(0);
+        svc_map
+            .entry(ip)
+            .and_modify(|v| {
+                let &mut (_, _, old_port) = v;
 
-            if new_priority > old_priority {
-                svc_map.insert(ip, (mac, ip, port));
-            }
-        } else {
-            svc_map.insert(ip, (mac, ip, port));
-        }
+                let old_priority = port_priorities.get(&old_port).cloned().unwrap_or(0);
+                let new_priority = port_priorities.get(&port).cloned().unwrap_or(0);
+
+                if new_priority > old_priority {
+                    *v = (mac, ip, port);
+                }
+            })
+            .or_insert((mac, ip, port));
     }
 
     svc_map

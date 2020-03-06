@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(clippy::missing_safety_doc)]
+
 pub mod config;
 pub mod logger;
 pub mod mem;
@@ -181,7 +183,7 @@ pub unsafe extern "C" fn ac__arrow_client__start_blocking(client: *mut NativeArr
 /// Close a given Arrow client.
 #[no_mangle]
 pub unsafe extern "C" fn ac__arrow_client__close(client: *mut NativeArrowClient) {
-    (&mut *client).client.close();
+    (*client).client.close();
 }
 
 /// Add a given connection state callback.
@@ -191,7 +193,7 @@ pub unsafe extern "C" fn ac__arrow_client__add_connection_state_callback(
     callback: ConnectionStateCallback,
     opaque: *mut c_void,
 ) {
-    (&mut *client)
+    (*client)
         .client
         .add_event_listener(ConnectionStateListener::new(opaque, callback))
 }
@@ -203,7 +205,7 @@ pub unsafe extern "C" fn ac__arrow_client__add_network_scanner_state_callback(
     callback: NetworkScannerStateCallback,
     opaque: *mut c_void,
 ) {
-    (&mut *client)
+    (*client)
         .client
         .add_event_listener(NetworkScannerStateListener::new(opaque, callback))
 }
@@ -214,7 +216,7 @@ pub unsafe extern "C" fn ac__arrow_client__get_uuid(
     client: *const NativeArrowClient,
     buffer: *mut u8,
 ) {
-    let uuid = (&*client).client.get_arrow_uuid();
+    let uuid = (*client).client.get_arrow_uuid();
     let uuid = uuid.as_bytes().as_ref();
     let buffer = slice::from_raw_parts_mut(buffer, uuid.len());
 
@@ -228,7 +230,7 @@ pub unsafe extern "C" fn ac__arrow_client__get_mac_address(
     client: *const NativeArrowClient,
     buffer: *mut u8,
 ) {
-    let mac = (&*client).client.get_mac_address().octets();
+    let mac = (*client).client.get_mac_address().octets();
     let buffer = slice::from_raw_parts_mut(buffer, mac.len());
 
     buffer.copy_from_slice(&mac);
@@ -239,7 +241,7 @@ pub unsafe extern "C" fn ac__arrow_client__get_mac_address(
 pub unsafe extern "C" fn ac__arrow_client__get_service_table(
     client: *const NativeArrowClient,
 ) -> *mut NativeServiceTable {
-    let table = (&*client).client.get_service_table();
+    let table = (*client).client.get_service_table();
 
     Box::into_raw(Box::new(NativeServiceTable::from(table)))
 }
@@ -247,13 +249,13 @@ pub unsafe extern "C" fn ac__arrow_client__get_service_table(
 /// Scan the local network.
 #[no_mangle]
 pub unsafe extern "C" fn ac__arrow_client__scan_network(client: *mut NativeArrowClient) {
-    (&mut *client).client.scan_network();
+    (*client).client.scan_network();
 }
 
 /// Clear the service table and scan the local network again.
 #[no_mangle]
 pub unsafe extern "C" fn ac__arrow_client__rescan_network(client: *mut NativeArrowClient) {
-    (&mut *client).client.rescan_network();
+    (*client).client.rescan_network();
 }
 
 /// Free a given join handle.

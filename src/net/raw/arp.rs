@@ -76,10 +76,10 @@ impl ArpPacket {
     /// Create a new ARP packet for IPv4 over Ethernet.
     pub fn ipv4_over_ethernet(
         oper: ArpOperation,
-        sha: &MacAddr,
-        spa: &Ipv4Addr,
-        tha: &MacAddr,
-        tpa: &Ipv4Addr,
+        sha: MacAddr,
+        spa: Ipv4Addr,
+        tha: MacAddr,
+        tpa: Ipv4Addr,
     ) -> Self {
         Self {
             htype: ARP_HTYPE_EHER,
@@ -244,10 +244,10 @@ pub mod scanner {
                     let pdst = Ipv4Addr::from(current);
                     let arpp = ArpPacket::ipv4_over_ethernet(
                         ArpOperation::REQUEST,
-                        &hsrc,
-                        &psrc,
-                        &hdst,
-                        &pdst,
+                        hsrc,
+                        psrc,
+                        hdst,
+                        pdst,
                     );
                     let pkt = EtherPacket::arp(hsrc, bcast, arpp);
 
@@ -307,7 +307,7 @@ mod tests {
         let dip = Ipv4Addr::new(192, 168, 8, 1);
         let dmac = MacAddr::new(6, 5, 4, 3, 2, 1);
 
-        let arp = ArpPacket::ipv4_over_ethernet(ArpOperation::REQUEST, &smac, &sip, &dmac, &dip);
+        let arp = ArpPacket::ipv4_over_ethernet(ArpOperation::REQUEST, smac, sip, dmac, dip);
         let pkt = EtherPacket::arp(smac, dmac, arp);
 
         let mut buf = Vec::new();

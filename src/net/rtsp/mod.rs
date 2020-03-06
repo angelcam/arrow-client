@@ -166,7 +166,7 @@ impl Request {
         let scheme = Scheme::from_str(url.scheme())?;
 
         let host = url.host();
-        let port = url.port().unwrap_or(scheme.default_port());
+        let port = url.port().unwrap_or_else(|| scheme.default_port());
 
         let app_version = env!("CARGO_PKG_VERSION");
 
