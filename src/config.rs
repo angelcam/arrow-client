@@ -25,6 +25,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::iter::FromIterator;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -294,23 +295,23 @@ impl Default for LoggerType {
 struct ConfigParser {
     arrow_mac: Option<MacAddr>,
     arrow_svc_addr: String,
-    ca_certificates: Vec<String>,
+    ca_certificates: Vec<PathBuf>,
     services: Vec<Service>,
     logger_type: LoggerType,
-    config_file: String,
-    config_file_skel: String,
-    identity_file: Option<String>,
-    state_file: String,
-    rtsp_paths_file: String,
-    mjpeg_paths_file: String,
-    log_file: String,
+    config_file: PathBuf,
+    config_file_skel: PathBuf,
+    identity_file: Option<PathBuf>,
+    state_file: PathBuf,
+    rtsp_paths_file: PathBuf,
+    mjpeg_paths_file: PathBuf,
+    log_file: PathBuf,
     discovery: bool,
     discovery_whitelist: Vec<String>,
     verbose: bool,
     diagnostic_mode: bool,
     log_file_size: usize,
     log_file_rotations: usize,
-    lock_file: Option<String>,
+    lock_file: Option<PathBuf>,
 }
 
 impl ConfigParser {
@@ -322,13 +323,13 @@ impl ConfigParser {
             ca_certificates: Vec::new(),
             services: Vec::new(),
             logger_type: LoggerType::default(),
-            config_file: CONFIG_FILE.to_string(),
-            config_file_skel: CONFIG_FILE_SKELETON.to_string(),
+            config_file: PathBuf::from(CONFIG_FILE),
+            config_file_skel: PathBuf::from(CONFIG_FILE_SKELETON),
             identity_file: None,
-            state_file: STATE_FILE.to_string(),
-            rtsp_paths_file: RTSP_PATHS_FILE.to_string(),
-            mjpeg_paths_file: MJPEG_PATHS_FILE.to_string(),
-            log_file: String::new(),
+            state_file: PathBuf::from(STATE_FILE),
+            rtsp_paths_file: PathBuf::from(RTSP_PATHS_FILE),
+            mjpeg_paths_file: PathBuf::from(MJPEG_PATHS_FILE),
+            log_file: PathBuf::new(),
             discovery: false,
             discovery_whitelist: Vec::new(),
             verbose: false,
@@ -353,7 +354,7 @@ impl ConfigParser {
                     .map_err(|_| {
                         ConfigError::new(format!(
                             "unable to open the given log file: \"{}\"",
-                            self.log_file
+                            self.log_file.to_string_lossy()
                         ))
                     })?
             }
@@ -475,7 +476,7 @@ impl ConfigParser {
             .next()
             .ok_or_else(|| ConfigError::new("CA certificate path expected"))?;
 
-        self.ca_certificates.push(path);
+        self.ca_certificates.push(path.into());
 
         Ok(())
     }
@@ -603,7 +604,7 @@ impl ConfigParser {
         // skip "--log-file=" length
         let log_file = &arg[11..];
 
-        self.log_file = log_file.to_string();
+        self.log_file = log_file.into();
 
         Ok(())
     }
@@ -635,25 +636,25 @@ impl ConfigParser {
     /// Process the config-file argument.
     fn config_file(&mut self, arg: &str) {
         // skip "--config-file=" length
-        self.config_file = arg[14..].to_string()
+        self.config_file = PathBuf::from(&arg[14..])
     }
 
     /// Process the config-file-skel argument.
     fn config_file_skel(&mut self, arg: &str) {
         // skip "--config-file-skel=" length
-        self.config_file_skel = arg[19..].to_string()
+        self.config_file_skel = PathBuf::from(&arg[19..])
     }
 
     /// Process the identity-file argument.
     fn identity_file(&mut self, arg: &str) {
         // skip "--identity-file=" length
-        self.identity_file = Some(arg[16..].to_string())
+        self.identity_file = Some(PathBuf::from(&arg[16..]))
     }
 
     /// Process the conn-state-file argument.
     fn conn_state_file(&mut self, arg: &str) {
         // skip "--conn-state-file=" length
-        self.state_file = arg[18..].to_string()
+        self.state_file = PathBuf::from(&arg[18..])
     }
 
     /// Process the rtsp-paths argument.
@@ -665,7 +666,7 @@ impl ConfigParser {
         // skip "--rtsp-paths=" length
         let rtsp_paths_file = &arg[13..];
 
-        self.rtsp_paths_file = rtsp_paths_file.to_string();
+        self.rtsp_paths_file = rtsp_paths_file.into();
 
         Ok(())
     }
@@ -679,7 +680,7 @@ impl ConfigParser {
         // skip "--mjpeg-paths=" length
         let mjpeg_paths_file = &arg[14..];
 
-        self.mjpeg_paths_file = mjpeg_paths_file.to_string();
+        self.mjpeg_paths_file = mjpeg_paths_file.into();
 
         Ok(())
     }
@@ -689,7 +690,7 @@ impl ConfigParser {
         // skip "--lock-file=" length
         let lock_file = &arg[12..];
 
-        self.lock_file = Some(lock_file.to_string());
+        self.lock_file = Some(lock_file.into());
 
         Ok(())
     }

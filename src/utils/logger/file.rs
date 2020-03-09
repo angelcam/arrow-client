@@ -20,7 +20,7 @@ use std::io;
 use std::fmt::Arguments;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use time;
@@ -30,7 +30,7 @@ use crate::utils::logger::{Logger, Severity};
 /// Internal logger implementation.
 struct InternalFileLogger {
     level: Severity,
-    path: String,
+    path: PathBuf,
     file: File,
     written: usize,
     limit: usize,
@@ -59,16 +59,28 @@ impl InternalFileLogger {
     /// Rotate the log files.
     fn rotate(&mut self) -> io::Result<()> {
         for i in 0..self.rotations - 1 {
-            let from = format!("{}.{}", &self.path, self.rotations - i - 1);
-            let to = format!("{}.{}", &self.path, self.rotations - i);
+            let mut from = self.path.as_os_str().to_os_string();
+            let mut to = self.path.as_os_str().to_os_string();
 
-            if Path::new(&from).exists() {
+            from.push(format!(".{}", self.rotations - i - 1));
+            to.push(format!(".{}", self.rotations - i));
+
+            let from = PathBuf::from(from);
+            let to = PathBuf::from(to);
+
+            if from.exists() {
                 fs::rename(&from, &to)?;
             }
         }
 
         if self.rotations > 0 {
-            fs::rename(&self.path, &format!("{}.1", &self.path))?;
+            let mut to = self.path.as_os_str().to_os_string();
+
+            to.push(".1");
+
+            let to = PathBuf::from(to);
+
+            fs::rename(&self.path, &to)?;
         }
 
         self.file = File::create(&self.path)?;
@@ -117,8 +129,13 @@ pub struct FileLogger {
 impl FileLogger {
     /// Create a new file logger with a given file size limit, given number of backup files
     /// (rotations) and with log level set to INFO.
-    pub fn new(path: &str, limit: usize, rotations: usize) -> io::Result<Self> {
-        let written = match Path::new(path).metadata() {
+    pub fn new<P>(path: P, limit: usize, rotations: usize) -> io::Result<Self>
+    where
+        PathBuf: From<P>,
+    {
+        let path = PathBuf::from(path);
+
+        let written = match path.metadata() {
             Ok(metadata) => metadata.len(),
             Err(_) => 0,
         };
@@ -127,11 +144,11 @@ impl FileLogger {
             .create(true)
             .write(true)
             .append(true)
-            .open(path)?;
+            .open(&path)?;
 
         let logger = InternalFileLogger {
             level: Severity::INFO,
-            path: path.to_string(),
+            path,
             file,
             written: written as usize,
             limit,

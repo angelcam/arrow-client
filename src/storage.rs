@@ -17,7 +17,7 @@ use std::process;
 
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(feature = "discovery")]
 use std::io::{BufRead, BufReader};
@@ -70,13 +70,13 @@ pub trait Storage {
 
 /// Builder for the default client storage.
 pub struct DefaultStorageBuilder {
-    config_file: String,
-    config_skeleton_file: Option<String>,
-    connection_state_file: Option<String>,
-    identity_file: Option<String>,
-    rtsp_paths_file: Option<String>,
-    mjpeg_paths_file: Option<String>,
-    ca_certificates: Vec<String>,
+    config_file: PathBuf,
+    config_skeleton_file: Option<PathBuf>,
+    connection_state_file: Option<PathBuf>,
+    identity_file: Option<PathBuf>,
+    rtsp_paths_file: Option<PathBuf>,
+    mjpeg_paths_file: Option<PathBuf>,
+    ca_certificates: Vec<PathBuf>,
     logger: Option<BoxLogger>,
     lock_file: Option<File>,
 }
@@ -85,63 +85,63 @@ impl DefaultStorageBuilder {
     /// Set path to the config file skeleton.
     pub fn config_skeleton_file<T>(&mut self, file: Option<T>) -> &mut Self
     where
-        T: ToString,
+        PathBuf: From<T>,
     {
-        self.config_skeleton_file = file.map(|f| f.to_string());
+        self.config_skeleton_file = file.map(PathBuf::from);
         self
     }
 
     /// Set path to the connection state file.
     pub fn connection_state_file<T>(&mut self, file: Option<T>) -> &mut Self
     where
-        T: ToString,
+        PathBuf: From<T>,
     {
-        self.connection_state_file = file.map(|f| f.to_string());
+        self.connection_state_file = file.map(PathBuf::from);
         self
     }
 
     /// Set path to the identity file.
     pub fn identity_file<T>(&mut self, file: Option<T>) -> &mut Self
     where
-        T: ToString,
+        PathBuf: From<T>,
     {
-        self.identity_file = file.map(|f| f.to_string());
+        self.identity_file = file.map(PathBuf::from);
         self
     }
 
     /// Set path to the file containing RTSP paths.
     pub fn rtsp_paths_file<T>(&mut self, file: Option<T>) -> &mut Self
     where
-        T: ToString,
+        PathBuf: From<T>,
     {
-        self.rtsp_paths_file = file.map(|f| f.to_string());
+        self.rtsp_paths_file = file.map(PathBuf::from);
         self
     }
 
     /// Set path to the file containing MJPEG paths.
     pub fn mjpeg_paths_file<T>(&mut self, file: Option<T>) -> &mut Self
     where
-        T: ToString,
+        PathBuf: From<T>,
     {
-        self.mjpeg_paths_file = file.map(|f| f.to_string());
+        self.mjpeg_paths_file = file.map(PathBuf::from);
         self
     }
 
     /// Add a given CA certificate path.
     pub fn add_ca_cerificate<T>(&mut self, path: T) -> &mut Self
     where
-        T: ToString,
+        PathBuf: From<T>,
     {
-        self.ca_certificates.push(path.to_string());
+        self.ca_certificates.push(path.into());
         self
     }
 
     /// Set paths to the CA certificates.
     pub fn ca_certificates<T>(&mut self, paths: T) -> &mut Self
     where
-        Vec<String>: From<T>,
+        Vec<PathBuf>: From<T>,
     {
-        self.ca_certificates = Vec::from(paths);
+        self.ca_certificates = paths.into();
         self
     }
 
@@ -173,13 +173,13 @@ impl DefaultStorageBuilder {
 
 /// Default file-based client storage.
 pub struct DefaultStorage {
-    config_file: String,
-    config_skeleton_file: Option<String>,
-    connection_state_file: Option<String>,
-    identity_file: Option<String>,
-    rtsp_paths_file: Option<String>,
-    mjpeg_paths_file: Option<String>,
-    ca_cert_files: Vec<String>,
+    config_file: PathBuf,
+    config_skeleton_file: Option<PathBuf>,
+    connection_state_file: Option<PathBuf>,
+    identity_file: Option<PathBuf>,
+    rtsp_paths_file: Option<PathBuf>,
+    mjpeg_paths_file: Option<PathBuf>,
+    ca_cert_files: Vec<PathBuf>,
     logger: BoxLogger,
     _lock_file: Option<File>,
 }
@@ -191,8 +191,8 @@ impl DefaultStorage {
         lock_file: Option<L>,
     ) -> Result<DefaultStorageBuilder, io::Error>
     where
-        T: ToString,
-        L: AsRef<str>,
+        PathBuf: From<T>,
+        L: AsRef<Path>,
     {
         let lock_file = lock_file
             .as_ref()
@@ -211,7 +211,7 @@ impl DefaultStorage {
                             io::ErrorKind::Other,
                             format!(
                                 "unable to acquire an exclusive lock on \"{}\"",
-                                lock_file.as_ref()
+                                lock_file.as_ref().to_string_lossy()
                             ),
                         )
                     })
@@ -219,7 +219,7 @@ impl DefaultStorage {
             .transpose()?;
 
         let res = DefaultStorageBuilder {
-            config_file: config_file.to_string(),
+            config_file: config_file.into(),
             config_skeleton_file: None,
             connection_state_file: None,
             identity_file: None,
@@ -247,7 +247,10 @@ impl Storage for DefaultStorage {
             utils::result_or_log(
                 &mut logger,
                 Severity::WARN,
-                format!("unable to read configuration file skeleton\"{}\"", file),
+                format!(
+                    "unable to read configuration file skeleton\"{}\"",
+                    file.to_string_lossy()
+                ),
                 load_configuration_file(file),
             )
         });
@@ -256,7 +259,10 @@ impl Storage for DefaultStorage {
         let config = utils::result_or_log(
             &mut logger,
             Severity::WARN,
-            format!("unable to read configuration file \"{}\"", self.config_file),
+            format!(
+                "unable to read configuration file \"{}\"",
+                self.config_file.to_string_lossy()
+            ),
             load_configuration_file(&self.config_file),
         );
 
@@ -277,13 +283,16 @@ impl Storage for DefaultStorage {
                 log_info!(
                     &mut self.logger,
                     "creating configuration file skeleton \"{}\"",
-                    file
+                    file.to_string_lossy()
                 );
 
                 utils::result_or_log(
                     &mut logger,
                     Severity::WARN,
-                    format!("unable to create configuration file skeleton \"{}\"", file),
+                    format!(
+                        "unable to create configuration file skeleton \"{}\"",
+                        file.to_string_lossy()
+                    ),
                     save_configuration_file(&config_skeleton, file),
                 );
             }
@@ -296,7 +305,10 @@ impl Storage for DefaultStorage {
             utils::result_or_log(
                 &mut logger,
                 Severity::WARN,
-                format!("unable to create identity file \"{}\"", file),
+                format!(
+                    "unable to create identity file \"{}\"",
+                    file.to_string_lossy()
+                ),
                 save_identity_file(&identity, file),
             );
         }
@@ -345,11 +357,16 @@ impl Storage for DefaultStorage {
 /// Simple extension to the SslContextBuilder.
 trait SslConnectorBuilderExt {
     /// Load all CA certificates from a given path.
-    fn load_ca_certificates<P: AsRef<Path>>(&mut self, path: P) -> Result<(), io::Error>;
+    fn load_ca_certificates<P>(&mut self, path: P) -> Result<(), io::Error>
+    where
+        P: AsRef<Path>;
 }
 
 impl SslConnectorBuilderExt for SslConnectorBuilder {
-    fn load_ca_certificates<P: AsRef<Path>>(&mut self, path: P) -> Result<(), io::Error> {
+    fn load_ca_certificates<P>(&mut self, path: P) -> Result<(), io::Error>
+    where
+        P: AsRef<Path>,
+    {
         let path = path.as_ref();
 
         if path.is_dir() {
@@ -370,7 +387,10 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
 }
 
 /// Check if a given file is a certificate file.
-fn is_cert_file<P: AsRef<Path>>(path: P) -> bool {
+fn is_cert_file<P>(path: P) -> bool
+where
+    P: AsRef<Path>,
+{
     let path = path.as_ref();
 
     if let Some(ext) = path.extension() {
@@ -389,7 +409,10 @@ fn is_cert_file<P: AsRef<Path>>(path: P) -> bool {
 }
 
 /// Helper function for loading persistent config.
-fn load_configuration_file(file: &str) -> Result<PersistentConfig, io::Error> {
+fn load_configuration_file<P>(file: P) -> Result<PersistentConfig, io::Error>
+where
+    P: AsRef<Path>,
+{
     let mut file = File::open(file)?;
     let mut data = String::new();
 
@@ -409,7 +432,10 @@ fn load_configuration_file(file: &str) -> Result<PersistentConfig, io::Error> {
 }
 
 /// Helper function for saving persistent config.
-fn save_configuration_file(config: &PersistentConfig, file: &str) -> Result<(), io::Error> {
+fn save_configuration_file<P>(config: &PersistentConfig, file: P) -> Result<(), io::Error>
+where
+    P: AsRef<Path>,
+{
     let mut file = File::create(file)?;
 
     config.to_json().write(&mut file)?;
@@ -418,7 +444,10 @@ fn save_configuration_file(config: &PersistentConfig, file: &str) -> Result<(), 
 }
 
 /// Helper function for saving client public identity.
-fn save_identity_file(identity: &PublicIdentity, file: &str) -> Result<(), io::Error> {
+fn save_identity_file<P>(identity: &PublicIdentity, file: P) -> Result<(), io::Error>
+where
+    P: AsRef<Path>,
+{
     let mut file = File::create(file)?;
 
     identity.to_json().write(&mut file)?;
@@ -428,7 +457,10 @@ fn save_identity_file(identity: &PublicIdentity, file: &str) -> Result<(), io::E
 
 /// Helper function for loading all path variants from a given file.
 #[cfg(feature = "discovery")]
-fn load_paths(file: &str) -> Result<Vec<String>, io::Error> {
+fn load_paths<P>(file: P) -> Result<Vec<String>, io::Error>
+where
+    P: AsRef<Path>,
+{
     let file = File::open(file)?;
     let breader = BufReader::new(file);
 
@@ -446,6 +478,9 @@ fn load_paths(file: &str) -> Result<Vec<String>, io::Error> {
 
 /// Helper function for loading all path variants from a given file.
 #[cfg(not(feature = "discovery"))]
-fn load_paths(_: &str) -> Result<Vec<String>, io::Error> {
+fn load_paths<P>(_: P) -> Result<Vec<String>, io::Error>
+where
+    P: AsRef<Path>,
+{
     Ok(Vec::new())
 }
