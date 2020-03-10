@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(clippy::missing_safety_doc)]
+
 use std::slice;
 
 use libc::c_int;

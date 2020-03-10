@@ -74,8 +74,9 @@ jobs:
         with:
           toolchain: stable
           override: true
+      - run: sudo apt install libpcap-dev
       - run: rustup component add clippy
       - uses: actions-rs/cargo@v1.0.1
         with:
           command: clippy
-          args: -- -D warnings
+          args: --all-features -- -D warnings

@@ -263,7 +263,7 @@ mod tests {
         let dst = MacAddr::new(6, 5, 4, 3, 2, 1);
         let sip = Ipv4Addr::new(192, 168, 3, 7);
         let dip = Ipv4Addr::new(192, 168, 8, 1);
-        let arp = ArpPacket::ipv4_over_ethernet(ArpOperation::REQUEST, &src, &sip, &dst, &dip);
+        let arp = ArpPacket::ipv4_over_ethernet(ArpOperation::REQUEST, src, sip, dst, dip);
         let pkt = EtherPacket::arp(src, dst, arp);
 
         let mut buf = Vec::new();

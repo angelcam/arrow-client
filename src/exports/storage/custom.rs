@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(clippy::missing_safety_doc)]
+
 use std::io;
 use std::ptr;
 use std::slice;
@@ -245,7 +247,7 @@ pub unsafe extern "C" fn ac__custom_storage_builder__set_save_configuration_func
     builder: *mut CustomStorage,
     func: SaveConfiguration,
 ) {
-    (&mut *builder).save_configuration = Some(func);
+    (*builder).save_configuration = Some(func);
 }
 
 /// Set function for loading client configuration. The function must allocate
@@ -255,7 +257,7 @@ pub unsafe extern "C" fn ac__custom_storage_builder__set_load_configuration_func
     builder: *mut CustomStorage,
     load: LoadConfiguration,
 ) {
-    (&mut *builder).load_configuration = Some(load);
+    (*builder).load_configuration = Some(load);
 }
 
 /// Set function for saving client connection state.
@@ -264,7 +266,7 @@ pub unsafe extern "C" fn ac__custom_storage_builder__set_save_connection_state_f
     builder: *mut CustomStorage,
     func: SaveConnectionState,
 ) {
-    (&mut *builder).save_connection_state = Some(func);
+    (*builder).save_connection_state = Some(func);
 }
 
 /// Set function for loading RTSP paths. The function must allocate the paths
@@ -274,7 +276,7 @@ pub unsafe extern "C" fn ac__custom_storage_builder__set_load_rtsp_paths_func(
     builder: *mut CustomStorage,
     load: LoadPaths,
 ) {
-    (&mut *builder).load_rtsp_paths = Some(load);
+    (*builder).load_rtsp_paths = Some(load);
 }
 
 /// Set function for loading MJPEG paths. The function must allocate the paths
@@ -284,7 +286,7 @@ pub unsafe extern "C" fn ac__custom_storage_builder__set_load_mjpeg_paths_func(
     builder: *mut CustomStorage,
     load: LoadPaths,
 ) {
-    (&mut *builder).load_mjpeg_paths = Some(load);
+    (*builder).load_mjpeg_paths = Some(load);
 }
 
 /// Set function for loading CA certificates.
@@ -293,7 +295,7 @@ pub unsafe extern "C" fn ac__custom_storage_builder__set_load_ca_certificates_fu
     builder: *mut CustomStorage,
     func: LoadCACertificates,
 ) {
-    (&mut *builder).load_ca_certificates = Some(func);
+    (*builder).load_ca_certificates = Some(func);
 }
 
 /// Build the storage.

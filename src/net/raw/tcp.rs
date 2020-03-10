@@ -92,9 +92,9 @@ impl TcpPacket {
                     "unable to parse TCP packet, not enough data",
                 ))
             } else {
-                let options = unsafe {
-                    slice::from_raw_parts(ptr.offset(offset_1 as isize) as *const u32, options_len)
-                };
+                #[allow(clippy::cast_ptr_alignment)]
+                let options =
+                    unsafe { slice::from_raw_parts(ptr.add(offset_1) as *const u32, options_len) };
 
                 let payload = &data[offset_2..];
 
@@ -232,6 +232,7 @@ pub mod scanner {
 
     impl PortRange {
         /// Convert TCP port range into a Range<u16> instance.
+        #[allow(clippy::range_plus_one)]
         fn to_range(&self) -> Range<u16> {
             match *self {
                 Self::Range(ref r) => r.clone(),
@@ -254,7 +255,7 @@ pub mod scanner {
 
     /// Collection of ports for PortScanner. (This collection does not handle
     /// port overlaps.)
-    #[derive(Debug, Clone)]
+    #[derive(Default, Debug, Clone)]
     pub struct PortCollection {
         ranges: Vec<PortRange>,
     }
@@ -262,11 +263,11 @@ pub mod scanner {
     impl PortCollection {
         /// Create a new empty collection of ports.
         pub fn new() -> Self {
-            Self { ranges: Vec::new() }
+            Self::default()
         }
 
         /// Add a single port or a range.
-        pub fn add<T>(mut self, v: T) -> Self
+        pub fn push<T>(mut self, v: T) -> Self
         where
             PortRange: From<T>,
         {
@@ -275,7 +276,7 @@ pub mod scanner {
         }
 
         /// Add all ports/ranges in a given slice.
-        pub fn add_all<C, I>(mut self, c: C) -> Self
+        pub fn push_all<C, I>(mut self, c: C) -> Self
         where
             C: IntoIterator<Item = I>,
             PortRange: From<I>,
@@ -484,9 +485,9 @@ mod tests {
     #[test]
     fn test_port_collection() {
         let col = PortCollection::new()
-            .add_all([3, 5].iter().cloned())
-            .add(10..15)
-            .add(100);
+            .push_all([3, 5].iter().cloned())
+            .push(10..15)
+            .push(100);
 
         let mut iter = col.iter();
 

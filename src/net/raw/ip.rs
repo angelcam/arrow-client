@@ -66,10 +66,10 @@ impl Ipv4PacketHeader {
             ident: 0,
             flags: 0,
             foffset: 0,
-            ttl: ttl,
-            protocol: protocol,
-            src: src,
-            dst: dst,
+            ttl,
+            protocol,
+            src,
+            dst,
             options: Box::new([]),
             length: 0,
         }
@@ -108,6 +108,7 @@ impl Ipv4PacketHeader {
                     "unable to parse IPv4 packet, not enough data",
                 ))
             } else {
+                #[allow(clippy::cast_ptr_alignment)]
                 let options = unsafe {
                     utils::vec_from_raw_parts(ptr.offset(offset_1) as *const u32, options_len)
                 };
@@ -243,7 +244,7 @@ impl Ipv4Packet {
         B: 'static + Ipv4PacketBody,
     {
         Ipv4Packet {
-            header: header,
+            header,
             body: Box::new(body),
         }
     }
