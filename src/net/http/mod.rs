@@ -24,13 +24,12 @@ use std::time::Duration;
 
 use bytes::BytesMut;
 
-use futures::{Future, IntoFuture, Poll, Sink, Stream};
+use futures::sink::SinkExt;
+use futures::stream::StreamExt;
 
-use tokio::codec::{Decoder, Encoder};
 use tokio::net::TcpStream;
-use tokio::timer::Timeout;
 
-use crate::net;
+use tokio_util::codec::{Decoder, Encoder};
 
 use crate::net::url::Url;
 
@@ -229,57 +228,34 @@ impl Request {
         self
     }
 
-    /// Send the request and return a future response
-    pub fn send(self) -> FutureResponse {
-        let addr = net::utils::get_socket_address((self.host.as_ref(), self.port))
-            .map_err(|_| Error::from("unable to resolve a given socket address"));
-
-        if let Err(err) = addr {
-            return FutureResponse::new(Err(err));
-        }
-
-        let timeout = self.timeout;
-
+    /// Send the request and return a future response.
+    async fn send_inner(self) -> Result<Response, Error> {
         let codec = ClientCodec::new(
             self.max_line_length,
             self.max_header_lines,
             self.ignore_response_body,
         );
 
-        // single request-response cycle
-        let response = TcpStream::connect(&addr.unwrap())
-            .map_err(Error::from)
-            .and_then(move |stream| {
-                codec
-                    .framed(stream)
-                    .send(self.inner.build())
-                    .map_err(Error::from)
-                    .and_then(|stream| {
-                        stream
-                            .into_future()
-                            .map_err(|(err, _)| err)
-                            .and_then(|(response, _)| {
-                                response.ok_or_else(|| {
-                                    Error::from("server closed connection unexpectedly")
-                                })
-                            })
-                    })
-            });
+        let stream = TcpStream::connect((self.host.as_ref(), self.port)).await?;
 
-        if let Some(timeout) = timeout {
-            let response = Timeout::new(response, timeout).map_err(|err| {
-                if err.is_elapsed() {
-                    Error::from("request timeout")
-                } else if let Some(inner) = err.into_inner() {
-                    inner
-                } else {
-                    Error::from("timer error")
-                }
-            });
+        let mut stream = codec.framed(stream);
 
-            FutureResponse::new(response)
+        stream.send(self.inner.build()).await?;
+
+        stream
+            .next()
+            .await
+            .ok_or_else(|| Error::from("server closed connection unexpectedly"))?
+    }
+
+    /// Send the request and return a future response.
+    pub async fn send(self) -> Result<Response, Error> {
+        if let Some(timeout) = self.timeout {
+            tokio::time::timeout(timeout, self.send_inner())
+                .await
+                .map_err(|_| Error::from("request timeout"))?
         } else {
-            FutureResponse::new(response)
+            self.send_inner().await
         }
     }
 }
@@ -344,32 +320,6 @@ impl Response {
     /// Get value of the last header field with a given name.
     pub fn get_header_field_value(&self, name: &str) -> Option<&str> {
         self.inner.header().get_header_field_value(name)
-    }
-}
-
-/// Future response. This struct implements the Futere trait yielding Response.
-pub struct FutureResponse {
-    inner: Box<dyn Future<Item = Response, Error = Error>>,
-}
-
-impl FutureResponse {
-    /// Create a new future response.
-    fn new<F>(future: F) -> Self
-    where
-        F: 'static + IntoFuture<Item = Response, Error = Error>,
-    {
-        Self {
-            inner: Box::new(future.into_future()),
-        }
-    }
-}
-
-impl Future for FutureResponse {
-    type Item = Response;
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<Response, Error> {
-        self.inner.poll()
     }
 }
 
@@ -489,8 +439,7 @@ impl Decoder for ClientCodec {
     }
 }
 
-impl Encoder for ClientCodec {
-    type Item = GenericRequest;
+impl Encoder<GenericRequest> for ClientCodec {
     type Error = io::Error;
 
     fn encode(&mut self, message: GenericRequest, buffer: &mut BytesMut) -> Result<(), io::Error> {

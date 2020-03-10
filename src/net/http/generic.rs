@@ -23,9 +23,9 @@ use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use std::string::FromUtf8Error;
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 
-use tokio::codec::Decoder;
+use tokio_util::codec::Decoder;
 
 use crate::utils::string::reader::Reader as StringReader;
 
@@ -589,7 +589,7 @@ impl Decoder for LineDecoder {
                 let line = String::from_utf8(line)?;
 
                 if line_length > old_buffer_length {
-                    data.split_to(line_length - old_buffer_length);
+                    data.advance(line_length - old_buffer_length);
                 }
 
                 self.buffer.clear();
@@ -598,7 +598,7 @@ impl Decoder for LineDecoder {
             }
         }
 
-        data.split_to(append);
+        data.advance(append);
 
         // no separator was found and the buffer is already full
         if new_buffer_length >= self.max_length {
@@ -728,7 +728,7 @@ impl Decoder for SimpleBodyDecoder {
     type Error = Error;
 
     fn decode(&mut self, data: &mut BytesMut) -> Result<Option<MessageBody>, Error> {
-        let data = data.take();
+        let data = data.split();
 
         if !self.ignore {
             self.body.extend_from_slice(data.as_ref());

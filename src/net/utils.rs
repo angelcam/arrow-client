@@ -18,12 +18,6 @@ use std::mem;
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
-use futures;
-
-use futures::{Async, Future};
-
-use crate::runtime;
-
 use crate::utils::RuntimeError;
 
 /// Get socket address from a given argument.
@@ -36,26 +30,6 @@ where
         .ok_or_else(|| RuntimeError::from("unable to get socket address"))?
         .next()
         .ok_or_else(|| RuntimeError::from("unable to get socket address"))
-}
-
-/// Asynchronously get socket address from a given argument.
-pub fn get_socket_address_async<T>(
-    s: T,
-) -> impl Future<Item = SocketAddr, Error = RuntimeError> + Send
-where
-    T: ToSocketAddrs + Clone + Send,
-{
-    futures::future::poll_fn(move || {
-        let s = s.clone();
-
-        let res = runtime::blocking(|| get_socket_address(s));
-
-        match res.unwrap() {
-            Async::Ready(Ok(addr)) => Ok(Async::Ready(addr)),
-            Async::Ready(Err(err)) => Err(err),
-            Async::NotReady => Ok(Async::NotReady),
-        }
-    })
 }
 
 /// Ipv4Addr extension.

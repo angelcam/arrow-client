@@ -19,8 +19,6 @@ use std;
 use std::fmt::Arguments;
 use std::io::{Stderr, Write};
 
-use time;
-
 use crate::utils::logger::{Logger, Severity};
 
 /// stderr logger structure.

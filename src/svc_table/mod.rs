@@ -14,7 +14,6 @@
 
 pub mod service;
 
-use std;
 use std::fmt;
 
 use std::collections::HashMap;
@@ -23,11 +22,7 @@ use std::hash::{Hash, Hasher};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, Mutex};
 
-use farmhash;
-
 use json::JsonValue;
-
-use time;
 
 use crate::net::raw::ether::MacAddr;
 use crate::utils::json::{FromJson, ParseError, ToJson};

@@ -373,7 +373,7 @@ pub mod scanner {
             let sport = 61234;
             let mut gen = TcpPortScannerPacketGenerator::new(&self.device, hosts, sport, endpoints);
 
-            let mut generator = move || gen.next().map(Bytes::from);
+            let mut generator = move || gen.next().map(Bytes::copy_from_slice);
 
             let filter = format!(
                 "tcp and dst host {} and dst port {} and \

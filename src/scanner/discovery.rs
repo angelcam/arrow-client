@@ -22,15 +22,10 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use futures::future;
-use futures::stream;
-
-use futures::{Future, Poll, Stream};
-
-use tokio;
+use futures::{Future, FutureExt};
 
 use crate::net::raw::pcap;
 
@@ -107,8 +102,12 @@ pub fn scan_network(
     rtsp_paths: Arc<Vec<String>>,
     mjpeg_paths: Arc<Vec<String>>,
 ) -> Result<ScanResult> {
-    let mut runtime = tokio::runtime::current_thread::Runtime::new()
-        .map_err(|err| DiscoveryError::from(format!("Asyn IO error: {}", err)))?;
+    let mut runtime = tokio::runtime::Builder::new()
+        .basic_scheduler()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|err| DiscoveryError::from(format!("Async IO error: {}", err)))?;
 
     let context = Context::new(logger, discovery_whitelist, rtsp_paths, mjpeg_paths)?;
 
@@ -118,24 +117,23 @@ pub fn scan_network(
     let mut report = find_open_ports(context.clone());
 
     let rtsp_services =
-        runtime.block_on(find_rtsp_services(context.clone(), report.socket_addrs()))?;
+        runtime.block_on(find_rtsp_services(context.clone(), report.socket_addrs()));
 
     let rtsp_services = filter_duplicit_services(rtsp_services, rtsp_port_priorities);
 
     let rtsp_streams = runtime.block_on(find_rtsp_streams(
         context.clone(),
         rtsp_services.into_iter(),
-    ))?;
+    ));
 
     let http_services =
-        runtime.block_on(find_http_services(context.clone(), report.socket_addrs()))?;
+        runtime.block_on(find_http_services(context.clone(), report.socket_addrs()));
 
     let http_services = filter_duplicit_services(http_services, http_port_priorities);
 
     let mjpeg_services = http_services.clone();
 
-    let mjpeg_streams =
-        runtime.block_on(find_mjpeg_streams(context, mjpeg_services.into_iter()))?;
+    let mjpeg_streams = runtime.block_on(find_mjpeg_streams(context, mjpeg_services.into_iter()));
 
     let mut hosts = HashSet::new();
 
@@ -412,41 +410,6 @@ where
     Ok(res)
 }
 
-/// Wrapper around a boxed future.
-struct FutureResult<T> {
-    inner: Box<dyn Future<Item = T, Error = DiscoveryError>>,
-}
-
-impl<T> FutureResult<T> {
-    /// Create a new future result from a given future.
-    fn new<F>(fut: F) -> Self
-    where
-        F: 'static + Future<Item = T, Error = DiscoveryError>,
-    {
-        Self {
-            inner: Box::new(fut),
-        }
-    }
-}
-
-impl<T> Future for FutureResult<T> {
-    type Item = T;
-    type Error = DiscoveryError;
-
-    fn poll(&mut self) -> Poll<T, DiscoveryError> {
-        self.inner.poll()
-    }
-}
-
-impl<T> From<Result<T>> for FutureResult<T>
-where
-    T: 'static,
-{
-    fn from(result: Result<T>) -> Self {
-        Self::new(future::result(result))
-    }
-}
-
 /// Stream type.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum StreamType {
@@ -539,52 +502,38 @@ fn is_supported_mjpeg_service(response: &HttpResponse) -> bool {
 }
 
 /// Check if a given service is an RTSP service.
-fn is_rtsp_service(context: Context, addr: SocketAddr) -> FutureResult<bool> {
+async fn is_rtsp_service(context: Context, addr: SocketAddr) -> bool {
     let request = RtspRequest::options(&format!("rtsp://{}/", addr));
 
     if request.is_err() {
-        return FutureResult::from(Ok(false));
+        return false;
     }
 
-    let check = request
+    request
         .unwrap()
         .set_request_timeout(Some(context.get_request_timeout()))
         .send()
-        .then(|result| Ok(result.is_ok()));
-
-    FutureResult::new(check)
+        .await
+        .is_ok()
 }
 
 /// Check if a given service is an HTTP service.
-fn is_http_service(context: Context, addr: SocketAddr) -> FutureResult<bool> {
-    let check = get_http_response(context, addr, "/").then(|result| Ok(result.is_ok()));
-
-    FutureResult::new(check)
+async fn is_http_service(context: Context, addr: SocketAddr) -> bool {
+    get_http_response(context, addr, "/").await.is_ok()
 }
 
 /// Get HTTP response for a given path from a given HTTP server.
-fn get_http_response(context: Context, addr: SocketAddr, path: &str) -> FutureResult<HttpResponse> {
-    let request = HttpRequest::get_header(&format!("http://{}{}", addr, path))
-        .map_err(|err| DiscoveryError::from(format!("HTTP client error: {}", err)));
-
-    if let Err(err) = request {
-        return FutureResult::from(Err(err));
-    }
-
-    let response = request
-        .unwrap()
+async fn get_http_response(context: Context, addr: SocketAddr, path: &str) -> Result<HttpResponse> {
+    HttpRequest::get_header(&format!("http://{}{}", addr, path))
+        .map_err(|err| DiscoveryError::from(format!("HTTP client error: {}", err)))?
         .set_request_timeout(Some(context.get_request_timeout()))
         .send()
-        .map_err(|err| DiscoveryError::from(format!("HTTP client error: {}", err)));
-
-    FutureResult::new(response)
+        .await
+        .map_err(|err| DiscoveryError::from(format!("HTTP client error: {}", err)))
 }
 
 /// Find all RTSP services.
-fn find_rtsp_services<I>(
-    context: Context,
-    open_ports: I,
-) -> FutureResult<Vec<(MacAddr, SocketAddr)>>
+async fn find_rtsp_services<I>(context: Context, open_ports: I) -> Vec<(MacAddr, SocketAddr)>
 where
     I: IntoIterator<Item = (MacAddr, SocketAddr)>,
 {
@@ -592,20 +541,19 @@ where
 
     log_debug!(&mut logger, "looking for RTSP services");
 
-    filter_services(context, open_ports, |context, saddr| {
+    let filtered = filter_services(context, open_ports, |context, saddr| async move {
         if context.is_rtsp_port_candidate(saddr.port()) {
-            is_rtsp_service(context, saddr)
+            is_rtsp_service(context, saddr).await
         } else {
-            FutureResult::from(Ok(false))
+            false
         }
-    })
+    });
+
+    filtered.await
 }
 
 /// Find all HTTP services.
-fn find_http_services<I>(
-    context: Context,
-    open_ports: I,
-) -> FutureResult<Vec<(MacAddr, SocketAddr)>>
+async fn find_http_services<I>(context: Context, open_ports: I) -> Vec<(MacAddr, SocketAddr)>
 where
     I: IntoIterator<Item = (MacAddr, SocketAddr)>,
 {
@@ -613,33 +561,35 @@ where
 
     log_debug!(&mut logger, "looking for HTTP services");
 
-    filter_services(context, open_ports, |context, saddr| {
+    let filtered = filter_services(context, open_ports, |context, saddr| async move {
         if context.is_http_port_candidate(saddr.port()) {
-            is_http_service(context, saddr)
+            is_http_service(context, saddr).await
         } else {
-            FutureResult::from(Ok(false))
+            false
         }
-    })
+    });
+
+    filtered.await
 }
 
 /// Filter a given list of services using a given async predicate.
-fn filter_services<I, P>(
+async fn filter_services<I, P, F>(
     context: Context,
     candidates: I,
     predicate: P,
-) -> FutureResult<Vec<(MacAddr, SocketAddr)>>
+) -> Vec<(MacAddr, SocketAddr)>
 where
     I: IntoIterator<Item = (MacAddr, SocketAddr)>,
-    P: Fn(Context, SocketAddr) -> FutureResult<bool>,
+    P: Fn(Context, SocketAddr) -> F,
+    F: Future<Output = bool>,
 {
-    let futures = candidates.into_iter().map(|(mac, saddr)| {
-        predicate(context.clone(), saddr).then(move |res| match res {
-            Ok(res) => Ok((mac, saddr, res)),
-            Err(_) => Ok((mac, saddr, false)),
-        })
-    });
+    let futures = candidates
+        .into_iter()
+        .map(|(mac, saddr)| predicate(context.clone(), saddr).map(move |res| (mac, saddr, res)));
 
-    let filtered = stream::futures_unordered(futures)
+    futures::future::join_all(futures)
+        .await
+        .into_iter()
         .filter_map(
             |(mac, saddr, res)| {
                 if res {
@@ -649,9 +599,7 @@ where
                 }
             },
         )
-        .collect();
-
-    FutureResult::new(filtered)
+        .collect()
 }
 
 /// Filter out duplicit services from a given list using given priorities.
@@ -693,7 +641,7 @@ where
 }
 
 /// Find all RTSP streams.
-fn find_rtsp_streams<I>(context: Context, rtsp_services: I) -> FutureResult<Vec<Service>>
+async fn find_rtsp_streams<I>(context: Context, rtsp_services: I) -> Vec<Service>
 where
     I: IntoIterator<Item = (MacAddr, SocketAddr)>,
 {
@@ -705,96 +653,75 @@ where
         .into_iter()
         .map(|(mac, addr)| find_rtsp_stream(context.clone(), mac, addr));
 
-    let streams = stream::futures_unordered(futures);
-
-    FutureResult::new(streams.collect())
+    futures::future::join_all(futures).await
 }
 
 /// Find the first available RTSP stream for a given RTSP service.
-fn find_rtsp_stream(context: Context, mac: MacAddr, addr: SocketAddr) -> FutureResult<Service> {
+async fn find_rtsp_stream(context: Context, mac: MacAddr, addr: SocketAddr) -> Service {
     let paths = context.get_rtsp_paths();
 
-    let result = Arc::new(Mutex::new(Service::unknown_rtsp(mac, addr)));
+    let mut res = Service::unknown_rtsp(mac, addr);
 
-    let accumulator = Arc::downgrade(&result);
+    for path in paths.iter() {
+        let service = get_rtsp_stream(context.clone(), mac, addr, path);
 
-    let stream = stream::iter_ok::<_, DiscoveryError>(0..paths.len())
-        .and_then(move |index| match paths.get(index) {
-            Some(path) => get_rtsp_stream(context.clone(), mac, addr, path),
-            None => FutureResult::from(Ok(None)),
-        })
-        .filter_map(|svc| svc)
-        .skip_while(move |svc| {
-            if let Some(result) = accumulator.upgrade() {
-                *result.lock().unwrap() = svc.clone();
-            }
-
-            match svc.service_type() {
-                ServiceType::RTSP | ServiceType::LockedRTSP => Ok(false),
-                _ => Ok(true),
-            }
-        })
-        .into_future()
-        .and_then(move |_| {
-            if let Ok(result) = Arc::try_unwrap(result) {
-                Ok(result.into_inner().unwrap())
+        if let Some(svc) = service.await {
+            if svc.service_type() == ServiceType::RTSP
+                || svc.service_type() == ServiceType::LockedRTSP
+            {
+                return svc;
             } else {
-                Ok(Service::unknown_rtsp(mac, addr))
+                res = svc;
             }
-        })
-        .or_else(move |_| Ok(Service::unknown_rtsp(mac, addr)));
+        }
+    }
 
-    FutureResult::new(stream)
+    res
 }
 
 /// Get RTSP stream or None for a given RTSP service and path.
-fn get_rtsp_stream(
+async fn get_rtsp_stream(
     context: Context,
     mac: MacAddr,
     addr: SocketAddr,
     path: &str,
-) -> FutureResult<Option<Service>> {
+) -> Option<Service> {
     let path = path.to_string();
 
-    let service = get_rtsp_stream_type(context, addr, &path).map(move |status| match status {
+    let stream_type = get_rtsp_stream_type(context, addr, &path);
+
+    match stream_type.await {
         StreamType::Supported => Some(Service::rtsp(mac, addr, path)),
         StreamType::Unsupported => Some(Service::unsupported_rtsp(mac, addr, path)),
         StreamType::Locked => Some(Service::locked_rtsp(mac, addr, None)),
 
         _ => None,
-    });
-
-    FutureResult::new(service)
+    }
 }
 
 /// Get stream type for a given RTSP service and path.
-fn get_rtsp_stream_type(
-    context: Context,
-    addr: SocketAddr,
-    path: &str,
-) -> FutureResult<StreamType> {
+async fn get_rtsp_stream_type(context: Context, addr: SocketAddr, path: &str) -> StreamType {
     let path = path.to_string();
 
     let request = RtspRequest::describe(&format!("rtsp://{}{}", addr, path));
 
     if request.is_err() {
-        return FutureResult::from(Ok(StreamType::Error));
+        return StreamType::Error;
     }
 
-    let status = request
+    request
         .unwrap()
         .set_request_timeout(Some(context.get_request_timeout()))
         .send()
-        .and_then(move |response| {
+        .await
+        .map(|response| {
             if is_hipcam_rtsp_response(&response) && path != "/11" && path != "/12" {
-                Ok(StreamType::NotFound)
+                StreamType::NotFound
             } else {
-                Ok(StreamType::from(response))
+                StreamType::from(response)
             }
         })
-        .or_else(|_| Ok(StreamType::Error));
-
-    FutureResult::new(status)
+        .unwrap_or(StreamType::Error)
 }
 
 /// Check if a given RTSP response is from a buggy Hi(I)pcam RTSP server.
@@ -806,7 +733,7 @@ fn is_hipcam_rtsp_response(response: &RtspResponse) -> bool {
 }
 
 /// Find all MJPEG streams.
-fn find_mjpeg_streams<I>(context: Context, mjpeg_services: I) -> FutureResult<Vec<Service>>
+async fn find_mjpeg_streams<I>(context: Context, mjpeg_services: I) -> Vec<Service>
 where
     I: IntoIterator<Item = (MacAddr, SocketAddr)>,
 {
@@ -818,51 +745,46 @@ where
         .into_iter()
         .map(|(mac, addr)| find_mjpeg_path(context.clone(), mac, addr));
 
-    let streams = stream::futures_unordered(futures).filter_map(|svc| svc);
-
-    FutureResult::new(streams.collect())
+    futures::future::join_all(futures)
+        .await
+        .into_iter()
+        .filter_map(|svc| svc)
+        .collect()
 }
 
 /// Find the first available MJPEG stream for a given HTTP service.
-fn find_mjpeg_path(
-    context: Context,
-    mac: MacAddr,
-    addr: SocketAddr,
-) -> FutureResult<Option<Service>> {
+async fn find_mjpeg_path(context: Context, mac: MacAddr, addr: SocketAddr) -> Option<Service> {
     let paths = context.get_mjpeg_paths();
 
-    let stream = stream::iter_ok::<_, DiscoveryError>(0..paths.len())
-        .and_then(move |index| match paths.get(index) {
-            Some(path) => get_mjpeg_stream(context.clone(), mac, addr, path),
-            None => FutureResult::from(Ok(None)),
-        })
-        .filter_map(|svc| svc)
-        .into_future()
-        .and_then(|(svc, _)| Ok(svc))
-        .or_else(|_| Ok(None));
+    for path in paths.iter() {
+        let service = get_mjpeg_stream(context.clone(), mac, addr, path);
 
-    FutureResult::new(stream)
+        if let Some(svc) = service.await {
+            return Some(svc);
+        }
+    }
+
+    None
 }
 
 /// Get MJPEG stream or None for a given HTTP service and path.
-fn get_mjpeg_stream(
+async fn get_mjpeg_stream(
     context: Context,
     mac: MacAddr,
     addr: SocketAddr,
     path: &str,
-) -> FutureResult<Option<Service>> {
+) -> Option<Service> {
     let path = path.to_string();
 
-    let service = get_http_response(context, addr, &path)
-        .map(move |response| match StreamType::from(response) {
+    get_http_response(context, addr, &path)
+        .await
+        .map(|response| match StreamType::from(response) {
             StreamType::Supported => Some(Service::mjpeg(mac, addr, path)),
             StreamType::Locked => Some(Service::locked_mjpeg(mac, addr, None)),
 
             _ => None,
         })
-        .or_else(|_| Ok(None));
-
-    FutureResult::new(service)
+        .unwrap_or(None)
 }
 
 /// Get a list of distinct hosts from a given list of services.

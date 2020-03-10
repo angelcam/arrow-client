@@ -257,7 +257,7 @@ pub mod scanner {
 
                     current += 1;
 
-                    let pkt = Bytes::from(buffer.as_slice());
+                    let pkt = Bytes::copy_from_slice(&buffer);
 
                     Some(pkt)
                 } else {

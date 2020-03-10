@@ -14,9 +14,6 @@
 
 //! Arrow Client definitions.
 
-#[macro_use]
-extern crate futures;
-
 #[cfg(feature = "discovery")]
 #[macro_use]
 extern crate lazy_static;

@@ -14,7 +14,7 @@
 
 use bytes::{Bytes, BytesMut};
 
-use tokio::codec::{Decoder, Encoder};
+use tokio_util::codec::{Decoder, Encoder};
 
 use crate::net::arrow::error::{ArrowError, ConnectionError};
 use crate::net::arrow::proto::error::DecodeError;
@@ -56,11 +56,10 @@ impl Decoder for ArrowCodec {
     }
 }
 
-impl Encoder for ArrowCodec {
-    type Item = ArrowMessage;
+impl Encoder<ArrowMessage> for ArrowCodec {
     type Error = ArrowError;
 
-    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(&mut self, item: ArrowMessage, dst: &mut BytesMut) -> Result<(), Self::Error> {
         item.encode(dst);
         Ok(())
     }
@@ -74,7 +73,7 @@ impl Decoder for RawCodec {
     type Error = ConnectionError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let bytes = src.take().freeze();
+        let bytes = src.split().freeze();
 
         if bytes.is_empty() {
             Ok(None)
@@ -84,11 +83,10 @@ impl Decoder for RawCodec {
     }
 }
 
-impl Encoder for RawCodec {
-    type Item = Bytes;
+impl Encoder<Bytes> for RawCodec {
     type Error = ConnectionError;
 
-    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(&mut self, item: Bytes, dst: &mut BytesMut) -> Result<(), Self::Error> {
         dst.extend_from_slice(&item);
         Ok(())
     }

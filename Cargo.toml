@@ -9,7 +9,7 @@ edition = "2018"
 
 [features]
 discovery = ["lazy_static"]
-threads = ["tokio-threadpool"]
+threads = ["tokio/rt-threaded"]
 exports = []
 all = ["discovery", "threads", "exports"]
 
@@ -17,26 +17,33 @@ all = ["discovery", "threads", "exports"]
 crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
-bytes        = "0.4"
+bytes        = "0.5"
 farmhash     = "1.1"
 fs2          = "0.4"
-futures      = "0.1"
-json         = "0.11"
+json         = "0.12"
 libc         = "0.2"
 openssl      = "0.10"
 time         = "0.1"
-tokio        = "0.1"
+
+[dependencies.futures]
+version = "0.3"
+default-features = false
+features = ["std"]
 
 [dependencies.lazy_static]
 version = "1.3"
 optional = true
 
-[dependencies.tokio-threadpool]
-version = "0.1"
-optional = true
+[dependencies.tokio]
+version = "0.2"
+features = ["rt-core", "tcp", "time", "stream", "dns"]
+
+[dependencies.tokio-util]
+version = "0.3"
+features = ["codec"]
 
 [dependencies.uuid]
-version  = "0.7"
+version  = "0.8"
 features = ["v4"]
 
 [build-dependencies]

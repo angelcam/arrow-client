@@ -14,22 +14,60 @@
 
 pub mod pipe;
 
+use std::pin::Pin;
+
 use futures::sink::Sink;
-use futures::stream::Stream;
+use futures::stream::TryStream;
+use futures::task::{Context, Poll};
 
 use self::pipe::Pipe;
 
-/// Extension to the Stream trait.
-pub trait StreamEx: Stream {
+/// Extension to the sink.
+pub trait SinkUnpin<T>: Sink<T> {
+    /// Convenience method for `Unpin` types.
+    fn poll_ready_unpin(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>>
+    where
+        Self: Unpin,
+    {
+        Pin::new(self).poll_ready(cx)
+    }
+
+    /// Convenience method for `Unpin` types.
+    fn start_send_unpin(&mut self, item: T) -> Result<(), Self::Error>
+    where
+        Self: Unpin,
+    {
+        Pin::new(self).start_send(item)
+    }
+
+    /// Convenience method for `Unpin` types.
+    fn poll_flush_unpin(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>>
+    where
+        Self: Unpin,
+    {
+        Pin::new(self).poll_flush(cx)
+    }
+
+    /// Convenience method for `Unpin` types.
+    fn poll_close_unpin(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>>
+    where
+        Self: Unpin,
+    {
+        Pin::new(self).poll_close(cx)
+    }
+}
+
+impl<T, I> SinkUnpin<I> for T where T: Sink<I> {}
+
+/// Extension to the TryStream trait.
+pub trait StreamPipe: TryStream {
     fn pipe<T>(self, other: T) -> Pipe<Self, T>
     where
-        T: Stream + Sink<SinkItem = Self::Item>,
-        T::SinkError: From<Self::Error>,
-        T::Error: From<T::SinkError>,
-        Self: Sized,
+        Self: Sized + Unpin,
+        T: TryStream<Error = Self::Error> + Sink<Self::Ok, Error = Self::Error> + Unpin,
     {
         pipe::new(self, other)
     }
 }
 
-impl<T: Stream> StreamEx for T {}
+impl<T> StreamPipe for T where T: TryStream {}
