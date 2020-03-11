@@ -154,6 +154,12 @@ impl SessionContext {
             _ => (),
         }
 
+        // we MUST notify any possible task consuming the input buffer that
+        // there is some data available again
+        if let Some(task) = self.input_ready.take() {
+            task.wake();
+        }
+
         Poll::Ready(())
     }
 
