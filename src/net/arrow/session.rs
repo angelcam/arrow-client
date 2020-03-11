@@ -22,7 +22,7 @@ use std::time::Duration;
 use bytes::BytesMut;
 
 use futures::task::{Context, Poll, Waker};
-use futures::{ready, Future, Stream};
+use futures::{Future, Stream};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
@@ -46,9 +46,8 @@ struct SessionContext {
     session_id: u32,
     input: BytesMut,
     output: BytesMut,
-    input_ready: Option<Waker>,
-    input_empty: Option<Waker>,
-    output_ready: Option<Waker>,
+    session_manager_task: Option<Waker>,
+    session_transport_task: Option<Waker>,
     closed: bool,
     error: Option<ConnectionError>,
 }
@@ -61,9 +60,8 @@ impl SessionContext {
             session_id,
             input: BytesMut::with_capacity(8192),
             output: BytesMut::with_capacity(8192),
-            input_ready: None,
-            input_empty: None,
-            output_ready: None,
+            session_manager_task: None,
+            session_transport_task: None,
             closed: false,
             error: None,
         }
@@ -84,10 +82,10 @@ impl SessionContext {
         } else {
             self.output.extend_from_slice(data);
 
-            // we MUST notify any possible task consuming the output buffer that
-            // there is some data available again
+            // we MUST notify the transport task that there is some data
+            // available in the output buffer again
             if !self.output.is_empty() {
-                if let Some(task) = self.output_ready.take() {
+                if let Some(task) = self.session_transport_task.take() {
                     task.wake();
                 }
             }
@@ -106,9 +104,9 @@ impl SessionContext {
     ) -> Poll<Option<Result<ArrowMessage, ConnectionError>>> {
         let data = self.input.split().freeze();
 
-        // we MUST notify any possible task feeding the input buffer that the
-        // buffer is empty again
-        if let Some(task) = self.input_empty.take() {
+        // we MUST notify the transport task that the input buffer is empty
+        // again
+        if let Some(task) = self.session_transport_task.take() {
             task.wake();
         }
 
@@ -123,8 +121,8 @@ impl SessionContext {
             }
         } else {
             // save the current task and wait until there is some data
-            // available in the input buffer
-            self.input_ready = Some(cx.waker().clone());
+            // available in the input buffer again
+            self.session_manager_task = Some(cx.waker().clone());
 
             Poll::Pending
         }
@@ -138,29 +136,38 @@ impl SessionContext {
         let input_buffer_len = self.input.len();
         let input_buffer_capacity = self.input.capacity();
 
-        if input_buffer_len >= input_buffer_capacity {
-            // save the current task and wait until there is some space in
-            // the input buffer
-            self.input_empty = Some(cx.waker().clone());
-
-            return Poll::Pending;
-        }
-
         let stream = Pin::new(stream);
 
-        match ready!(stream.poll_read_buf(cx, &mut self.input)) {
-            Ok(len) if len == 0 => self.close(),
-            Err(err) => self.set_error(ConnectionError::from(err)),
-            _ => (),
-        }
+        if self.closed {
+            Poll::Ready(())
+        } else if input_buffer_len >= input_buffer_capacity {
+            // save the current task and wait until there is some space in
+            // the input buffer again
+            self.session_transport_task = Some(cx.waker().clone());
 
-        // we MUST notify any possible task consuming the input buffer that
-        // there is some data available again
-        if let Some(task) = self.input_ready.take() {
-            task.wake();
-        }
+            Poll::Pending
+        } else if let Poll::Ready(res) = stream.poll_read_buf(cx, &mut self.input) {
+            match res {
+                Ok(len) if len == 0 => self.close(),
+                Err(err) => self.set_error(ConnectionError::from(err)),
+                _ => (),
+            }
 
-        Poll::Ready(())
+            // we MUST notify the session manager task that there is more data
+            // in the input buffer
+            if !self.input.is_empty() {
+                if let Some(task) = self.session_manager_task.take() {
+                    task.wake();
+                }
+            }
+
+            Poll::Ready(())
+        } else {
+            // save the current task and wait until the stream is ready again
+            self.session_transport_task = Some(cx.waker().clone());
+
+            Poll::Pending
+        }
     }
 
     /// Try to write data from the output buffer into a given `AsyncWrite`
@@ -169,21 +176,30 @@ impl SessionContext {
     where
         S: AsyncWrite + Unpin,
     {
-        if self.output.is_empty() {
-            // save the current task and wait until there is some data in
-            // the output buffer available again
-            self.output_ready = Some(cx.waker().clone());
-
-            return Poll::Pending;
-        }
-
         let stream = Pin::new(stream);
 
-        if let Err(err) = ready!(stream.poll_write_buf(cx, &mut self.output)) {
-            self.set_error(ConnectionError::from(err));
-        }
+        if self.output.is_empty() {
+            if self.closed {
+                Poll::Ready(())
+            } else {
+                // save the current task and wait until there is some data in
+                // the output buffer available again
+                self.session_transport_task = Some(cx.waker().clone());
 
-        Poll::Ready(())
+                Poll::Pending
+            }
+        } else if let Poll::Ready(res) = stream.poll_write_buf(cx, &mut self.output) {
+            if let Err(err) = res {
+                self.set_error(ConnectionError::from(err));
+            }
+
+            Poll::Ready(())
+        } else {
+            // save the current task and wait until the stream is ready again
+            self.session_transport_task = Some(cx.waker().clone());
+
+            Poll::Pending
+        }
     }
 
     /// Mark the context as closed. Note that this method does not flush any
@@ -191,15 +207,15 @@ impl SessionContext {
     fn close(&mut self) {
         self.closed = true;
 
-        // we MUST notify any possible task consuming the output buffer that
-        // the connection was closed and that there will be no more output data
-        if let Some(task) = self.output_ready.take() {
+        // we MUST notify the session transport task that the session has been
+        // closed
+        if let Some(task) = self.session_transport_task.take() {
             task.wake();
         }
 
-        // we MUST notify any possible task consuming the input buffer that
-        // the connection was closed and that there will be no more input data
-        if let Some(task) = self.input_ready.take() {
+        // we MUST notify the session manager task that the session has been
+        // closed
+        if let Some(task) = self.session_manager_task.take() {
             task.wake();
         }
     }
@@ -208,10 +224,13 @@ impl SessionContext {
     /// method does not flush any buffer.
     fn set_error(&mut self, err: ConnectionError) {
         // ignore all errors after the connection gets closed
-        if !self.closed {
-            self.closed = true;
-            self.error = Some(err);
+        if self.closed {
+            return;
         }
+
+        self.error = Some(err);
+
+        self.close();
     }
 }
 
