@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::net::arrow::error::{ArrowError, ConnectionError};
+use crate::net::arrow::error::ArrowError;
 use crate::net::arrow::proto::error::DecodeError;
 use crate::net::arrow::proto::msg::ArrowMessage;
 
@@ -61,33 +61,6 @@ impl Encoder<ArrowMessage> for ArrowCodec {
 
     fn encode(&mut self, item: ArrowMessage, dst: &mut BytesMut) -> Result<(), Self::Error> {
         item.encode(dst);
-        Ok(())
-    }
-}
-
-/// Simple raw codec used for service connections.
-pub struct RawCodec;
-
-impl Decoder for RawCodec {
-    type Item = Bytes;
-    type Error = ConnectionError;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let bytes = src.split().freeze();
-
-        if bytes.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(bytes))
-        }
-    }
-}
-
-impl Encoder<Bytes> for RawCodec {
-    type Error = ConnectionError;
-
-    fn encode(&mut self, item: Bytes, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.extend_from_slice(&item);
         Ok(())
     }
 }

@@ -19,21 +19,16 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 
-use futures::future::FutureExt;
-use futures::sink::Sink;
-use futures::stream::{Stream, StreamExt};
 use futures::task::{Context, Poll, Waker};
+use futures::{ready, Future, Stream};
 
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
-use tokio_util::codec::Decoder;
-
 use crate::context::ApplicationContext;
-use crate::futures_ex::StreamPipe;
 use crate::net::arrow::error::{ArrowError, ConnectionError};
-use crate::net::arrow::proto::codec::RawCodec;
 use crate::net::arrow::proto::msg::control::{
     ControlMessageFactory, EC_CONNECTION_ERROR, EC_NO_ERROR,
 };
@@ -41,7 +36,6 @@ use crate::net::arrow::proto::msg::ArrowMessage;
 use crate::svc_table::{BoxServiceTable, ServiceTable};
 use crate::utils::logger::{BoxLogger, Logger};
 
-const INPUT_BUFFER_LIMIT: usize = 32768;
 const OUTPUT_BUFFER_LIMIT: usize = 4 * 1024 * 1024;
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
@@ -136,75 +130,54 @@ impl SessionContext {
         }
     }
 
-    /// Check if the input buffer is ready to receive more data.
-    fn poll_input_ready(&mut self, cx: &mut Context) -> Poll<Result<(), ConnectionError>> {
-        if self.input.len() < INPUT_BUFFER_LIMIT {
-            Poll::Ready(Ok(()))
-        } else {
+    /// Try to read data from a given `AsyncRead` stream into the input buffer.
+    fn poll_read_input<S>(&mut self, cx: &mut Context, stream: &mut S) -> Poll<()>
+    where
+        S: AsyncRead + Unpin,
+    {
+        let input_buffer_len = self.input.len();
+        let input_buffer_capacity = self.input.capacity();
+
+        if input_buffer_len >= input_buffer_capacity {
             // save the current task and wait until there is some space in
             // the input buffer
             self.input_empty = Some(cx.waker().clone());
 
-            Poll::Pending
+            return Poll::Pending;
         }
+
+        let stream = Pin::new(stream);
+
+        match ready!(stream.poll_read_buf(cx, &mut self.input)) {
+            Ok(len) if len == 0 => self.close(),
+            Err(err) => self.set_error(ConnectionError::from(err)),
+            _ => (),
+        }
+
+        Poll::Ready(())
     }
 
-    /// Extend the input buffer with given data. The input buffer may
-    /// temporarily grow beyond its capacity because of it.
-    fn push_input_data(&mut self, msg: Bytes) -> Result<(), ConnectionError> {
-        if self.closed {
-            return Err(ConnectionError::from("connection has been closed"));
-        }
-
-        self.input.extend_from_slice(&msg);
-
-        // we MUST notify any possible task consuming the input buffer that
-        // there is some data available again
-        if !self.input.is_empty() {
-            if let Some(task) = self.input_ready.take() {
-                task.wake();
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Flush the input buffer. The method returns:
-    /// * `Poll::Ready(())` if the input buffer is empty
-    /// * `Poll::Pending` if the buffer is not empty
-    fn flush_input_buffer(&mut self, cx: &mut Context) -> Poll<Result<(), ConnectionError>> {
-        if self.input.is_empty() {
-            Poll::Ready(Ok(()))
-        } else {
-            // save the current task and wait until the input buffer is empty
-            self.input_empty = Some(cx.waker().clone());
-
-            Poll::Pending
-        }
-    }
-
-    /// Take data from the output buffer. The method returns:
-    /// * `Poll::Ready(Some(Ok(_)))` if there is some data available
-    /// * `Poll::Ready(None)` if the context has been closed and there is
-    ///   not data in the output buffer
-    /// * `Poll::NotReady` if there is no data available
-    fn take_output_data(
-        &mut self,
-        cx: &mut Context,
-    ) -> Poll<Option<Result<Bytes, ConnectionError>>> {
-        let data = self.output.split().freeze();
-
-        if !data.is_empty() {
-            Poll::Ready(Some(Ok(data)))
-        } else if self.closed {
-            Poll::Ready(None)
-        } else {
+    /// Try to write data from the output buffer into a given `AsyncWrite`
+    /// stream.
+    fn poll_write_output<S>(&mut self, cx: &mut Context, stream: &mut S) -> Poll<()>
+    where
+        S: AsyncWrite + Unpin,
+    {
+        if self.output.is_empty() {
             // save the current task and wait until there is some data in
             // the output buffer available again
             self.output_ready = Some(cx.waker().clone());
 
-            Poll::Pending
+            return Poll::Pending;
         }
+
+        let stream = Pin::new(stream);
+
+        if let Err(err) = ready!(stream.poll_write_buf(cx, &mut self.output)) {
+            self.set_error(ConnectionError::from(err));
+        }
+
+        Poll::Ready(())
     }
 
     /// Mark the context as closed. Note that this method does not flush any
@@ -243,12 +216,23 @@ struct Session {
 
 impl Session {
     /// Create a new session for a given service ID and session ID.
-    fn new(service_id: u16, session_id: u32) -> Self {
-        let context = SessionContext::new(service_id, session_id);
+    fn new(service_id: u16, session_id: u32, addr: SocketAddr) -> Self {
+        let context = Arc::new(Mutex::new(SessionContext::new(service_id, session_id)));
 
-        Self {
-            context: Arc::new(Mutex::new(context)),
-        }
+        let session = Session {
+            context: context.clone(),
+        };
+
+        tokio::spawn(async move {
+            let transport = SessionTransport::connect(context.clone(), addr);
+
+            match transport.await {
+                Ok(transport) => transport.await,
+                Err(err) => context.lock().unwrap().set_error(err),
+            }
+        });
+
+        session
     }
 
     /// Push a given Arrow Message into the output buffer.
@@ -271,70 +255,54 @@ impl Session {
     fn close(&mut self) {
         self.context.lock().unwrap().close()
     }
-
-    /// Get session transport.
-    fn transport(&self) -> SessionTransport {
-        SessionTransport {
-            context: self.context.clone(),
-        }
-    }
-
-    /// Get session error handler.
-    fn error_handler(&self) -> SessionErrorHandler {
-        SessionErrorHandler {
-            context: self.context.clone(),
-        }
-    }
 }
 
-/// Session transport.
+/// Session transport. It is a future that drives communication with the remote
+/// host.
 struct SessionTransport {
     context: Arc<Mutex<SessionContext>>,
+    stream: TcpStream,
 }
 
-impl Stream for SessionTransport {
-    type Item = Result<Bytes, ConnectionError>;
+impl SessionTransport {
+    /// Create a new session transport by connecting to a given host.
+    async fn connect(
+        context: Arc<Mutex<SessionContext>>,
+        addr: SocketAddr,
+    ) -> Result<Self, ConnectionError> {
+        let stream = tokio::time::timeout(CONNECTION_TIMEOUT, TcpStream::connect(addr))
+            .await
+            .map_err(|_| ConnectionError::from("connection timeout"))?
+            .map_err(ConnectionError::from)?;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        self.context.lock().unwrap().take_output_data(cx)
-    }
-}
+        let transport = Self { context, stream };
 
-impl Sink<Bytes> for SessionTransport {
-    type Error = ConnectionError;
-
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.context.lock().unwrap().poll_input_ready(cx)
-    }
-
-    fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
-        self.context.lock().unwrap().push_input_data(item)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.context.lock().unwrap().flush_input_buffer(cx)
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        let mut context = self.context.lock().unwrap();
-
-        // mark the context as closed
-        context.close();
-
-        // and wait until the input buffer is fully consumed
-        context.flush_input_buffer(cx)
+        Ok(transport)
     }
 }
 
-/// Session error handler.
-struct SessionErrorHandler {
-    context: Arc<Mutex<SessionContext>>,
-}
+impl Future for SessionTransport {
+    type Output = ();
 
-impl SessionErrorHandler {
-    /// Save a given transport error into the session context.
-    fn set_error(&mut self, err: ConnectionError) {
-        self.context.lock().unwrap().set_error(err)
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // just to make the borrow checker happy
+        let ctx = self.context.clone();
+
+        let mut context = ctx.lock().unwrap();
+
+        if context.closed {
+            return Poll::Ready(());
+        }
+
+        let read_poll = context.poll_read_input(cx, &mut self.stream);
+        let write_poll = context.poll_write_output(cx, &mut self.stream);
+
+        // poll us again ASAP if there is more work to be done
+        if read_poll.is_ready() || write_poll.is_ready() {
+            cx.waker().wake_by_ref();
+        }
+
+        Poll::Pending
     }
 }
 
@@ -423,25 +391,6 @@ impl SessionManager {
         Ok(session)
     }
 
-    /// Helper method.
-    async fn connect_inner(
-        addr: SocketAddr,
-        transport: SessionTransport,
-    ) -> Result<(), ConnectionError> {
-        let stream = tokio::time::timeout(CONNECTION_TIMEOUT, TcpStream::connect(addr))
-            .await
-            .map_err(|_| ConnectionError::from("connection timeout"))?
-            .map_err(ConnectionError::from)?;
-
-        let framed = RawCodec.framed(stream);
-
-        let (sink, stream) = framed.split();
-
-        let messages = stream.pipe(transport);
-
-        messages.forward(sink).await
-    }
-
     /// Connect to a given service and create an associated session object
     /// with a given ID.
     fn connect(&mut self, service_id: u16, session_id: u32) -> Result<Session, ArrowError> {
@@ -465,19 +414,7 @@ impl SessionManager {
             session_id
         );
 
-        let session = Session::new(service_id, session_id);
-
-        let mut err_handler = session.error_handler();
-
-        let client = Self::connect_inner(addr, session.transport()).map(move |res| {
-            if let Err(err) = res {
-                err_handler.set_error(err);
-            }
-        });
-
-        tokio::spawn(client);
-
-        Ok(session)
+        Ok(Session::new(service_id, session_id, addr))
     }
 
     /// Create HUP message for a given session.
