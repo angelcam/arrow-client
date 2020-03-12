@@ -21,17 +21,14 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use futures::sink::{Sink, SinkExt};
+use futures::sink::SinkExt;
 use futures::stream::{Stream, StreamExt};
 use futures::task::{Context, Poll, Waker};
-
-use tokio::net::TcpStream;
 
 use tokio_util::codec::Decoder;
 
 use crate::cmd_handler::{Command, CommandChannel};
 use crate::context::ApplicationContext;
-use crate::futures_ex::{SinkUnpin, StreamPipe};
 use crate::net::arrow::proto::codec::{ArrowCodec, FromBytes};
 use crate::net::arrow::proto::msg::control::ControlMessageFactory;
 use crate::net::arrow::proto::msg::control::{
@@ -42,7 +39,6 @@ use crate::net::arrow::proto::msg::control::{
 use crate::net::arrow::proto::msg::ArrowMessage;
 use crate::net::arrow::session::SessionManager;
 use crate::net::raw::ether::MacAddr;
-use crate::net::tls::{TlsConnector, TlsStream};
 use crate::svc_table::SharedServiceTableRef;
 use crate::utils::logger::{BoxLogger, Logger};
 
@@ -241,6 +237,24 @@ impl ArrowClientContext {
         self.send_unconfirmed_control_message(msg);
 
         self.last_ping = Instant::now();
+    }
+
+    /// Process a given Arrow Message.
+    fn process_arrow_message(&mut self, msg: ArrowMessage) -> Result<(), ArrowError> {
+        // ignore the message if the client has been closed
+        if self.is_closed() {
+            return Ok(());
+        }
+
+        let header = msg.header();
+
+        if header.service == 0 {
+            self.process_control_protocol_message(msg)?;
+        } else {
+            self.process_service_request_message(msg)?;
+        }
+
+        Ok(())
     }
 
     /// Process a given Control Protocol message.
@@ -460,46 +474,6 @@ impl ArrowClientContext {
     }
 }
 
-impl Sink<ArrowMessage> for ArrowClientContext {
-    type Error = ArrowError;
-
-    fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn start_send(mut self: Pin<&mut Self>, msg: ArrowMessage) -> Result<(), Self::Error> {
-        // ignore the message if the client has been closed
-        if self.is_closed() {
-            return Ok(());
-        }
-
-        let header = msg.header();
-
-        if header.service == 0 {
-            self.process_control_protocol_message(msg)?;
-        } else {
-            self.process_service_request_message(msg)?;
-        }
-
-        Ok(())
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_close(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.closed = true;
-
-        // notify the task consuming Arrow Messages that the connection has been closed
-        if let Some(task) = self.task.take() {
-            task.wake();
-        }
-
-        Poll::Ready(Ok(()))
-    }
-}
-
 impl Stream for ArrowClientContext {
     type Item = Result<ArrowMessage, ArrowError>;
 
@@ -527,13 +501,14 @@ impl Stream for ArrowClientContext {
     }
 }
 
-struct ArrowClient {
+struct ArrowClient<S> {
     context: Arc<Mutex<ArrowClientContext>>,
+    stream: S,
 }
 
-impl ArrowClient {
+impl<S> ArrowClient<S> {
     /// Create a new instance of Arrow Client.
-    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel) -> Self {
+    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel, stream: S) -> Self {
         let context = ArrowClientContext::new(app_context, cmd_channel);
 
         let context = Arc::new(Mutex::new(context));
@@ -551,7 +526,7 @@ impl ArrowClient {
             }
         });
 
-        Self { context }
+        Self { context, stream }
     }
 
     /// Get redirect address (if any).
@@ -560,56 +535,50 @@ impl ArrowClient {
     }
 }
 
-impl Drop for ArrowClient {
+impl<S> Drop for ArrowClient<S> {
     fn drop(&mut self) {
         let mut context = self.context.lock().unwrap();
 
-        // we must mark the context as closed so that the interval task gets terminated
+        // we must mark the context as closed so that the interval task gets terminated even in
+        // case of connection/communication error
         context.closed = true;
     }
 }
 
-impl Sink<ArrowMessage> for ArrowClient {
-    type Error = ArrowError;
-
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.context.lock().unwrap().poll_ready_unpin(cx)
-    }
-
-    fn start_send(self: Pin<&mut Self>, item: ArrowMessage) -> Result<(), Self::Error> {
-        self.context.lock().unwrap().start_send_unpin(item)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.context.lock().unwrap().poll_flush_unpin(cx)
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.context.lock().unwrap().poll_close_unpin(cx)
-    }
-}
-
-impl Stream for ArrowClient {
+impl<S> Stream for ArrowClient<S>
+where
+    S: Stream<Item = Result<ArrowMessage, ArrowError>> + Unpin,
+{
     type Item = Result<ArrowMessage, ArrowError>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        self.context.lock().unwrap().poll_next_unpin(cx)
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let ctx = self.context.clone();
+
+        let mut context = ctx.lock().unwrap();
+
+        // try to feed the context at least once on every poll
+        match self.stream.poll_next_unpin(cx) {
+            Poll::Ready(Some(Ok(msg))) => context.process_arrow_message(msg)?,
+            Poll::Ready(Some(Err(err))) => return Poll::Ready(Some(Err(err))),
+            Poll::Ready(None) => context.closed = true,
+            Poll::Pending => (),
+        }
+
+        loop {
+            // try to poll the context...
+            if let Poll::Ready(ready) = context.poll_next_unpin(cx) {
+                return Poll::Ready(ready);
+            }
+
+            // ... if it's pending, try to feed it again
+            match self.stream.poll_next_unpin(cx) {
+                Poll::Ready(Some(Ok(msg))) => context.process_arrow_message(msg)?,
+                Poll::Ready(Some(Err(err))) => return Poll::Ready(Some(Err(err))),
+                Poll::Ready(None) => context.closed = true,
+                Poll::Pending => return Poll::Pending,
+            }
+        }
     }
-}
-
-/// Create a TLS connection with a give Arrow Service.
-async fn connect_inner(
-    tls_connector: TlsConnector,
-    addr: &str,
-) -> Result<TlsStream<TcpStream>, ArrowError> {
-    let socket = TcpStream::connect(addr)
-        .await
-        .map_err(ArrowError::connection_error)?;
-
-    tls_connector
-        .connect(socket)
-        .await
-        .map_err(ArrowError::connection_error)
 }
 
 /// Connect Arrow Client to a given address and return either a redirect address or an error.
@@ -618,13 +587,11 @@ pub async fn connect(
     cmd_channel: CommandChannel,
     addr: &str,
 ) -> Result<String, ArrowError> {
-    let arrow_client = ArrowClient::new(app_context.clone(), cmd_channel);
-
     let tls_connector = app_context
         .get_tls_connector()
         .map_err(|err| ArrowError::other(format!("unable to get TLS context: {}", err)))?;
 
-    let stream = tokio::time::timeout(CONNECTION_TIMEOUT, connect_inner(tls_connector, addr))
+    let stream = tokio::time::timeout(CONNECTION_TIMEOUT, tls_connector.connect(addr))
         .await
         .map_err(|_| {
             ArrowError::connection_error(format!(
@@ -643,11 +610,11 @@ pub async fn connect(
 
     let (mut sink, stream) = framed.split();
 
-    let mut messages = stream.pipe(arrow_client);
+    let mut arrow_client = ArrowClient::new(app_context, cmd_channel, stream);
 
-    sink.send_all(&mut messages).await?;
+    let send = sink.send_all(&mut arrow_client);
 
-    let (_, _, arrow_client) = messages.unpipe();
+    send.await?;
 
     arrow_client
         .get_redirect()

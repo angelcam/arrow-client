@@ -44,9 +44,6 @@ pub mod context;
 pub mod exports;
 
 #[doc(hidden)]
-pub mod futures_ex;
-
-#[doc(hidden)]
 pub mod net;
 
 #[doc(hidden)]
