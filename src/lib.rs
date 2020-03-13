@@ -66,7 +66,6 @@ pub mod svc_table;
 pub use client::{ArrowClient, ArrowClientTask};
 pub use context::ApplicationEventListener as ArrowClientEventListener;
 pub use context::ConnectionState;
-pub use svc_table::Service;
 
 pub mod logger {
     pub use crate::utils::logger::file::FileLogger;
