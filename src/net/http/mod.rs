@@ -50,39 +50,35 @@ pub struct Error {
     msg: String,
 }
 
-impl ErrorTrait for Error {
-    fn description(&self) -> &str {
-        &self.msg
+impl Error {
+    /// Create a new error.
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
     }
 }
+
+impl ErrorTrait for Error {}
 
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        f.write_str(self.description())
-    }
-}
-
-impl From<String> for Error {
-    fn from(msg: String) -> Self {
-        Self { msg }
-    }
-}
-
-impl<'a> From<&'a str> for Error {
-    fn from(msg: &'a str) -> Self {
-        Self::from(msg.to_string())
+        f.write_str(&self.msg)
     }
 }
 
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Self {
-        Self::from(format!("IO error: {}", err))
+        Self::new(format!("IO error: {}", err))
     }
 }
 
 impl From<generic::Error> for Error {
     fn from(err: generic::Error) -> Self {
-        Self::from(err.description())
+        Self::new(err)
     }
 }
 
@@ -136,7 +132,7 @@ impl FromStr for Scheme {
     fn from_str(method: &str) -> Result<Self, Error> {
         match &method.to_lowercase() as &str {
             "http" => Ok(Self::HTTP),
-            _ => Err(Error::from("invalid URL scheme")),
+            _ => Err(Error::new("invalid URL scheme")),
         }
     }
 }
@@ -156,7 +152,7 @@ pub struct Request {
 impl Request {
     /// Create a new HTTP request.
     pub fn new(method: Method, url: &str, ignore_response_body: bool) -> Result<Self, Error> {
-        let url = Url::from_str(url).map_err(|_| Error::from("malformed URL"))?;
+        let url = Url::from_str(url).map_err(|_| Error::new("malformed URL"))?;
 
         let scheme = Scheme::from_str(url.scheme())?;
 
@@ -245,7 +241,7 @@ impl Request {
         stream
             .next()
             .await
-            .ok_or_else(|| Error::from("server closed connection unexpectedly"))?
+            .ok_or_else(|| Error::new("server closed connection unexpectedly"))?
     }
 
     /// Send the request and return a future response.
@@ -253,7 +249,7 @@ impl Request {
         if let Some(timeout) = self.timeout {
             tokio::time::timeout(timeout, self.send_inner())
                 .await
-                .map_err(|_| Error::from("request timeout"))?
+                .map_err(|_| Error::new("request timeout"))?
         } else {
             self.send_inner().await
         }
@@ -274,11 +270,11 @@ impl Response {
             let version = header.version();
 
             if protocol != "HTTP" {
-                return Err(Error::from("invalid protocol"));
+                return Err(Error::new("invalid protocol"));
             }
 
             if version != "1.0" && version != "1.1" {
-                return Err(Error::from("unsupported HTTP version"));
+                return Err(Error::new("unsupported HTTP version"));
             }
         }
 
@@ -380,9 +376,9 @@ impl Decoder for ClientCodec {
                 } else if let Some(clength) = header.get_header_field("content-length") {
                     let clength = clength
                         .value()
-                        .ok_or_else(|| Error::from("missing Content-Length value"))?;
+                        .ok_or_else(|| Error::new("missing Content-Length value"))?;
                     let clength = usize::from_str(clength)
-                        .map_err(|_| Error::from("unable to decode Content-Length"))?;
+                        .map_err(|_| Error::new("unable to decode Content-Length"))?;
 
                     Box::new(FixedSizeBodyDecoder::new(
                         clength,

@@ -64,7 +64,7 @@ impl ControlMessageBody for HupMessage {}
 impl FromBytes for HupMessage {
     fn from_bytes(bytes: &[u8]) -> Result<Option<Self>, DecodeError> {
         if bytes.len() != mem::size_of::<Self>() {
-            return Err(DecodeError::from(
+            return Err(DecodeError::new(
                 "malformed Arrow Control Protocol HUP message",
             ));
         }

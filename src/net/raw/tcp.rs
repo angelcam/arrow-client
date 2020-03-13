@@ -72,7 +72,7 @@ impl TcpPacket {
         let size = mem::size_of::<RawTcpPacketHeader>();
 
         if data.len() < size {
-            Err(PacketParseError::from(
+            Err(PacketParseError::new(
                 "unable to parse TCP packet, not enough data",
             ))
         } else {
@@ -88,7 +88,7 @@ impl TcpPacket {
             let offset_2 = offset_1 + (options_len << 2);
 
             if offset_2 > data.len() {
-                Err(PacketParseError::from(
+                Err(PacketParseError::new(
                     "unable to parse TCP packet, not enough data",
                 ))
             } else {

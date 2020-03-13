@@ -309,10 +309,10 @@ impl ControlMessage {
             | ControlMessageType::SCAN_NETWORK
             | ControlMessageType::GET_STATUS
             | ControlMessageType::GET_SCAN_REPORT => Self::decode_empty_message(bytes),
-            ControlMessageType::UNKNOWN => Err(DecodeError::from(
+            ControlMessageType::UNKNOWN => Err(DecodeError::new(
                 "unknown Arrow Control Protocol message type",
             )),
-            _ => Err(DecodeError::from(
+            _ => Err(DecodeError::new(
                 "unexpected Arrow Control Protocol message type",
             )),
         }
@@ -350,9 +350,7 @@ impl ControlMessage {
         if bytes.is_empty() {
             Ok(Box::new(EmptyMessage))
         } else {
-            Err(DecodeError::from(
-                "malformed Arrow Control Protocol message",
-            ))
+            Err(DecodeError::new("malformed Arrow Control Protocol message"))
         }
     }
 }
@@ -377,9 +375,7 @@ impl FromBytes for ControlMessage {
         let hsize = mem::size_of::<ControlMessageHeader>();
 
         if bytes.len() < hsize {
-            return Err(DecodeError::from(
-                "malformed Arrow Control Protocol message",
-            ));
+            return Err(DecodeError::new("malformed Arrow Control Protocol message"));
         }
 
         if let Some(header) = ControlMessageHeader::from_bytes(&bytes[..hsize])? {

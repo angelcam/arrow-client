@@ -106,15 +106,11 @@ impl ConfigError {
     }
 }
 
-impl Error for ConfigError {
-    fn description(&self) -> &str {
-        &self.msg
-    }
-}
+impl Error for ConfigError {}
 
 impl Display for ConfigError {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        f.write_str(self.description())
+        f.write_str(&self.msg)
     }
 }
 
@@ -902,7 +898,7 @@ impl Config {
     #[doc(hidden)]
     pub fn get_tls_connector(&mut self) -> Result<TlsConnector, RuntimeError> {
         let mut builder = SslConnector::builder(SslMethod::tls()).map_err(|err| {
-            RuntimeError::from(format!(
+            RuntimeError::new(format!(
                 "unable to create a TLS connection builder: {}",
                 err
             ))
@@ -921,11 +917,11 @@ impl Config {
         builder.set_verify(SslVerifyMode::PEER);
         builder
             .set_cipher_list(SSL_CIPHER_LIST)
-            .map_err(|err| RuntimeError::from(format!("unable to set TLS cipher list: {}", err)))?;
+            .map_err(|err| RuntimeError::new(format!("unable to set TLS cipher list: {}", err)))?;
 
         self.storage
             .load_ca_certificates(&mut builder)
-            .map_err(|err| RuntimeError::from(err.to_string()))?;
+            .map_err(RuntimeError::new)?;
 
         let connector = TlsConnector::from(builder.build());
 

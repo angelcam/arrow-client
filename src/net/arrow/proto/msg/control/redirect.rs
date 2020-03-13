@@ -46,14 +46,14 @@ impl FromBytes for RedirectMessage {
         let length = bytes.len();
 
         if length == 0 || bytes[length - 1] != 0 {
-            return Err(DecodeError::from(
+            return Err(DecodeError::new(
                 "malformed Arrow Control Protocol REDIRECT message",
             ));
         }
 
         let bytes = &bytes[..length - 1];
         let target = str::from_utf8(bytes)
-            .map_err(|_| DecodeError::from("malformed Arrow Control Protocol REDIRECT message"))?;
+            .map_err(|_| DecodeError::new("malformed Arrow Control Protocol REDIRECT message"))?;
 
         let msg = Self {
             target: target.to_string(),

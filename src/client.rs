@@ -14,7 +14,6 @@
 
 use std::process;
 
-use std::error::Error;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
 
@@ -121,7 +120,7 @@ impl ArrowMainTask {
 
                 ConnectionState::Unauthorized
             } else {
-                log_warn!(&mut self.logger, "{}", err.description());
+                log_warn!(&mut self.logger, "{}", err);
 
                 ConnectionState::Disconnected
             };

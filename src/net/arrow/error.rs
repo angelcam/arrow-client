@@ -47,52 +47,54 @@ pub struct ArrowError {
 
 impl ArrowError {
     /// Create a new ArrowError with a given ErrorKind.
-    fn new<T>(kind: ErrorKind, val: T) -> Self
+    fn new<T>(kind: ErrorKind, msg: T) -> Self
     where
-        Self: From<T>,
+        T: ToString,
     {
-        let err = Self::from(val);
-        Self { kind, msg: err.msg }
+        Self {
+            kind,
+            msg: msg.to_string(),
+        }
     }
 
     /// Create a new connection error.
-    pub fn connection_error<T>(val: T) -> Self
+    pub fn connection_error<T>(msg: T) -> Self
     where
-        Self: From<T>,
+        T: ToString,
     {
-        Self::new(ErrorKind::ConnectionError, val)
+        Self::new(ErrorKind::ConnectionError, msg)
     }
 
     /// Create a new unsupported protocol version error.
-    pub fn unsupported_protocol_version<T>(val: T) -> Self
+    pub fn unsupported_protocol_version<T>(msg: T) -> Self
     where
-        Self: From<T>,
+        T: ToString,
     {
-        Self::new(ErrorKind::UnsupportedProtocolVersion, val)
+        Self::new(ErrorKind::UnsupportedProtocolVersion, msg)
     }
 
     /// Create a new unauthorized error.
-    pub fn unauthorized<T>(val: T) -> Self
+    pub fn unauthorized<T>(msg: T) -> Self
     where
-        Self: From<T>,
+        T: ToString,
     {
-        Self::new(ErrorKind::Unauthorized, val)
+        Self::new(ErrorKind::Unauthorized, msg)
     }
 
     /// Create a new Arrow Server error.
-    pub fn arrow_server_error<T>(val: T) -> Self
+    pub fn arrow_server_error<T>(msg: T) -> Self
     where
-        Self: From<T>,
+        T: ToString,
     {
-        Self::new(ErrorKind::ArrowServerError, val)
+        Self::new(ErrorKind::ArrowServerError, msg)
     }
 
     /// Create another error.
-    pub fn other<T>(val: T) -> Self
+    pub fn other<T>(msg: T) -> Self
     where
-        Self: From<T>,
+        T: ToString,
     {
-        Self::new(ErrorKind::Other, val)
+        Self::new(ErrorKind::Other, msg)
     }
 
     /// Get error kind.
@@ -101,11 +103,7 @@ impl ArrowError {
     }
 }
 
-impl Error for ArrowError {
-    fn description(&self) -> &str {
-        &self.msg
-    }
-}
+impl Error for ArrowError {}
 
 impl Display for ArrowError {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
@@ -130,31 +128,31 @@ impl<'a> From<&'a str> for ArrowError {
 
 impl From<io::Error> for ArrowError {
     fn from(err: io::Error) -> Self {
-        Self::from(format!("IO error: {}", err))
+        Self::other(format!("IO error: {}", err))
     }
 }
 
 impl From<DecodeError> for ArrowError {
     fn from(err: DecodeError) -> Self {
-        Self::from(format!("Arrow Message decoding error: {}", err))
+        Self::other(format!("Arrow Message decoding error: {}", err))
     }
 }
 
 impl From<ConnectionError> for ArrowError {
     fn from(err: ConnectionError) -> Self {
-        Self::from(format!("connection error: {}", err))
+        Self::other(format!("connection error: {}", err))
     }
 }
 
 impl From<RuntimeError> for ArrowError {
     fn from(err: RuntimeError) -> Self {
-        Self::from(format!("runtime error: {}", err))
+        Self::other(format!("runtime error: {}", err))
     }
 }
 
 impl From<TlsError> for ArrowError {
     fn from(err: TlsError) -> Self {
-        Self::from(format!("TLS error: {}", err))
+        Self::other(format!("TLS error: {}", err))
     }
 }
 
@@ -164,11 +162,19 @@ pub struct ConnectionError {
     msg: String,
 }
 
-impl Error for ConnectionError {
-    fn description(&self) -> &str {
-        &self.msg
+impl ConnectionError {
+    /// Create a new error.
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
     }
 }
+
+impl Error for ConnectionError {}
 
 impl Display for ConnectionError {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
@@ -176,20 +182,8 @@ impl Display for ConnectionError {
     }
 }
 
-impl From<String> for ConnectionError {
-    fn from(msg: String) -> Self {
-        Self { msg }
-    }
-}
-
-impl<'a> From<&'a str> for ConnectionError {
-    fn from(msg: &'a str) -> Self {
-        Self::from(msg.to_string())
-    }
-}
-
 impl From<io::Error> for ConnectionError {
     fn from(err: io::Error) -> Self {
-        Self::from(format!("IO error: {}", err))
+        Self::new(format!("IO error: {}", err))
     }
 }

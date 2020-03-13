@@ -57,27 +57,23 @@ pub struct RuntimeError {
     msg: String,
 }
 
-impl Error for RuntimeError {
-    fn description(&self) -> &str {
-        &self.msg
+impl RuntimeError {
+    /// Create a new error.
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
     }
 }
+
+impl Error for RuntimeError {}
 
 impl Display for RuntimeError {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         f.write_str(&self.msg)
-    }
-}
-
-impl From<String> for RuntimeError {
-    fn from(msg: String) -> Self {
-        Self { msg }
-    }
-}
-
-impl<'a> From<&'a str> for RuntimeError {
-    fn from(msg: &'a str) -> Self {
-        Self::from(msg.to_string())
     }
 }
 
@@ -215,7 +211,7 @@ mod tests {
                 &mut logger,
                 Severity::WARN,
                 "",
-                Err(RuntimeError::from("foo"))
+                Err(RuntimeError::new("foo"))
             )
         );
     }

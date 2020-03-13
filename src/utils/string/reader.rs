@@ -25,23 +25,23 @@ pub struct ParseError {
     msg: String,
 }
 
-impl Error for ParseError {
-    fn description(&self) -> &str {
-        &self.msg
+impl ParseError {
+    /// Create a new error.
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
     }
 }
+
+impl Error for ParseError {}
 
 impl Display for ParseError {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
         f.write_str(&self.msg)
-    }
-}
-
-impl<'a> From<&'a str> for ParseError {
-    fn from(msg: &'a str) -> Self {
-        Self {
-            msg: msg.to_string(),
-        }
     }
 }
 
@@ -79,7 +79,7 @@ impl<'a> Reader<'a> {
         let res = self
             .input
             .next()
-            .ok_or_else(|| ParseError::from("input is empty"))?;
+            .ok_or_else(|| ParseError::new("input is empty"))?;
 
         // Peek for the next character without advancing the input.
         self.current = self.input.clone().next();
@@ -91,10 +91,10 @@ impl<'a> Reader<'a> {
     pub fn match_char(&mut self, expected: char) -> Result<()> {
         let c = self
             .current_char()
-            .ok_or_else(|| ParseError::from("input is empty"))?;
+            .ok_or_else(|| ParseError::new("input is empty"))?;
 
         if c != expected {
-            return Err(ParseError::from("unexpected character"));
+            return Err(ParseError::new("unexpected character"));
         }
 
         self.skip_char();
@@ -136,7 +136,7 @@ impl<'a> Reader<'a> {
 
             Ok(())
         } else {
-            Err(ParseError::from("string does not match"))
+            Err(ParseError::new("string does not match"))
         }
     }
 
@@ -161,7 +161,7 @@ impl<'a> Reader<'a> {
         }
 
         if cnt == 0 {
-            Err(ParseError::from("no integer found"))
+            Err(ParseError::new("no integer found"))
         } else {
             Ok(res)
         }

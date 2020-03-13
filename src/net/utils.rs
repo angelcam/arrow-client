@@ -27,9 +27,9 @@ where
 {
     s.to_socket_addrs()
         .ok()
-        .ok_or_else(|| RuntimeError::from("unable to get socket address"))?
+        .ok_or_else(|| RuntimeError::new("unable to get socket address"))?
         .next()
-        .ok_or_else(|| RuntimeError::from("unable to get socket address"))
+        .ok_or_else(|| RuntimeError::new("unable to get socket address"))
 }
 
 /// Ipv4Addr extension.

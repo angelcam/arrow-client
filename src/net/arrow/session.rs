@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::collections::{HashMap, VecDeque};
-use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -78,7 +77,7 @@ impl SessionContext {
 
         if (self.output.len() + data.len()) > OUTPUT_BUFFER_LIMIT {
             // we cannot backpressure here, so we'll set an error state
-            self.set_error(ConnectionError::from("output buffer limit exceeded"));
+            self.set_error(ConnectionError::new("output buffer limit exceeded"));
         } else {
             self.output.extend_from_slice(data);
 
@@ -297,7 +296,7 @@ impl SessionTransport {
     ) -> Result<Self, ConnectionError> {
         let stream = tokio::time::timeout(CONNECTION_TIMEOUT, TcpStream::connect(addr))
             .await
-            .map_err(|_| ConnectionError::from("connection timeout"))?
+            .map_err(|_| ConnectionError::new("connection timeout"))?
             .map_err(ConnectionError::from)?;
 
         let transport = Self { context, stream };
@@ -378,7 +377,7 @@ impl SessionManager {
             log_warn!(
                 self.logger,
                 "unable to connect to a remote service: {}",
-                err.description()
+                err
             );
 
             let msg = self.create_hup_message(header.session, EC_CONNECTION_ERROR);
@@ -509,7 +508,7 @@ impl Stream for SessionManager {
                                 self.logger,
                                 "service connection error; session ID: {:08x}: {}",
                                 session_id,
-                                err.description()
+                                err
                             );
 
                             let msg = self.create_hup_message(session_id, EC_CONNECTION_ERROR);

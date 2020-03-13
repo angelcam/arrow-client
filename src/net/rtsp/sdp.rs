@@ -31,29 +31,23 @@ pub struct ParseError {
     msg: String,
 }
 
-impl Error for ParseError {
-    fn description(&self) -> &str {
-        &self.msg
+impl ParseError {
+    /// Create a new error.
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
     }
 }
+
+impl Error for ParseError {}
 
 impl Display for ParseError {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
         f.write_str(&self.msg)
-    }
-}
-
-impl From<String> for ParseError {
-    fn from(msg: String) -> Self {
-        Self { msg }
-    }
-}
-
-impl<'a> From<&'a str> for ParseError {
-    fn from(msg: &'a str) -> Self {
-        Self {
-            msg: msg.to_string(),
-        }
     }
 }
 
@@ -144,7 +138,7 @@ impl FromStr for MediaDescription {
 
         let c = reader
             .current_char()
-            .ok_or_else(|| reader::ParseError::from("empty input"))?;
+            .ok_or_else(|| reader::ParseError::new("empty input"))?;
 
         let np = if c == '/' {
             reader.skip_char();
@@ -210,7 +204,7 @@ impl FromStr for Attribute {
 
             Ok(Self::new(name, value))
         } else {
-            Err(ParseError::from("invalid attribute"))
+            Err(ParseError::new("invalid attribute"))
         }
     }
 }
@@ -280,12 +274,12 @@ impl FromAttribute for RTPMap {
 
         if key == "rtpmap" {
             if let Some(ref val) = attr.value {
-                Self::from_str(val).map_err(|_| ParseError::from("invalid attribute"))
+                Self::from_str(val).map_err(|_| ParseError::new("invalid attribute"))
             } else {
-                Err(ParseError::from("invalid attribute"))
+                Err(ParseError::new("invalid attribute"))
             }
         } else {
-            Err(ParseError::from("invalid attribute"))
+            Err(ParseError::new("invalid attribute"))
         }
     }
 }
@@ -340,7 +334,7 @@ impl LineReader {
             self.partial = true;
 
             if self.buffer.len() >= self.capacity {
-                return Err(ParseError::from("line length exceeded"));
+                return Err(ParseError::new("line length exceeded"));
             } else if data[pos] == 0x0d || data[pos] == 0x0a {
                 self.complete = true;
             } else {
@@ -443,15 +437,15 @@ impl SessionDescriptionParser {
         reader.skip_whitespace();
         reader
             .match_char('v')
-            .map_err(|_| ParseError::from("invalid version line"))?;
+            .map_err(|_| ParseError::new("invalid version line"))?;
         reader.skip_whitespace();
         reader
             .match_char('=')
-            .map_err(|_| ParseError::from("invalid version line"))?;
+            .map_err(|_| ParseError::new("invalid version line"))?;
 
         let val = reader
             .read_decimal_u32()
-            .map_err(|_| ParseError::from("invalid version line"))?;
+            .map_err(|_| ParseError::new("invalid version line"))?;
 
         self.sdp.version = val as i32;
 
@@ -489,15 +483,15 @@ impl SessionDescriptionParser {
         reader.skip_whitespace();
         reader
             .match_char('m')
-            .map_err(|_| ParseError::from("invalid media description line"))?;
+            .map_err(|_| ParseError::new("invalid media description line"))?;
         reader.skip_whitespace();
         reader
             .match_char('=')
-            .map_err(|_| ParseError::from("invalid media description line"))?;
+            .map_err(|_| ParseError::new("invalid media description line"))?;
         reader.skip_whitespace();
 
         let md = MediaDescription::from_str(reader.as_str())
-            .map_err(|_| ParseError::from("invalid media description line"))?;
+            .map_err(|_| ParseError::new("invalid media description line"))?;
 
         self.sdp.media_descriptions.push(md);
 
@@ -523,15 +517,15 @@ impl SessionDescriptionParser {
         reader.skip_whitespace();
         reader
             .match_char('a')
-            .map_err(|_| ParseError::from("invalid media attribute line"))?;
+            .map_err(|_| ParseError::new("invalid media attribute line"))?;
         reader.skip_whitespace();
         reader
             .match_char('=')
-            .map_err(|_| ParseError::from("invalid media attribute line"))?;
+            .map_err(|_| ParseError::new("invalid media attribute line"))?;
         reader.skip_whitespace();
 
         let attr = Attribute::from_str(reader.as_str())
-            .map_err(|_| ParseError::from("invalid media attribute line"))?;
+            .map_err(|_| ParseError::new("invalid media attribute line"))?;
 
         let last_md = self.sdp.media_descriptions.last_mut().unwrap();
 

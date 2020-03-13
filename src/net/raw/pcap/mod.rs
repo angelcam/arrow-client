@@ -87,11 +87,7 @@ impl Display for PcapError {
     }
 }
 
-impl Error for PcapError {
-    fn description(&self) -> &str {
-        &self.msg
-    }
-}
+impl Error for PcapError {}
 
 /// Common result type for this module.
 pub type Result<T> = std::result::Result<T, PcapError>;

@@ -55,11 +55,19 @@ pub struct DiscoveryError {
     msg: String,
 }
 
-impl Error for DiscoveryError {
-    fn description(&self) -> &str {
-        &self.msg
+impl DiscoveryError {
+    /// Create a new error.
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
     }
 }
+
+impl Error for DiscoveryError {}
 
 impl Display for DiscoveryError {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
@@ -67,27 +75,15 @@ impl Display for DiscoveryError {
     }
 }
 
-impl From<String> for DiscoveryError {
-    fn from(msg: String) -> Self {
-        Self { msg }
-    }
-}
-
-impl<'a> From<&'a str> for DiscoveryError {
-    fn from(msg: &'a str) -> Self {
-        Self::from(msg.to_string())
-    }
-}
-
 impl From<pcap::PcapError> for DiscoveryError {
     fn from(err: pcap::PcapError) -> Self {
-        Self::from(format!("pcap error: {}", err.description()))
+        Self::new(format!("pcap error: {}", err))
     }
 }
 
 impl From<io::Error> for DiscoveryError {
     fn from(err: io::Error) -> Self {
-        Self::from(format!("IO error: {}", err))
+        Self::new(format!("IO error: {}", err))
     }
 }
 
@@ -107,7 +103,7 @@ pub fn scan_network(
         .enable_io()
         .enable_time()
         .build()
-        .map_err(|err| DiscoveryError::from(format!("Async IO error: {}", err)))?;
+        .map_err(|err| DiscoveryError::new(format!("Async IO error: {}", err)))?;
 
     let context = Context::new(logger, discovery_whitelist, rtsp_paths, mjpeg_paths)?;
 
@@ -525,11 +521,11 @@ async fn is_http_service(context: Context, addr: SocketAddr) -> bool {
 /// Get HTTP response for a given path from a given HTTP server.
 async fn get_http_response(context: Context, addr: SocketAddr, path: &str) -> Result<HttpResponse> {
     HttpRequest::get_header(&format!("http://{}{}", addr, path))
-        .map_err(|err| DiscoveryError::from(format!("HTTP client error: {}", err)))?
+        .map_err(|err| DiscoveryError::new(format!("HTTP client error: {}", err)))?
         .set_request_timeout(Some(context.get_request_timeout()))
         .send()
         .await
-        .map_err(|err| DiscoveryError::from(format!("HTTP client error: {}", err)))
+        .map_err(|err| DiscoveryError::new(format!("HTTP client error: {}", err)))
 }
 
 /// Find all RTSP services.
