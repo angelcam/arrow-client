@@ -23,9 +23,9 @@ use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use std::string::FromUtf8Error;
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 
-use tokio::codec::Decoder;
+use tokio_util::codec::Decoder;
 
 use crate::utils::string::reader::Reader as StringReader;
 
@@ -35,11 +35,19 @@ pub struct Error {
     msg: String,
 }
 
-impl ErrorTrait for Error {
-    fn description(&self) -> &str {
-        &self.msg
+impl Error {
+    /// Create a new error.
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
     }
 }
+
+impl ErrorTrait for Error {}
 
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
@@ -47,27 +55,15 @@ impl Display for Error {
     }
 }
 
-impl From<String> for Error {
-    fn from(msg: String) -> Self {
-        Self { msg }
-    }
-}
-
-impl<'a> From<&'a str> for Error {
-    fn from(msg: &'a str) -> Self {
-        Self::from(msg.to_string())
-    }
-}
-
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Self {
-        Self::from(format!("IO error: {}", err))
+        Self::new(format!("IO error: {}", err))
     }
 }
 
 impl From<FromUtf8Error> for Error {
     fn from(err: FromUtf8Error) -> Self {
-        Self::from(format!("UTF-8 error: {}", err))
+        Self::new(format!("UTF-8 error: {}", err))
     }
 }
 
@@ -475,14 +471,14 @@ impl FromStr for ResponseHeader {
 
         reader
             .match_char('/')
-            .map_err(|_| Error::from("invalid response header"))?;
+            .map_err(|_| Error::new("invalid response header"))?;
 
         let version = reader.read_word();
         let status_code = reader.read_word();
         let status_line = reader.as_str();
 
         let status_code =
-            u16::from_str(status_code).map_err(|_| Error::from("invalid response header"))?;
+            u16::from_str(status_code).map_err(|_| Error::new("invalid response header"))?;
 
         let status_line = status_line.trim();
 
@@ -589,7 +585,7 @@ impl Decoder for LineDecoder {
                 let line = String::from_utf8(line)?;
 
                 if line_length > old_buffer_length {
-                    data.split_to(line_length - old_buffer_length);
+                    data.advance(line_length - old_buffer_length);
                 }
 
                 self.buffer.clear();
@@ -598,11 +594,11 @@ impl Decoder for LineDecoder {
             }
         }
 
-        data.split_to(append);
+        data.advance(append);
 
         // no separator was found and the buffer is already full
         if new_buffer_length >= self.max_length {
-            return Err(Error::from("input line is too long"));
+            return Err(Error::new("input line is too long"));
         }
 
         Ok(None)
@@ -650,7 +646,7 @@ impl Decoder for ResponseHeaderDecoder {
             self.lines += 1;
 
             if self.lines > self.max_lines {
-                return Err(Error::from("maximum number of lines exceeded"));
+                return Err(Error::new("maximum number of lines exceeded"));
             }
 
             if let Some(mut header) = self.header.take() {
@@ -728,7 +724,7 @@ impl Decoder for SimpleBodyDecoder {
     type Error = Error;
 
     fn decode(&mut self, data: &mut BytesMut) -> Result<Option<MessageBody>, Error> {
-        let data = data.take();
+        let data = data.split();
 
         if !self.ignore {
             self.body.extend_from_slice(data.as_ref());
@@ -798,7 +794,7 @@ impl Decoder for FixedSizeBodyDecoder {
         } else if let Some(body) = self.body.take() {
             Ok(Some(body.into_boxed_slice()))
         } else {
-            Err(Error::from("no more data is expected"))
+            Err(Error::new("no more data is expected"))
         }
     }
 
@@ -810,7 +806,7 @@ impl Decoder for FixedSizeBodyDecoder {
         } else if let Some(body) = self.body.take() {
             Ok(Some(body.into_boxed_slice()))
         } else {
-            Err(Error::from("no more data is expected"))
+            Err(Error::new("no more data is expected"))
         }
     }
 }
@@ -853,7 +849,7 @@ impl ChunkedBodyDecoder {
             ChunkedDecoderState::ChunkBody => self.decode_chunk_body(data),
             ChunkedDecoderState::ChunkBodyDelimiter => self.decode_chunk_body_delimiter(data),
             ChunkedDecoderState::TrailerPart => self.decode_trailer_part(data),
-            ChunkedDecoderState::Completed => Err(Error::from("no more data is expected")),
+            ChunkedDecoderState::Completed => Err(Error::new("no more data is expected")),
         }
     }
 
@@ -865,7 +861,7 @@ impl ChunkedBodyDecoder {
             let size = reader.read_until(|c| c == ';');
 
             let size =
-                usize::from_str_radix(size, 16).map_err(|_| Error::from("invalid chunk size"))?;
+                usize::from_str_radix(size, 16).map_err(|_| Error::new("invalid chunk size"))?;
 
             self.expected = size;
 
@@ -954,7 +950,7 @@ impl Decoder for ChunkedBodyDecoder {
         if res.is_some() {
             Ok(res)
         } else if self.state == ChunkedDecoderState::Completed {
-            Err(Error::from("no more data is expected"))
+            Err(Error::new("no more data is expected"))
         } else {
             self.state = ChunkedDecoderState::Completed;
 

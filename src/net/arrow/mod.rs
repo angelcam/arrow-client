@@ -17,26 +17,18 @@ mod proto;
 mod session;
 
 use std::collections::VecDeque;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use futures::task;
+use futures::sink::SinkExt;
+use futures::stream::{Stream, StreamExt};
+use futures::task::{Context, Poll, Waker};
 
-use futures::future::Future;
-use futures::sink::Sink;
-use futures::stream::Stream;
-use futures::task::Task;
-use futures::{Async, AsyncSink, Poll, StartSend};
-
-use tokio;
-
-use tokio::codec::Decoder;
-use tokio::net::TcpStream;
-use tokio::timer::{Interval, Timeout};
+use tokio_util::codec::Decoder;
 
 use crate::cmd_handler::{Command, CommandChannel};
 use crate::context::ApplicationContext;
-use crate::futures_ex::StreamEx;
 use crate::net::arrow::proto::codec::{ArrowCodec, FromBytes};
 use crate::net::arrow::proto::msg::control::ControlMessageFactory;
 use crate::net::arrow::proto::msg::control::{
@@ -51,8 +43,6 @@ use crate::svc_table::SharedServiceTableRef;
 use crate::utils::logger::{BoxLogger, Logger};
 
 pub use self::error::{ArrowError, ErrorKind};
-
-use crate::net::utils::get_socket_address_async;
 
 const ACK_TIMEOUT: Duration = Duration::from_secs(20);
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
@@ -98,7 +88,7 @@ struct ArrowClientContext {
     messages: VecDeque<ArrowMessage>,
     expected_acks: VecDeque<ExpectedAck>,
     state: ProtocolState,
-    task: Option<Task>,
+    task: Option<Waker>,
     redirect: Option<String>,
     closed: bool,
     last_ping: Instant,
@@ -176,7 +166,7 @@ impl ArrowClientContext {
             // notify the task consuming Arrow Messages about an ACK timeout
             if self.ack_timeout() {
                 if let Some(task) = self.task.take() {
-                    task.notify();
+                    task.wake();
                 }
             }
         }
@@ -197,7 +187,7 @@ impl ArrowClientContext {
 
         // notify the task consuming Arrow Messages about a new message
         if let Some(task) = self.task.take() {
-            task.notify();
+            task.wake();
         }
     }
 
@@ -247,6 +237,24 @@ impl ArrowClientContext {
         self.send_unconfirmed_control_message(msg);
 
         self.last_ping = Instant::now();
+    }
+
+    /// Process a given Arrow Message.
+    fn process_arrow_message(&mut self, msg: ArrowMessage) -> Result<(), ArrowError> {
+        // ignore the message if the client has been closed
+        if self.is_closed() {
+            return Ok(());
+        }
+
+        let header = msg.header();
+
+        if header.service == 0 {
+            self.process_control_protocol_message(msg)?;
+        } else {
+            self.process_service_request_message(msg)?;
+        }
+
+        Ok(())
     }
 
     /// Process a given Control Protocol message.
@@ -381,7 +389,7 @@ impl ArrowClientContext {
 
         // notify the task consuming Arrow Messages about the redirect
         if let Some(task) = self.task.take() {
-            task.notify();
+            task.wake();
         }
 
         Ok(())
@@ -466,103 +474,59 @@ impl ArrowClientContext {
     }
 }
 
-impl Sink for ArrowClientContext {
-    type SinkItem = ArrowMessage;
-    type SinkError = ArrowError;
-
-    fn start_send(&mut self, msg: ArrowMessage) -> StartSend<ArrowMessage, ArrowError> {
-        // ignore the message if the client has been closed
-        if self.is_closed() {
-            return Ok(AsyncSink::Ready);
-        }
-
-        let header = msg.header();
-
-        if header.service == 0 {
-            self.process_control_protocol_message(msg)?;
-        } else {
-            self.process_service_request_message(msg)?;
-        }
-
-        Ok(AsyncSink::Ready)
-    }
-
-    fn poll_complete(&mut self) -> Poll<(), ArrowError> {
-        Ok(Async::Ready(()))
-    }
-
-    fn close(&mut self) -> Poll<(), ArrowError> {
-        self.closed = true;
-
-        // notify the task consuming Arrow Messages that the connection has been closed
-        if let Some(task) = self.task.take() {
-            task.notify();
-        }
-
-        Ok(Async::Ready(()))
-    }
-}
-
 impl Stream for ArrowClientContext {
-    type Item = ArrowMessage;
-    type Error = ArrowError;
+    type Item = Result<ArrowMessage, ArrowError>;
 
-    fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         if self.ack_timeout() {
-            return Err(ArrowError::connection_error(
+            return Poll::Ready(Some(Err(ArrowError::connection_error(
                 "Arrow Service connection timeout",
-            ));
+            ))));
         } else if self.is_closed() {
-            return Ok(Async::Ready(None));
+            return Poll::Ready(None);
         } else if let Some(msg) = self.messages.pop_front() {
-            return Ok(Async::Ready(Some(msg)));
-        } else if let Async::Ready(msg) = self.sessions.poll()? {
-            if msg.is_none() {
-                panic!("session manager returned end of stream")
-            } else {
-                return Ok(Async::Ready(msg));
-            }
+            return Poll::Ready(Some(Ok(msg)));
         }
 
-        self.task = Some(task::current());
+        match self.sessions.poll_next_unpin(cx) {
+            Poll::Ready(Some(Ok(msg))) => return Poll::Ready(Some(Ok(msg))),
+            Poll::Ready(Some(Err(err))) => return Poll::Ready(Some(Err(err))),
+            Poll::Ready(None) => panic!("session manager returned end of stream"),
+            Poll::Pending => (),
+        }
 
-        Ok(Async::NotReady)
+        self.task = Some(cx.waker().clone());
+
+        Poll::Pending
     }
 }
 
-struct ArrowClient {
+struct ArrowClient<S> {
     context: Arc<Mutex<ArrowClientContext>>,
+    stream: S,
 }
 
-impl ArrowClient {
+impl<S> ArrowClient<S> {
     /// Create a new instance of Arrow Client.
-    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel) -> Self {
+    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel, stream: S) -> Self {
         let context = ArrowClientContext::new(app_context, cmd_channel);
 
         let context = Arc::new(Mutex::new(context));
 
         let event_handler = context.clone();
 
-        let interval = Duration::from_millis(1000);
-
-        let events = Interval::new(Instant::now() + interval, interval)
-            .map_err(|_| ())
-            .for_each(move |_| {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(1000));
+            while interval.next().await.is_some() {
                 let mut context = event_handler.lock().unwrap();
-
                 if context.is_closed() {
-                    return Err(());
+                    break;
                 }
-
                 context.time_event();
+            }
+        });
 
-                Ok(())
-            })
-            .then(|_| Ok(()));
-
-        tokio::spawn(events);
-
-        Self { context }
+        Self { context, stream }
     }
 
     /// Get redirect address (if any).
@@ -571,103 +535,88 @@ impl ArrowClient {
     }
 }
 
-impl Drop for ArrowClient {
+impl<S> Drop for ArrowClient<S> {
     fn drop(&mut self) {
         let mut context = self.context.lock().unwrap();
 
-        // we must mark the context as closed so that the interval task gets terminated
+        // we must mark the context as closed so that the interval task gets terminated even in
+        // case of connection/communication error
         context.closed = true;
     }
 }
 
-impl Sink for ArrowClient {
-    type SinkItem = ArrowMessage;
-    type SinkError = ArrowError;
+impl<S> Stream for ArrowClient<S>
+where
+    S: Stream<Item = Result<ArrowMessage, ArrowError>> + Unpin,
+{
+    type Item = Result<ArrowMessage, ArrowError>;
 
-    fn start_send(&mut self, msg: ArrowMessage) -> StartSend<ArrowMessage, ArrowError> {
-        self.context.lock().unwrap().start_send(msg)
-    }
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let ctx = self.context.clone();
 
-    fn poll_complete(&mut self) -> Poll<(), ArrowError> {
-        self.context.lock().unwrap().poll_complete()
-    }
+        let mut context = ctx.lock().unwrap();
 
-    fn close(&mut self) -> Poll<(), ArrowError> {
-        self.context.lock().unwrap().close()
-    }
-}
+        // try to feed the context at least once on every poll
+        match self.stream.poll_next_unpin(cx) {
+            Poll::Ready(Some(Ok(msg))) => context.process_arrow_message(msg)?,
+            Poll::Ready(Some(Err(err))) => return Poll::Ready(Some(Err(err))),
+            Poll::Ready(None) => context.closed = true,
+            Poll::Pending => (),
+        }
 
-impl Stream for ArrowClient {
-    type Item = ArrowMessage;
-    type Error = ArrowError;
+        loop {
+            // try to poll the context...
+            if let Poll::Ready(ready) = context.poll_next_unpin(cx) {
+                return Poll::Ready(ready);
+            }
 
-    fn poll(&mut self) -> Poll<Option<ArrowMessage>, ArrowError> {
-        self.context.lock().unwrap().poll()
+            // ... if it's pending, try to feed it again
+            match self.stream.poll_next_unpin(cx) {
+                Poll::Ready(Some(Ok(msg))) => context.process_arrow_message(msg)?,
+                Poll::Ready(Some(Err(err))) => return Poll::Ready(Some(Err(err))),
+                Poll::Ready(None) => context.closed = true,
+                Poll::Pending => return Poll::Pending,
+            }
+        }
     }
 }
 
 /// Connect Arrow Client to a given address and return either a redirect address or an error.
-pub fn connect(
+pub async fn connect(
     app_context: ApplicationContext,
     cmd_channel: CommandChannel,
     addr: &str,
-) -> impl Future<Item = String, Error = ArrowError> {
-    let addr = addr.to_string();
+) -> Result<String, ArrowError> {
+    let tls_connector = app_context
+        .get_tls_connector()
+        .map_err(|err| ArrowError::other(format!("unable to get TLS context: {}", err)))?;
 
-    let addr1 = addr.clone();
-    let addr2 = addr.clone();
-
-    let aclient = ArrowClient::new(app_context.clone(), cmd_channel);
-
-    let connection = get_socket_address_async(addr)
-        .map_err(move |_| {
+    let stream = tokio::time::timeout(CONNECTION_TIMEOUT, tls_connector.connect(addr))
+        .await
+        .map_err(|_| {
             ArrowError::connection_error(format!(
-                "failed to lookup Arrow Service {} address information",
-                addr1
+                "unable to connect to remote Arrow Service {} (connection timeout)",
+                addr
             ))
-        })
-        .and_then(|saddr| TcpStream::connect(&saddr).map_err(ArrowError::connection_error))
-        .and_then(move |socket| {
-            app_context
-                .get_tls_connector()
-                .map(move |tls_connector| (socket, tls_connector))
-                .map_err(|err| ArrowError::other(format!("unable to get TLS context: {}", err)))
-        })
-        .and_then(|(socket, tls_connector)| {
-            tls_connector
-                .connect_async(socket)
-                .map_err(ArrowError::connection_error)
-        });
+        })?
+        .map_err(|err| {
+            ArrowError::connection_error(format!(
+                "unable to connect to remote Arrow Service {} ({})",
+                addr, err
+            ))
+        })?;
 
-    Timeout::new(connection, CONNECTION_TIMEOUT)
-        .map_err(move |err| {
-            if err.is_elapsed() {
-                ArrowError::connection_error(format!(
-                    "unable to connect to remote Arrow Service {} (connection timeout)",
-                    addr2
-                ))
-            } else if let Some(inner) = err.into_inner() {
-                ArrowError::connection_error(format!(
-                    "unable to connect to remote Arrow Service {} ({})",
-                    addr2, inner
-                ))
-            } else {
-                ArrowError::other("timer error")
-            }
-        })
-        .and_then(|stream| {
-            let framed = ArrowCodec.framed(stream);
+    let framed = ArrowCodec.framed(stream);
 
-            let (sink, stream) = framed.split();
+    let (mut sink, stream) = framed.split();
 
-            let messages = stream.pipe(aclient);
+    let mut arrow_client = ArrowClient::new(app_context, cmd_channel, stream);
 
-            sink.send_all(messages).and_then(|(_, pipe)| {
-                let (_, _, context) = pipe.unpipe();
+    let send = sink.send_all(&mut arrow_client);
 
-                context
-                    .get_redirect()
-                    .ok_or_else(|| ArrowError::connection_error("connection to Arrow Service lost"))
-            })
-        })
+    send.await?;
+
+    arrow_client
+        .get_redirect()
+        .ok_or_else(|| ArrowError::connection_error("connection to Arrow Service lost"))
 }

@@ -23,8 +23,6 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use time;
-
 use crate::utils::logger::{Logger, Severity};
 
 /// Internal logger implementation.

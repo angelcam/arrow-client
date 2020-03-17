@@ -90,7 +90,7 @@ impl Ipv4PacketHeader {
         let size = mem::size_of::<RawIpv4PacketHeader>();
 
         if data.len() < size {
-            Err(PacketParseError::from(
+            Err(PacketParseError::new(
                 "unable to parse IPv4 packet, not enough data",
             ))
         } else {
@@ -104,7 +104,7 @@ impl Ipv4PacketHeader {
             let offset_1 = size as isize;
 
             if data.len() < (size + (options_len << 2)) {
-                Err(PacketParseError::from(
+                Err(PacketParseError::new(
                     "unable to parse IPv4 packet, not enough data",
                 ))
             } else {
@@ -270,7 +270,7 @@ impl Ipv4Packet {
         let hsize = mem::size_of::<RawIpv4PacketHeader>();
 
         if data.len() < hsize {
-            Err(PacketParseError::from(
+            Err(PacketParseError::new(
                 "unable to parse IPv4 packet, not enough data",
             ))
         } else {

@@ -39,11 +39,7 @@ impl ParseError {
     }
 }
 
-impl Error for ParseError {
-    fn description(&self) -> &str {
-        &self.msg
-    }
-}
+impl Error for ParseError {}
 
 impl Display for ParseError {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {

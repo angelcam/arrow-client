@@ -14,14 +14,12 @@
 
 use std::process;
 
-use std::error::Error;
-use std::sync::{Arc, Mutex};
+use std::pin::Pin;
 use std::time::{Duration, Instant};
 
-use futures::sync::oneshot::Sender;
-use futures::{Future, Poll, Stream};
-
-use tokio::timer::{Delay, Interval};
+use futures::future::{AbortHandle, Future, FutureExt};
+use futures::stream::StreamExt;
+use futures::task::{Context, Poll};
 
 use uuid::Uuid;
 
@@ -57,11 +55,7 @@ struct ArrowMainTask {
 
 impl ArrowMainTask {
     /// Create a new task.
-    #[allow(clippy::new_ret_no_self)]
-    fn new(
-        app_context: ApplicationContext,
-        cmd_channel: CommandChannel,
-    ) -> impl Future<Item = (), Error = ()> {
+    async fn start(app_context: ApplicationContext, cmd_channel: CommandChannel) {
         let logger = app_context.get_logger();
         let addr = app_context.get_arrow_service_address();
         let diagnostic_mode = app_context.get_diagnostic_mode();
@@ -70,7 +64,7 @@ impl ArrowMainTask {
 
         let pairing_mode_timeout = now + PAIRING_MODE_TIMEOUT;
 
-        let task = ArrowMainTask {
+        let mut task = ArrowMainTask {
             app_context,
             cmd_channel,
             logger,
@@ -81,19 +75,15 @@ impl ArrowMainTask {
             diagnostic_mode,
         };
 
-        let task = Arc::new(Mutex::new(task));
+        loop {
+            let connection_result = task.connect().await;
 
-        let connector = task.clone();
-        let rhandler = task;
-
-        futures::stream::repeat(())
-            .and_then(move |_| connector.lock().unwrap().connect())
-            .then(move |res| rhandler.lock().unwrap().process_result(res))
-            .for_each(|_| Ok(()))
+            task.process_result(connection_result).await;
+        }
     }
 
     /// Connect to the Arrow service.
-    fn connect(&mut self) -> impl Future<Item = String, Error = ArrowError> {
+    async fn connect(&mut self) -> Result<String, ArrowError> {
         log_info!(
             &mut self.logger,
             "connecting to remote Arrow Service {}",
@@ -110,20 +100,16 @@ impl ArrowMainTask {
             self.cmd_channel.clone(),
             &self.current_addr,
         )
+        .await
     }
 
     /// Process a given connection result.
-    fn process_result(
-        &mut self,
-        res: Result<String, ArrowError>,
-    ) -> impl Future<Item = (), Error = ()> {
+    async fn process_result(&mut self, res: Result<String, ArrowError>) {
         if self.diagnostic_mode {
             diagnose_connection_result(&res);
         } else if let Ok(addr) = res {
             // set redirection
             self.current_addr = addr;
-
-            Box::new(futures::future::ok(()))
         } else if let Err(err) = res {
             let cstate = if err.kind() == ErrorKind::Unauthorized {
                 log_info!(
@@ -134,7 +120,7 @@ impl ArrowMainTask {
 
                 ConnectionState::Unauthorized
             } else {
-                log_warn!(&mut self.logger, "{}", err.description());
+                log_warn!(&mut self.logger, "{}", err);
 
                 ConnectionState::Disconnected
             };
@@ -145,7 +131,9 @@ impl ArrowMainTask {
 
             self.current_addr = self.default_addr.clone();
 
-            wait_for_retry(&mut self.logger, retry)
+            let fut = wait_for_retry(&mut self.logger, retry);
+
+            fut.await;
         } else {
             panic!("unexpected Result variant")
         }
@@ -222,10 +210,7 @@ fn process_connection_error(
 }
 
 /// Process a given connection retry object.
-fn wait_for_retry(
-    logger: &mut dyn Logger,
-    connection_retry: ConnectionRetry,
-) -> Box<dyn Future<Item = (), Error = ()> + Send + Sync> {
+async fn wait_for_retry(logger: &mut dyn Logger, connection_retry: ConnectionRetry) {
     match connection_retry {
         ConnectionRetry::Timeout(t) if t > Duration::from_millis(500) => {
             log_info!(
@@ -235,16 +220,18 @@ fn wait_for_retry(
                 t.subsec_millis()
             );
 
-            let sleep = Delay::new(Instant::now() + t).map_err(|_| ());
+            let delay = tokio::time::delay_for(t);
 
-            Box::new(sleep)
+            delay.await;
         }
-        ConnectionRetry::Timeout(_) => Box::new(futures::future::ok(())),
+        ConnectionRetry::Timeout(_) => (),
         ConnectionRetry::Suspend(reason) => {
             log_info!(logger, "{}", reason.to_string());
             log_info!(logger, "suspending the connection thread");
 
-            Box::new(futures::future::empty())
+            let halt = futures::future::pending::<()>();
+
+            halt.await;
         }
     }
 }
@@ -264,15 +251,14 @@ fn diagnose_connection_result(connection_result: &Result<String, ArrowError>) ->
 
 /// Arrow client task. It must be awaited, otherwise it won't do anything.
 pub struct ArrowClientTask {
-    inner: Box<dyn Future<Item = (), Error = ()> + Send>,
+    inner: Pin<Box<dyn Future<Output = ()> + Send>>,
 }
 
 impl Future for ArrowClientTask {
-    type Item = ();
-    type Error = ();
+    type Output = ();
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.inner.poll()
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        self.inner.poll_unpin(cx)
     }
 }
 
@@ -282,8 +268,8 @@ pub struct ArrowClient {
 
     command_channel: Option<CommandChannel>,
 
-    cancel_main_task: Option<Sender<()>>,
-    cancel_nw_scan: Option<Sender<()>>,
+    cancel_main_task: Option<AbortHandle>,
+    cancel_nw_scan: Option<AbortHandle>,
 }
 
 impl ArrowClient {
@@ -294,34 +280,28 @@ impl ArrowClient {
         // create command handler
         let (cmd_channel, cmd_handler) = cmd_handler::new(context.clone());
 
-        let (cancel_main_task, main_task_cancelled) = futures::sync::oneshot::channel();
-        let (cancel_nw_scan, nw_scan_cancelled) = futures::sync::oneshot::channel();
-
         // create Arrow client main task
-        let arrow_main_task = ArrowMainTask::new(context.clone(), cmd_channel.clone())
-            .select(main_task_cancelled.map_err(|_| ()))
-            .then(|_| Ok(()));
-
-        let interval = Duration::from_millis(1000);
+        let arrow_main_task = ArrowMainTask::start(context.clone(), cmd_channel.clone());
 
         let nw_scan_cmd_channel = cmd_channel.clone();
 
         // schedule periodic network scan
-        let periodic_network_scan = Interval::new(Instant::now() + interval, interval)
-            .for_each(move |_| {
+        let periodic_network_scan = async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(1000));
+            while interval.next().await.is_some() {
                 nw_scan_cmd_channel.send(Command::PeriodicNetworkScan);
+            }
+        };
 
-                Ok(())
-            })
-            .map_err(|_| ())
-            .select(nw_scan_cancelled.map_err(|_| ()))
-            .then(|_| Ok(()));
+        let (arrow_main_task, cancel_main_task) = futures::future::abortable(arrow_main_task);
+        let (periodic_network_scan, cancel_nw_scan) =
+            futures::future::abortable(periodic_network_scan.boxed());
 
         let ctx = context.clone();
 
-        let task = futures::future::lazy(move || {
+        let task = async move {
             tokio::spawn(cmd_handler);
-            tokio::spawn(periodic_network_scan);
+            tokio::spawn(periodic_network_scan.map(|_| ()));
 
             let mut logger = ctx.get_logger();
 
@@ -332,11 +312,11 @@ impl ArrowClient {
                 ctx.get_arrow_mac_address()
             );
 
-            arrow_main_task
-        });
+            arrow_main_task.await.unwrap_or(());
+        };
 
         let arrow_client_task = ArrowClientTask {
-            inner: Box::new(task),
+            inner: task.boxed(),
         };
 
         let arrow_client = Self {
@@ -411,12 +391,12 @@ impl ArrowClient {
 
     /// Close the Arrow client.
     pub fn close(&mut self) {
-        if let Some(cancel) = self.cancel_nw_scan.take() {
-            cancel.send(()).unwrap_or_default()
+        if let Some(handle) = self.cancel_nw_scan.take() {
+            handle.abort();
         }
 
-        if let Some(cancel) = self.cancel_main_task.take() {
-            cancel.send(()).unwrap_or_default()
+        if let Some(handle) = self.cancel_main_task.take() {
+            handle.abort();
         }
 
         // we need to drop also the command channel in order to stop the related background task

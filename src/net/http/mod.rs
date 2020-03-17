@@ -24,13 +24,12 @@ use std::time::Duration;
 
 use bytes::BytesMut;
 
-use futures::{Future, IntoFuture, Poll, Sink, Stream};
+use futures::sink::SinkExt;
+use futures::stream::StreamExt;
 
-use tokio::codec::{Decoder, Encoder};
 use tokio::net::TcpStream;
-use tokio::timer::Timeout;
 
-use crate::net;
+use tokio_util::codec::{Decoder, Encoder};
 
 use crate::net::url::Url;
 
@@ -51,39 +50,35 @@ pub struct Error {
     msg: String,
 }
 
-impl ErrorTrait for Error {
-    fn description(&self) -> &str {
-        &self.msg
+impl Error {
+    /// Create a new error.
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
     }
 }
+
+impl ErrorTrait for Error {}
 
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        f.write_str(self.description())
-    }
-}
-
-impl From<String> for Error {
-    fn from(msg: String) -> Self {
-        Self { msg }
-    }
-}
-
-impl<'a> From<&'a str> for Error {
-    fn from(msg: &'a str) -> Self {
-        Self::from(msg.to_string())
+        f.write_str(&self.msg)
     }
 }
 
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Self {
-        Self::from(format!("IO error: {}", err))
+        Self::new(format!("IO error: {}", err))
     }
 }
 
 impl From<generic::Error> for Error {
     fn from(err: generic::Error) -> Self {
-        Self::from(err.description())
+        Self::new(err)
     }
 }
 
@@ -137,7 +132,7 @@ impl FromStr for Scheme {
     fn from_str(method: &str) -> Result<Self, Error> {
         match &method.to_lowercase() as &str {
             "http" => Ok(Self::HTTP),
-            _ => Err(Error::from("invalid URL scheme")),
+            _ => Err(Error::new("invalid URL scheme")),
         }
     }
 }
@@ -157,7 +152,7 @@ pub struct Request {
 impl Request {
     /// Create a new HTTP request.
     pub fn new(method: Method, url: &str, ignore_response_body: bool) -> Result<Self, Error> {
-        let url = Url::from_str(url).map_err(|_| Error::from("malformed URL"))?;
+        let url = Url::from_str(url).map_err(|_| Error::new("malformed URL"))?;
 
         let scheme = Scheme::from_str(url.scheme())?;
 
@@ -229,57 +224,34 @@ impl Request {
         self
     }
 
-    /// Send the request and return a future response
-    pub fn send(self) -> FutureResponse {
-        let addr = net::utils::get_socket_address((self.host.as_ref(), self.port))
-            .map_err(|_| Error::from("unable to resolve a given socket address"));
-
-        if let Err(err) = addr {
-            return FutureResponse::new(Err(err));
-        }
-
-        let timeout = self.timeout;
-
+    /// Send the request and return a future response.
+    async fn send_inner(self) -> Result<Response, Error> {
         let codec = ClientCodec::new(
             self.max_line_length,
             self.max_header_lines,
             self.ignore_response_body,
         );
 
-        // single request-response cycle
-        let response = TcpStream::connect(&addr.unwrap())
-            .map_err(Error::from)
-            .and_then(move |stream| {
-                codec
-                    .framed(stream)
-                    .send(self.inner.build())
-                    .map_err(Error::from)
-                    .and_then(|stream| {
-                        stream
-                            .into_future()
-                            .map_err(|(err, _)| err)
-                            .and_then(|(response, _)| {
-                                response.ok_or_else(|| {
-                                    Error::from("server closed connection unexpectedly")
-                                })
-                            })
-                    })
-            });
+        let stream = TcpStream::connect((self.host.as_ref(), self.port)).await?;
 
-        if let Some(timeout) = timeout {
-            let response = Timeout::new(response, timeout).map_err(|err| {
-                if err.is_elapsed() {
-                    Error::from("request timeout")
-                } else if let Some(inner) = err.into_inner() {
-                    inner
-                } else {
-                    Error::from("timer error")
-                }
-            });
+        let mut stream = codec.framed(stream);
 
-            FutureResponse::new(response)
+        stream.send(self.inner.build()).await?;
+
+        stream
+            .next()
+            .await
+            .ok_or_else(|| Error::new("server closed connection unexpectedly"))?
+    }
+
+    /// Send the request and return a future response.
+    pub async fn send(self) -> Result<Response, Error> {
+        if let Some(timeout) = self.timeout {
+            tokio::time::timeout(timeout, self.send_inner())
+                .await
+                .map_err(|_| Error::new("request timeout"))?
         } else {
-            FutureResponse::new(response)
+            self.send_inner().await
         }
     }
 }
@@ -298,11 +270,11 @@ impl Response {
             let version = header.version();
 
             if protocol != "HTTP" {
-                return Err(Error::from("invalid protocol"));
+                return Err(Error::new("invalid protocol"));
             }
 
             if version != "1.0" && version != "1.1" {
-                return Err(Error::from("unsupported HTTP version"));
+                return Err(Error::new("unsupported HTTP version"));
             }
         }
 
@@ -344,32 +316,6 @@ impl Response {
     /// Get value of the last header field with a given name.
     pub fn get_header_field_value(&self, name: &str) -> Option<&str> {
         self.inner.header().get_header_field_value(name)
-    }
-}
-
-/// Future response. This struct implements the Futere trait yielding Response.
-pub struct FutureResponse {
-    inner: Box<dyn Future<Item = Response, Error = Error>>,
-}
-
-impl FutureResponse {
-    /// Create a new future response.
-    fn new<F>(future: F) -> Self
-    where
-        F: 'static + IntoFuture<Item = Response, Error = Error>,
-    {
-        Self {
-            inner: Box::new(future.into_future()),
-        }
-    }
-}
-
-impl Future for FutureResponse {
-    type Item = Response;
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<Response, Error> {
-        self.inner.poll()
     }
 }
 
@@ -430,9 +376,9 @@ impl Decoder for ClientCodec {
                 } else if let Some(clength) = header.get_header_field("content-length") {
                     let clength = clength
                         .value()
-                        .ok_or_else(|| Error::from("missing Content-Length value"))?;
+                        .ok_or_else(|| Error::new("missing Content-Length value"))?;
                     let clength = usize::from_str(clength)
-                        .map_err(|_| Error::from("unable to decode Content-Length"))?;
+                        .map_err(|_| Error::new("unable to decode Content-Length"))?;
 
                     Box::new(FixedSizeBodyDecoder::new(
                         clength,
@@ -489,8 +435,7 @@ impl Decoder for ClientCodec {
     }
 }
 
-impl Encoder for ClientCodec {
-    type Item = GenericRequest;
+impl Encoder<GenericRequest> for ClientCodec {
     type Error = io::Error;
 
     fn encode(&mut self, message: GenericRequest, buffer: &mut BytesMut) -> Result<(), io::Error> {

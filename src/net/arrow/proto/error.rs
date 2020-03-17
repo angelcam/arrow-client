@@ -25,30 +25,23 @@ pub struct DecodeError {
     msg: String,
 }
 
-impl Error for DecodeError {
-    /// Get error description.
-    fn description(&self) -> &str {
-        &self.msg
+impl DecodeError {
+    /// Create a new error.
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
     }
 }
+
+impl Error for DecodeError {}
 
 impl Display for DecodeError {
     /// Format error message.
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
         f.write_str(&self.msg)
-    }
-}
-
-impl From<String> for DecodeError {
-    /// Create a new DecodeError from a given error string.
-    fn from(msg: String) -> Self {
-        Self { msg }
-    }
-}
-
-impl<'a> From<&'a str> for DecodeError {
-    /// Create a new DecodeError from a given error string.
-    fn from(msg: &'a str) -> Self {
-        Self::from(msg.to_string())
     }
 }

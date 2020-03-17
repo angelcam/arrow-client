@@ -35,23 +35,23 @@ pub struct PacketParseError {
     msg: String,
 }
 
-impl Error for PacketParseError {
-    fn description(&self) -> &str {
-        &self.msg
+impl PacketParseError {
+    /// Create a new error.
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
+        Self {
+            msg: msg.to_string(),
+        }
     }
 }
+
+impl Error for PacketParseError {}
 
 impl Display for PacketParseError {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
         f.write_str(&self.msg)
-    }
-}
-
-impl<'a> From<&'a str> for PacketParseError {
-    fn from(msg: &'a str) -> Self {
-        Self {
-            msg: msg.to_string(),
-        }
     }
 }
 
@@ -195,7 +195,7 @@ impl EtherPacket {
         let hsize = mem::size_of::<RawEtherPacketHeader>();
 
         if data.len() < hsize {
-            Err(PacketParseError::from(
+            Err(PacketParseError::new(
                 "unable to parse ethernet packet, not enough data",
             ))
         } else {

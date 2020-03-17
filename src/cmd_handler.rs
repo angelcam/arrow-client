@@ -15,14 +15,16 @@
 #[cfg(feature = "discovery")]
 use std::thread;
 
+use std::pin::Pin;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use futures::{Future, Poll, Stream};
+use futures::channel::mpsc;
 
-use futures::sync::mpsc;
-
-use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
+use futures::future::{Future, FutureExt};
+use futures::stream::StreamExt;
+use futures::task::{Context, Poll};
 
 #[cfg(feature = "discovery")]
 use crate::scanner::discovery;
@@ -178,31 +180,31 @@ impl CommandHandlerContext {
 /// Command handler. It implements the future trait and it's designed to be used in combination
 /// with tokio event loop.
 pub struct CommandHandler {
-    handler: Box<dyn Future<Item = (), Error = ()> + Send + Sync>,
+    inner: Pin<Box<dyn Future<Output = ()> + Send>>,
 }
 
 impl CommandHandler {
     /// Create a new command handler.
-    fn new(app_context: ApplicationContext, rx: CommandReceiver, tx: CommandSender) -> Self {
+    fn new(app_context: ApplicationContext, mut rx: CommandReceiver, tx: CommandSender) -> Self {
         let mut context = CommandHandlerContext::new(app_context, tx);
 
-        let handler = rx.for_each(move |event| {
-            context.proces_event(event);
-            Ok(())
-        });
+        let handler = async move {
+            while let Some(event) = rx.next().await {
+                context.proces_event(event);
+            }
+        };
 
         Self {
-            handler: Box::new(handler),
+            inner: handler.boxed(),
         }
     }
 }
 
 impl Future for CommandHandler {
-    type Item = ();
-    type Error = ();
+    type Output = ();
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.handler.poll()
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        self.inner.poll_unpin(cx)
     }
 }
 

@@ -72,7 +72,7 @@ impl TcpPacket {
         let size = mem::size_of::<RawTcpPacketHeader>();
 
         if data.len() < size {
-            Err(PacketParseError::from(
+            Err(PacketParseError::new(
                 "unable to parse TCP packet, not enough data",
             ))
         } else {
@@ -88,7 +88,7 @@ impl TcpPacket {
             let offset_2 = offset_1 + (options_len << 2);
 
             if offset_2 > data.len() {
-                Err(PacketParseError::from(
+                Err(PacketParseError::new(
                     "unable to parse TCP packet, not enough data",
                 ))
             } else {
@@ -373,7 +373,7 @@ pub mod scanner {
             let sport = 61234;
             let mut gen = TcpPortScannerPacketGenerator::new(&self.device, hosts, sport, endpoints);
 
-            let mut generator = move || gen.next().map(Bytes::from);
+            let mut generator = move || gen.next().map(Bytes::copy_from_slice);
 
             let filter = format!(
                 "tcp and dst host {} and dst port {} and \

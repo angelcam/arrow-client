@@ -40,15 +40,11 @@ impl AddrParseError {
     }
 }
 
-impl Error for AddrParseError {
-    fn description(&self) -> &str {
-        &self.msg
-    }
-}
+impl Error for AddrParseError {}
 
 impl Display for AddrParseError {
     fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
-        f.write_str(self.description())
+        f.write_str(&self.msg)
     }
 }
 

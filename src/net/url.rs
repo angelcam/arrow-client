@@ -25,23 +25,23 @@ pub struct UrlParseError {
     msg: String,
 }
 
-impl Error for UrlParseError {
-    fn description(&self) -> &str {
-        &self.msg
-    }
-}
-
-impl Display for UrlParseError {
-    fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
-        f.write_str(self.description())
-    }
-}
-
-impl<'a> From<&'a str> for UrlParseError {
-    fn from(msg: &'a str) -> Self {
+impl UrlParseError {
+    /// Create a new error.
+    pub fn new<T>(msg: T) -> Self
+    where
+        T: ToString,
+    {
         Self {
             msg: msg.to_string(),
         }
+    }
+}
+
+impl Error for UrlParseError {}
+
+impl Display for UrlParseError {
+    fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
+        f.write_str(&self.msg)
     }
 }
 
@@ -69,7 +69,7 @@ impl Url {
         if let Some(delim) = self.serialized.find(':') {
             self.process_hierarchy(delim + 1)
         } else {
-            Err(UrlParseError::from("invalid URL"))
+            Err(UrlParseError::new("invalid URL"))
         }
     }
 
@@ -93,7 +93,7 @@ impl Url {
 
             Ok(())
         } else {
-            Err(UrlParseError::from("invalid URL"))
+            Err(UrlParseError::new("invalid URL"))
         }
     }
 
@@ -113,7 +113,7 @@ impl Url {
             if let Some(delim) = netloc.rfind(':') {
                 let ppos = delim + 1;
                 let port = u16::from_str(&netloc[ppos..])
-                    .map_err(|_| UrlParseError::from("invalid port"))?;
+                    .map_err(|_| UrlParseError::new("invalid port"))?;
 
                 self.portpos = Some(self.netloc + ppos);
                 self.port = Some(port);

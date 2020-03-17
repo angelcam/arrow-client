@@ -89,7 +89,7 @@ impl IcmpPacket {
         let size = mem::size_of::<RawIcmpPacketHeader>();
 
         if data.len() < size {
-            Err(PacketParseError::from(
+            Err(PacketParseError::new(
                 "unable to parse ICMP packet, not enough data",
             ))
         } else {
@@ -272,7 +272,7 @@ pub mod scanner {
 
                     current += 1;
 
-                    let pkt = Bytes::from(buffer.as_slice());
+                    let pkt = Bytes::copy_from_slice(&buffer);
 
                     Some(pkt)
                 } else {

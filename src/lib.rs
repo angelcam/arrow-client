@@ -14,9 +14,6 @@
 
 //! Arrow Client definitions.
 
-#[macro_use]
-extern crate futures;
-
 #[cfg(feature = "discovery")]
 #[macro_use]
 extern crate lazy_static;
@@ -45,9 +42,6 @@ pub mod context;
 #[doc(hidden)]
 #[cfg(feature = "exports")]
 pub mod exports;
-
-#[doc(hidden)]
-pub mod futures_ex;
 
 #[doc(hidden)]
 pub mod net;

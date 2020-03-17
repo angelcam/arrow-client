@@ -96,7 +96,7 @@ impl FromBytes for ArrowMessageHeader {
         if res.version == ARROW_PROTOCOL_VERSION {
             Ok(Some(res))
         } else {
-            Err(DecodeError::from("unsupported Arrow Protocol version"))
+            Err(DecodeError::new("unsupported Arrow Protocol version"))
         }
     }
 }

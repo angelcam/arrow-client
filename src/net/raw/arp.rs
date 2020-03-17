@@ -98,7 +98,7 @@ impl ArpPacket {
     pub fn parse(data: &[u8]) -> Result<Self> {
         let size = mem::size_of::<RawArpPacketHeader>();
         if data.len() < size {
-            Err(PacketParseError::from(
+            Err(PacketParseError::new(
                 "unable to parse ARP packet, not enough data",
             ))
         } else {
@@ -112,7 +112,7 @@ impl ArpPacket {
             let required = size + (hlen << 1) + (plen << 1);
 
             if data.len() < required {
-                Err(PacketParseError::from(
+                Err(PacketParseError::new(
                     "unable to parse ARP packet, not enough data",
                 ))
             } else {
@@ -257,7 +257,7 @@ pub mod scanner {
 
                     current += 1;
 
-                    let pkt = Bytes::from(buffer.as_slice());
+                    let pkt = Bytes::copy_from_slice(&buffer);
 
                     Some(pkt)
                 } else {
