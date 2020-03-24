@@ -51,7 +51,7 @@ static int get_mac_address(const char* dname, unsigned char* buffer) {
     }
 }
 
-static struct net_device * get_device_info(int fd, struct ifaddrs* ifaddrs) {
+static struct net_device * get_device_info(struct ifaddrs* ifaddrs) {
     struct net_device* result = net_new_device();
 
     if (!result)
@@ -80,10 +80,7 @@ struct net_device * net_find_devices() {
     struct net_device* tmp;
     struct ifaddrs* ifaddrs;
     struct ifaddrs* ifaddr;
-    int fd;
 
-    if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
-        return NULL;
     if (getifaddrs(&ifaddrs) != 0)
         goto err;
 
@@ -91,7 +88,7 @@ struct net_device * net_find_devices() {
         if (!ifaddr->ifa_addr)
             continue;
 
-        tmp = get_device_info(fd, ifaddr);
+        tmp = get_device_info(ifaddr);
         if (tmp) {
             tmp->next = result;
             result = tmp;
@@ -101,7 +98,5 @@ struct net_device * net_find_devices() {
     freeifaddrs(ifaddrs);
 
 err:
-    close(fd);
-
     return result;
 }
