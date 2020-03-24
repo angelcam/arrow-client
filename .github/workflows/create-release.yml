@@ -43,3 +43,26 @@ jobs:
         with:
           command: build
           args: --all-features --release
+
+      - name: Copy binary (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p ./dist/linux
+          cp target/release/arrow-client dist/linux/
+          cp target/release/libarrow_client.so dist/linux/
+          cp target/release/libarrow_client.a dist/linux/
+
+      - name: Copy binary (MAC OS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          mkdir -p ./dist/macos
+          ls -al target/release/
+          cp target/release/arrow-client dist/macos/
+          cp target/release/libarrow_client.dylib dist/macos/
+          cp target/release/libarrow_client.a dist/macos/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v1
+        with:
+          name: ${{ matrix.os }}
+          path: ./dist
