@@ -29,42 +29,34 @@
 #include "devices-utils.h"
 #include "utils.h"
 
-static int get_mac_address(const char* dname, unsigned char* buffer) {
-    struct ifaddrs* iflist;
+static int get_mac_address(const char* dname, struct ifaddrs* ifaddrs, unsigned char* buffer) {
     struct ifaddrs* cur;
 
-    if (getifaddrs(&iflist) == 0) {
-        for (cur = iflist; cur; cur = cur->ifa_next) {
-            if ((cur->ifa_addr->sa_family == AF_LINK) &&
-                    (strcmp(cur->ifa_name, dname) == 0) &&
-                    cur->ifa_addr) {
-                struct sockaddr_dl* sdl = (struct sockaddr_dl*)cur->ifa_addr;
-                memcpy(buffer, LLADDR(sdl), sdl->sdl_alen);
-                freeifaddrs(iflist);
-                return 0;
-            }
+    for (cur = ifaddrs; cur; cur = cur->ifa_next) {
+        if (cur->ifa_addr && (cur->ifa_addr->sa_family == AF_LINK) &&
+                (strcmp(cur->ifa_name, dname) == 0)) {
+            struct sockaddr_dl* sdl = (struct sockaddr_dl*)cur->ifa_addr;
+            memcpy(buffer, LLADDR(sdl), sdl->sdl_alen);
+            return 0;
         }
-        freeifaddrs(iflist);
-        return -1;
-    } else {
-        return -2;
     }
+    return -1;
 }
 
-static struct net_device * get_device_info(struct ifaddrs* ifaddrs) {
+static struct net_device * get_device_info(struct ifaddrs* ifaddr, struct ifaddrs* ifaddrs) {
     struct net_device* result = net_new_device();
 
     if (!result)
         return NULL;
 
-    if (!(result->name = string_dup(ifaddrs->ifa_name)))
+    if (!(result->name = string_dup(ifaddr->ifa_name)))
         goto err;
 
-    if (get_mac_address(result->name, result->mac_address) != 0)
+    if (get_mac_address(result->name, ifaddrs, result->mac_address) != 0)
         goto err;
-    if (get_ipv4_record(ifaddrs->ifa_addr, result->ipv4_address) != 0)
+    if (get_ipv4_record(ifaddr->ifa_addr, result->ipv4_address) != 0)
         goto err;
-    if (get_ipv4_record(ifaddrs->ifa_netmask, result->ipv4_netmask) != 0)
+    if (get_ipv4_record(ifaddr->ifa_netmask, result->ipv4_netmask) != 0)
         goto err;
 
     return result;
@@ -85,10 +77,10 @@ struct net_device * net_find_devices() {
         goto err;
 
     for (ifaddr = ifaddrs; ifaddr != NULL; ifaddr = ifaddr->ifa_next) {
-        if (!ifaddr->ifa_addr)
+        if (!ifaddr->ifa_addr || ifaddr->ifa_addr->sa_family != AF_INET)
             continue;
 
-        tmp = get_device_info(ifaddr);
+        tmp = get_device_info(ifaddr, ifaddrs);
         if (tmp) {
             tmp->next = result;
             result = tmp;
