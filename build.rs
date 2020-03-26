@@ -67,12 +67,11 @@ fn dir_from_var(var: &str) -> Option<OsString> {
 }
 
 fn get_platform() -> &'static str {
-    if cfg!(target_os = "linux") {
-        "linux"
-    } else if cfg!(target_os = "windows") {
-        "windows"
-    } else {
-        panic!("Unsupported OS")
+    match "" {
+        _ if cfg!(target_os = "linux") => "linux",
+        _ if cfg!(target_os = "windows") => "windows",
+        _ if cfg!(target_os = "macos") => "macos",
+        _ => panic!("Unsupported OS"),
     }
 }
 
