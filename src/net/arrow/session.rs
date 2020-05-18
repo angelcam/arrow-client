@@ -45,6 +45,7 @@ struct SessionContext {
     session_id: u32,
     input: BytesMut,
     output: BytesMut,
+    buffer_capacity: usize,
     session_manager_task: Option<Waker>,
     session_transport_task: Option<Waker>,
     closed: bool,
@@ -54,11 +55,14 @@ struct SessionContext {
 impl SessionContext {
     /// Create a new session context for a given service ID and session ID.
     fn new(service_id: u16, session_id: u32) -> Self {
+        let buffer_capacity = 8192;
+
         Self {
             service_id,
             session_id,
-            input: BytesMut::with_capacity(8192),
-            output: BytesMut::with_capacity(8192),
+            input: BytesMut::with_capacity(buffer_capacity),
+            output: BytesMut::with_capacity(buffer_capacity),
+            buffer_capacity,
             session_manager_task: None,
             session_transport_task: None,
             closed: false,
@@ -133,13 +137,12 @@ impl SessionContext {
         S: AsyncRead + Unpin,
     {
         let input_buffer_len = self.input.len();
-        let input_buffer_capacity = self.input.capacity();
 
         let stream = Pin::new(stream);
 
         if self.closed {
             Poll::Ready(())
-        } else if input_buffer_len >= input_buffer_capacity {
+        } else if input_buffer_len >= self.buffer_capacity {
             // save the current task and wait until there is some space in
             // the input buffer again
             self.session_transport_task = Some(cx.waker().clone());
