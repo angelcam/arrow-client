@@ -1,0 +1,67 @@
+on: [push]
+#on:
+#  push:
+#    # Sequence of patterns matched against refs/tags
+#    tags:
+#      - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
+
+name: Release
+
+jobs:
+  ubuntu:
+    name: Build Sources
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@master
+
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Install build requirements (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -qy libssl-dev libpcap-dev
+
+      - name: Install build requirements (MAC OS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew update
+          brew install libpcap
+
+      - name: Build binary
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --all-features --release
+
+      - name: Copy binary (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p ./dist
+          cp target/release/arrow-client dist/
+          cp target/release/libarrow_client.so dist/
+          cp target/release/libarrow_client.a dist/
+
+      - name: Copy binary (MAC OS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          mkdir -p ./dist/macos
+          cp target/release/arrow-client dist/
+          cp target/release/libarrow_client.dylib dist/
+          cp target/release/libarrow_client.a dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v1
+        with:
+          name: ${{ matrix.os }}
+          path: ./dist
