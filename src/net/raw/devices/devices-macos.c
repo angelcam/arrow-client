@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 click2stream, Inc.
+ * Copyright 2020 Angelcam, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,14 +14,11 @@
  * limitations under the License.
  */
 
-#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
 #include <net/if.h>
-#include <net/if_arp.h>
 #include <net/if_dl.h>
+#include <net/if_types.h>
 #include <netinet/in.h>
 #include <ifaddrs.h>
 
@@ -29,17 +26,26 @@
 #include "devices-utils.h"
 #include "utils.h"
 
-static int get_mac_address(const char* dname, struct ifaddrs* ifaddrs, unsigned char* buffer) {
-    struct ifaddrs* cur;
+static int get_mac_address(struct ifaddrs* ifaddrs, const char* dname, unsigned char* buffer) {
+    struct ifaddrs* ifaddr;
+    struct sockaddr_dl* link;
 
-    for (cur = ifaddrs; cur; cur = cur->ifa_next) {
-        if (cur->ifa_addr && (cur->ifa_addr->sa_family == AF_LINK) &&
-                (strcmp(cur->ifa_name, dname) == 0)) {
-            struct sockaddr_dl* sdl = (struct sockaddr_dl*)cur->ifa_addr;
-            memcpy(buffer, LLADDR(sdl), sdl->sdl_alen);
-            return 0;
-        }
+    for (ifaddr = ifaddrs; ifaddr; ifaddr = ifaddr->ifa_next) {
+        if (!ifaddr->ifa_addr || ifaddr->ifa_addr->sa_family != AF_LINK)
+            continue;
+        if (strcmp(ifaddr->ifa_name, dname) != 0)
+            continue;
+
+        link = (struct sockaddr_dl*)ifaddr->ifa_addr;
+
+        if (link->sdl_type != IFT_ETHER || link->sdl_alen != MAC_ADDR_SIZE)
+            continue;
+
+        memcpy(buffer, LLADDR(link), MAC_ADDR_SIZE);
+
+        return 0;
     }
+
     return -1;
 }
 
@@ -52,7 +58,7 @@ static struct net_device * get_device_info(struct ifaddrs* ifaddr, struct ifaddr
     if (!(result->name = string_dup(ifaddr->ifa_name)))
         goto err;
 
-    if (get_mac_address(result->name, ifaddrs, result->mac_address) != 0)
+    if (get_mac_address(ifaddrs, result->name, result->mac_address) != 0)
         goto err;
     if (get_ipv4_record(ifaddr->ifa_addr, result->ipv4_address) != 0)
         goto err;
