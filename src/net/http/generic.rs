@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std;
 use std::fmt;
 use std::io;
 use std::mem;
@@ -133,9 +132,9 @@ where
     N: ToString,
 {
     fn from(tuple: (N,)) -> Self {
-        match tuple {
-            (name,) => Self::new(name, None as Option<String>),
-        }
+        let (name,) = tuple;
+
+        Self::new(name, None as Option<String>)
     }
 }
 
@@ -145,9 +144,9 @@ where
     V: ToString,
 {
     fn from(tuple: (N, V)) -> Self {
-        match tuple {
-            (name, value) => Self::new(name, Some(value)),
-        }
+        let (name, value) = tuple;
+
+        Self::new(name, Some(value))
     }
 }
 

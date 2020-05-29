@@ -17,11 +17,13 @@
 use std::fmt;
 use std::ptr;
 use std::slice;
+use std::sync::mpsc;
 use std::thread;
 
 use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::fmt::{Display, Formatter};
+use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -149,7 +151,7 @@ impl CaptureBuilder {
 
     /// Activate the capture.
     pub fn activate(self) -> Result<Capture> {
-        let _ = TC.lock().unwrap();
+        let _tc = TC.lock().unwrap();
 
         let ret = unsafe { pcap_wrapper__open(self.inner.ptr) };
 
@@ -260,7 +262,16 @@ impl Scanner {
         let device = self.device.clone();
         let filter = filter.to_string();
 
-        let t = thread::spawn(move || packet_listener(&device, &filter, read_timeout, stop_after));
+        // NOTE: we need to synchronize the sender and the receiver parts to avoid sending out
+        // packets before the receiver is initialized (otherwise we could miss some response
+        // packets)
+        let (tx, rx) = mpsc::channel();
+
+        let t = thread::spawn(move || {
+            packet_listener(&device, &filter, read_timeout, stop_after, Some(tx))
+        });
+
+        rx.recv().unwrap_or_default();
 
         send_packets(&self.device, packet_generator)?;
 
@@ -277,17 +288,24 @@ impl Scanner {
 /// * `packet_timeout` - a soft timeout that will stop the listener if no packet is received for
 ///   given duration
 /// * `total_timeout` - a hard timeout that will stop the listener when it expires
+/// * `init_event_tx` - an optional sender that will be used to notify another thread that the
+///   listener has been initialized and is receiving packets
 fn packet_listener(
     device: &str,
     filter: &str,
     packet_timeout: Duration,
     total_timeout: Option<Duration>,
+    init_event_tx: Option<Sender<()>>,
 ) -> Result<Vec<EtherPacket>> {
     let mut cap = Capture::builder(device)
         .max_packet_length(65_536)
         .read_timeout(100)
         .filter(Some(filter))
         .activate()?;
+
+    if let Some(tx) = init_event_tx {
+        tx.send(()).unwrap_or_default();
+    }
 
     let start_time = Instant::now();
 

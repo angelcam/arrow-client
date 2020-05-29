@@ -17,8 +17,6 @@ use std::fmt;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-use json;
-
 use json::JsonValue;
 
 /// JSON parse error.

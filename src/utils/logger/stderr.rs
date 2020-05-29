@@ -14,8 +14,6 @@
 
 //! stderr logger definitions.
 
-use std;
-
 use std::fmt::Arguments;
 use std::io::{Stderr, Write};
 

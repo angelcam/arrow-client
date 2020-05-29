@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std;
-
 use std::fmt;
 use std::io;
 use std::process;
@@ -28,8 +26,6 @@ use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
-
-use json;
 
 use json::JsonValue;
 
