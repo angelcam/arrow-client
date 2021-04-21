@@ -396,13 +396,10 @@ where
     if let Some(ext) = path.extension() {
         let ext = ext.to_string_lossy();
 
-        match &ext.to_ascii_lowercase() as &str {
-            "der" => true,
-            "cer" => true,
-            "crt" => true,
-            "pem" => true,
-            _ => false,
-        }
+        ext.eq_ignore_ascii_case("der")
+            || ext.eq_ignore_ascii_case("cer")
+            || ext.eq_ignore_ascii_case("crt")
+            || ext.eq_ignore_ascii_case("pem")
     } else {
         false
     }
@@ -478,6 +475,7 @@ where
 
 /// Helper function for loading all path variants from a given file.
 #[cfg(not(feature = "discovery"))]
+#[allow(clippy::unnecessary_wraps)]
 fn load_paths<P>(_: P) -> Result<Vec<String>, io::Error>
 where
     P: AsRef<Path>,

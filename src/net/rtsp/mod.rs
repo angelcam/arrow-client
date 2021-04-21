@@ -82,6 +82,7 @@ impl From<generic::Error> for Error {
 
 /// RTSP method.
 #[allow(non_camel_case_types)]
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Method {
     OPTIONS,
@@ -117,6 +118,7 @@ impl Method {
 }
 
 /// Valid URL schemes.
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Scheme {
     RTSP,

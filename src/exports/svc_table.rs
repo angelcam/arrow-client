@@ -19,8 +19,7 @@ use std::slice;
 
 use std::ffi::CString;
 use std::net::IpAddr;
-
-use libc::{c_char, size_t};
+use std::os::raw::c_char;
 
 use crate::net::raw::ether::MacAddr;
 use crate::net::utils::IpAddrEx;
@@ -90,7 +89,7 @@ pub unsafe extern "C" fn ac__service_table__free(table: *mut NativeServiceTable)
 #[no_mangle]
 pub unsafe extern "C" fn ac__service_table__get_service_count(
     table: *const NativeServiceTable,
-) -> size_t {
+) -> usize {
     (*table).services.len() as _
 }
 
@@ -98,7 +97,7 @@ pub unsafe extern "C" fn ac__service_table__get_service_count(
 #[no_mangle]
 pub unsafe extern "C" fn ac__service_table__get_service(
     table: *const NativeServiceTable,
-    index: size_t,
+    index: usize,
 ) -> *const NativeService {
     let table = &*table;
 

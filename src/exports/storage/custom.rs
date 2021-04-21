@@ -19,8 +19,7 @@ use std::ptr;
 use std::slice;
 
 use std::ffi::{CStr, CString};
-
-use libc::{c_char, c_int, c_void, size_t};
+use std::os::raw::{c_char, c_int, c_void};
 
 use openssl::ssl::SslConnectorBuilder;
 
@@ -42,6 +41,7 @@ type LoadConfiguration =
     unsafe extern "C" fn(opaque: *mut c_void, configuration: *mut *mut c_char) -> c_int;
 
 /// Type alias.
+#[allow(clippy::upper_case_acronyms)]
 type LoadCACertificates =
     unsafe extern "C" fn(opaque: *mut c_void, cert_storage: *mut SslConnectorBuilder) -> c_int;
 
@@ -52,7 +52,7 @@ type SaveConnectionState = unsafe extern "C" fn(opaque: *mut c_void, state: c_in
 type LoadPaths = unsafe extern "C" fn(
     opaque: *mut c_void,
     paths: *mut *mut *mut c_char,
-    len: *mut size_t,
+    len: *mut usize,
 ) -> c_int;
 
 /// Custom storage based on native functions.

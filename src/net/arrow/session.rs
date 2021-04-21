@@ -25,6 +25,7 @@ use futures::{Future, Stream};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
+use tokio_util::io::{poll_read_buf, poll_write_buf};
 
 use crate::context::ApplicationContext;
 use crate::net::arrow::error::{ArrowError, ConnectionError};
@@ -148,7 +149,7 @@ impl SessionContext {
             self.session_transport_task = Some(cx.waker().clone());
 
             Poll::Pending
-        } else if let Poll::Ready(res) = stream.poll_read_buf(cx, &mut self.input) {
+        } else if let Poll::Ready(res) = poll_read_buf(stream, cx, &mut self.input) {
             match res {
                 Ok(len) if len == 0 => self.close(),
                 Err(err) => self.set_error(ConnectionError::from(err)),
@@ -190,7 +191,7 @@ impl SessionContext {
 
                 Poll::Pending
             }
-        } else if let Poll::Ready(res) = stream.poll_write_buf(cx, &mut self.output) {
+        } else if let Poll::Ready(res) = poll_write_buf(stream, cx, &mut self.output) {
             if let Err(err) = res {
                 self.set_error(ConnectionError::from(err));
             }

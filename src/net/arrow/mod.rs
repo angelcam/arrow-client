@@ -129,7 +129,7 @@ impl ArrowClientContext {
             last_stable_ver: 0,
         };
 
-        client.send_register_message(mac, uuid.as_bytes().clone(), passwd.as_bytes().clone());
+        client.send_register_message(mac, *uuid.as_bytes(), *passwd.as_bytes());
 
         client
     }
@@ -516,13 +516,16 @@ impl<S> ArrowClient<S> {
         let event_handler = context.clone();
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(1000));
-            while interval.next().await.is_some() {
-                let mut context = event_handler.lock().unwrap();
-                if context.is_closed() {
-                    break;
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+
+                {
+                    let mut context = event_handler.lock().unwrap();
+                    if context.is_closed() {
+                        break;
+                    }
+                    context.time_event();
                 }
-                context.time_event();
             }
         });
 

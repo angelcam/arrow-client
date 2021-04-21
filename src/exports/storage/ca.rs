@@ -16,7 +16,7 @@
 
 use std::slice;
 
-use libc::{c_char, c_int, size_t};
+use std::os::raw::{c_char, c_int};
 
 use openssl::ssl::SslConnectorBuilder;
 use openssl::x509::X509;
@@ -40,7 +40,7 @@ pub unsafe extern "C" fn ac__ca_cert_storage__load_ca_file(
 pub unsafe extern "C" fn ac__ca_cert_storage__load_pem(
     cert_storage: *mut SslConnectorBuilder,
     pem: *const u8,
-    size: size_t,
+    size: usize,
 ) -> c_int {
     if let Ok(cert) = X509::from_pem(slice::from_raw_parts(pem, size as _)) {
         (&mut *cert_storage)
@@ -57,7 +57,7 @@ pub unsafe extern "C" fn ac__ca_cert_storage__load_pem(
 pub unsafe extern "C" fn ac__ca_cert_storage__load_der(
     cert_storage: *mut SslConnectorBuilder,
     der: *const u8,
-    size: size_t,
+    size: usize,
 ) -> c_int {
     if let Ok(cert) = X509::from_der(slice::from_raw_parts(der, size as _)) {
         (&mut *cert_storage)

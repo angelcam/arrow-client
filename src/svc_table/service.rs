@@ -27,6 +27,7 @@ pub const SVC_TYPE_LOCKED_MJPEG: u16 = 0x0007;
 pub const SVC_TYPE_TCP: u16 = 0xffff;
 
 /// Service type.
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum ServiceType {
     /// Control Protocol service.

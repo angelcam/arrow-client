@@ -125,6 +125,7 @@ struct RawEtherPacketHeader {
 }
 
 /// Ethernet packet types.
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum EtherPacketType {
     ARP,

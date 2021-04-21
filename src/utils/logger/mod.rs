@@ -47,6 +47,7 @@ pub mod syslog;
 use std::fmt::Arguments;
 
 /// Log message severity.
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Severity {
     DEBUG = 0,

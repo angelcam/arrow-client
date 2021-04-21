@@ -77,6 +77,7 @@ const CMSG_SCAN_REPORT: u16 = 0x000b;
 
 /// Arrow Control Protocol message types.
 #[allow(non_camel_case_types)]
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ControlMessageType {
     ACK,

@@ -180,6 +180,7 @@ impl RawIpv4PacketHeader {
 }
 
 /// IPv4 packet types.
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Ipv4PacketType {
     ICMP,

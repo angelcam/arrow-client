@@ -149,7 +149,7 @@ impl ApplicationContextData {
             listeners.push(listener);
         }
 
-        std::mem::replace(&mut self.event_listeners, listeners);
+        self.event_listeners = listeners;
     }
 
     /// Get all event listeners.

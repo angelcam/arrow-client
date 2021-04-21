@@ -100,13 +100,12 @@ impl FromStr for MacAddr {
         let octets = s
             .split(':')
             .map(|x| {
-                u8::from_str_radix(x, 16).or_else(|_| {
-                    Err(AddrParseError::new(
-                        "unable to parse a MAC address, invalid octet",
-                    ))
+                u8::from_str_radix(x, 16).map_err(|_| {
+                    AddrParseError::new("unable to parse a MAC address, invalid octet")
                 })
             })
             .collect::<Vec<_>>();
+
         if octets.len() == 6 {
             Ok(Self::new(
                 octets[0].clone()?,

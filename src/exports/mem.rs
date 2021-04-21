@@ -15,13 +15,12 @@
 #![allow(clippy::missing_safety_doc)]
 
 use std::alloc::Layout;
-
-use libc::{c_void, size_t};
+use std::os::raw::c_void;
 
 /// Allocate a block of memory with a given size.
 #[no_mangle]
 #[allow(clippy::cast_ptr_alignment)]
-pub unsafe extern "C" fn ac__malloc(size: size_t) -> *mut c_void {
+pub unsafe extern "C" fn ac__malloc(size: usize) -> *mut c_void {
     let layout_size = std::mem::size_of::<Layout>();
     let layout = Layout::from_size_align_unchecked(layout_size + size, 1);
     let block = std::alloc::alloc(layout);

@@ -219,12 +219,7 @@ impl HeaderFields {
         }
 
         self.fields.push(field.clone());
-
-        let mut fields = Vec::with_capacity(1);
-
-        fields.push(field);
-
-        self.map.insert(name, fields);
+        self.map.insert(name, vec![field]);
     }
 
     /// Get header fields corresponding to a given name.
@@ -875,6 +870,7 @@ impl ChunkedBodyDecoder {
     }
 
     /// Decode chunk body.
+    #[allow(clippy::unnecessary_wraps)]
     fn decode_chunk_body(&mut self, data: &mut BytesMut) -> Result<Option<MessageBody>, Error> {
         let take = if self.expected < data.len() {
             self.expected

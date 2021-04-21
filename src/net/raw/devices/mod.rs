@@ -17,8 +17,7 @@
 use std::slice;
 
 use std::net::Ipv4Addr;
-
-use libc::{c_char, c_void, size_t};
+use std::os::raw::{c_char, c_void};
 
 use crate::utils;
 
@@ -36,8 +35,8 @@ extern "C" {
     fn net_get_ipv4_netmask(dev: net_device) -> *const c_char;
     fn net_get_mac_address(dev: net_device) -> *const c_char;
     fn net_get_next_device(dev: net_device) -> net_device;
-    fn net_get_mac_addr_size() -> size_t;
-    fn net_get_ipv4_addr_size() -> size_t;
+    fn net_get_mac_addr_size() -> usize;
+    fn net_get_ipv4_addr_size() -> usize;
 }
 
 /// Ethernet device.

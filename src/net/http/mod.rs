@@ -83,6 +83,7 @@ impl From<generic::Error> for Error {
 }
 
 /// HTTP method.
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Method {
     OPTIONS,
@@ -112,6 +113,7 @@ impl Method {
 }
 
 /// Valid URL schemes.
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Scheme {
     HTTP,
@@ -356,8 +358,7 @@ impl Decoder for ClientCodec {
             if let Some(header) = self.hdecoder.decode(data)? {
                 let status_code = header.status_code();
 
-                let bdecoder: Box<dyn MessageBodyDecoder> = if (status_code >= 100
-                    && status_code < 200)
+                let bdecoder: Box<dyn MessageBodyDecoder> = if (100..200).contains(&status_code)
                     || status_code == 204
                     || status_code == 304
                 {

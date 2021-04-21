@@ -28,7 +28,7 @@ use openssl::error::ErrorStack as SslErrorStack;
 use openssl::ssl::Error as SslError;
 use openssl::ssl::{HandshakeError, SslConnector, SslStream};
 
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpStream, ToSocketAddrs};
 
 /// TLS error.
@@ -136,11 +136,15 @@ where
         with_async_context(|cx| {
             let inner = Pin::new(&mut self.inner);
 
-            if let Poll::Ready(res) = inner.poll_read(cx, buf) {
-                res
-            } else {
-                Err(io::Error::from(io::ErrorKind::WouldBlock))
-            }
+            let mut buf = ReadBuf::new(buf);
+
+            let data = match inner.poll_read(cx, &mut buf) {
+                Poll::Ready(Ok(())) => buf.filled(),
+                Poll::Ready(Err(err)) => return Err(err),
+                Poll::Pending => return Err(io::Error::from(io::ErrorKind::WouldBlock)),
+            };
+
+            Ok(data.len())
         })
     }
 }
@@ -185,18 +189,20 @@ where
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &mut [u8],
-    ) -> Poll<Result<usize, io::Error>> {
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<Result<(), io::Error>> {
         let _drop_context = set_async_context(cx);
 
-        match self.inner.read(buf) {
-            Ok(len) => Poll::Ready(Ok(len)),
+        match self.inner.read(buf.initialize_unfilled()) {
+            Ok(len) => buf.advance(len),
             Err(err) => match err.kind() {
-                io::ErrorKind::WouldBlock => Poll::Pending,
-                _ => Poll::Ready(Err(err)),
+                io::ErrorKind::WouldBlock => return Poll::Pending,
+                _ => return Poll::Ready(Err(err)),
             },
         }
+
+        Poll::Ready(Ok(()))
     }
 }
 

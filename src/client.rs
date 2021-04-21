@@ -18,7 +18,6 @@ use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use futures::future::{AbortHandle, Future, FutureExt};
-use futures::stream::StreamExt;
 use futures::task::{Context, Poll};
 
 use uuid::Uuid;
@@ -220,7 +219,7 @@ async fn wait_for_retry(logger: &mut dyn Logger, connection_retry: ConnectionRet
                 t.subsec_millis()
             );
 
-            let delay = tokio::time::delay_for(t);
+            let delay = tokio::time::sleep(t);
 
             delay.await;
         }
@@ -287,9 +286,9 @@ impl ArrowClient {
 
         // schedule periodic network scan
         let periodic_network_scan = async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(1000));
-            while interval.next().await.is_some() {
+            loop {
                 nw_scan_cmd_channel.send(Command::PeriodicNetworkScan);
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
         };
 

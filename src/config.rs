@@ -429,13 +429,13 @@ impl ConfigParser {
                     } else if arg.starts_with("--mjpeg-paths=") {
                         self.mjpeg_paths(arg)?;
                     } else if arg.starts_with("--log-file=") {
-                        self.log_file(arg)?;
+                        self.log_file(arg);
                     } else if arg.starts_with("--log-file-size=") {
                         self.log_file_size(arg)?;
                     } else if arg.starts_with("--log-file-rotations=") {
                         self.log_file_rotations(arg)?;
                     } else if arg.starts_with("--lock-file=") {
-                        self.lock_file(arg)?
+                        self.lock_file(arg);
                     } else {
                         return Err(ConfigError::new(format!("unknown argument: \"{}\"", arg)));
                     }
@@ -590,15 +590,13 @@ impl ConfigParser {
     }
 
     /// Process the log-file argument.
-    fn log_file(&mut self, arg: &str) -> Result<(), ConfigError> {
+    fn log_file(&mut self, arg: &str) {
         self.logger_type = LoggerType::FileLogger;
 
         // skip "--log-file=" length
         let log_file = &arg[11..];
 
         self.log_file = log_file.into();
-
-        Ok(())
     }
 
     /// Process the log-file-size argument.
@@ -678,13 +676,11 @@ impl ConfigParser {
     }
 
     /// Process the lock-file argument.
-    fn lock_file(&mut self, arg: &str) -> Result<(), ConfigError> {
+    fn lock_file(&mut self, arg: &str) {
         // skip "--lock-file=" length
         let lock_file = &arg[12..];
 
         self.lock_file = Some(lock_file.into());
-
-        Ok(())
     }
 }
 

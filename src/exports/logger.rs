@@ -18,9 +18,8 @@ use std::ptr;
 
 use std::ffi::CString;
 use std::fmt::Arguments;
+use std::os::raw::{c_char, c_int, c_void};
 use std::sync::{Arc, Mutex};
-
-use libc::{c_char, c_int, c_void, size_t};
 
 use crate::utils::logger::file::FileLogger;
 use crate::utils::logger::stderr::StderrLogger;
@@ -144,8 +143,8 @@ pub unsafe extern "C" fn ac__logger__stderr(pretty: c_int) -> *mut BoxLogger {
 #[no_mangle]
 pub unsafe extern "C" fn ac__logger__file(
     path: *const c_char,
-    limit: size_t,
-    rotations: size_t,
+    limit: usize,
+    rotations: usize,
 ) -> *mut BoxLogger {
     let path = cstr_to_str(path);
 

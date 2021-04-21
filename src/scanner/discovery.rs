@@ -98,14 +98,13 @@ pub fn scan_network(
     rtsp_paths: Arc<Vec<String>>,
     mjpeg_paths: Arc<Vec<String>>,
 ) -> Result<ScanResult> {
-    let mut runtime = tokio::runtime::Builder::new()
-        .basic_scheduler()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
         .build()
         .map_err(|err| DiscoveryError::new(format!("Async IO error: {}", err)))?;
 
-    let context = Context::new(logger, discovery_whitelist, rtsp_paths, mjpeg_paths)?;
+    let context = Context::new(logger, discovery_whitelist, rtsp_paths, mjpeg_paths);
 
     let rtsp_port_priorities = context.get_rtsp_port_priorities();
     let http_port_priorities = context.get_http_port_priorities();
@@ -180,7 +179,7 @@ impl ContextData {
         discovery_whitelist: Arc<HashSet<String>>,
         rtsp_paths: Arc<Vec<String>>,
         mjpeg_paths: Arc<Vec<String>>,
-    ) -> Result<Self> {
+    ) -> Self {
         let mut port_candidates = HashSet::<u16>::new();
         let mut rtsp_port_candidates = HashSet::<u16>::new();
         let mut http_port_candidates = HashSet::<u16>::new();
@@ -194,7 +193,7 @@ impl ContextData {
         let rtsp_port_priorities = get_port_priorities(RTSP_PORT_CANDIDATES);
         let http_port_priorities = get_port_priorities(HTTP_PORT_CANDIDATES);
 
-        let cdata = Self {
+        Self {
             logger,
             port_candidates,
             rtsp_port_candidates,
@@ -205,9 +204,7 @@ impl ContextData {
             rtsp_paths,
             mjpeg_paths,
             request_timeout: Duration::from_millis(2000),
-        };
-
-        Ok(cdata)
+        }
     }
 }
 
@@ -239,14 +236,15 @@ impl Context {
         discovery_whitelist: Arc<HashSet<String>>,
         rtsp_paths: Arc<Vec<String>>,
         mjpeg_paths: Arc<Vec<String>>,
-    ) -> Result<Self> {
-        let data = ContextData::new(logger, discovery_whitelist, rtsp_paths, mjpeg_paths)?;
-
-        let context = Self {
-            data: Arc::new(data),
-        };
-
-        Ok(context)
+    ) -> Self {
+        Self {
+            data: Arc::new(ContextData::new(
+                logger,
+                discovery_whitelist,
+                rtsp_paths,
+                mjpeg_paths,
+            )),
+        }
     }
 
     /// Get logger.
@@ -722,10 +720,10 @@ async fn get_rtsp_stream_type(context: Context, addr: SocketAddr, path: &str) ->
 
 /// Check if a given RTSP response is from a buggy Hi(I)pcam RTSP server.
 fn is_hipcam_rtsp_response(response: &RtspResponse) -> bool {
-    match response.get_header_field_value("server") {
-        Some("HiIpcam/V100R003 VodServer/1.0.0") | Some("Hipcam RealServer/V1.0") => true,
-        _ => false,
-    }
+    matches!(
+        response.get_header_field_value("server"),
+        Some("HiIpcam/V100R003 VodServer/1.0.0") | Some("Hipcam RealServer/V1.0"),
+    )
 }
 
 /// Find all MJPEG streams.

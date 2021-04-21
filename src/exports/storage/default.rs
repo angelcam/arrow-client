@@ -16,7 +16,7 @@
 
 use std::ptr;
 
-use libc::c_char;
+use std::os::raw::c_char;
 
 use crate::exports::storage::DynStorage;
 use crate::storage::{DefaultStorage, DefaultStorageBuilder};

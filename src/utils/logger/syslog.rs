@@ -18,9 +18,8 @@ use std::ptr;
 
 use std::ffi::CString;
 use std::fmt::Arguments;
+use std::os::raw::{c_char, c_int, c_void};
 use std::sync::Once;
-
-use libc::{c_char, c_int, c_void};
 
 use crate::utils::logger::{Logger, Severity};
 

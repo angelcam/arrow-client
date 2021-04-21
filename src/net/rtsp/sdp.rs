@@ -217,6 +217,7 @@ pub trait FromAttribute: Sized {
 }
 
 /// Representation of the "rtpmap" attribute.
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone)]
 pub struct RTPMap {
     /// Payload type (corresponding to one of the media formats).
