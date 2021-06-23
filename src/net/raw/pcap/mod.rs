@@ -23,21 +23,20 @@ use std::thread;
 use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::fmt::{Display, Formatter};
+use std::os::raw::{c_char, c_int, c_void};
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use bytes::{Bytes, BytesMut};
 
-use libc::{c_char, c_int, c_void, size_t};
-
 use crate::net::raw::ether::packet::EtherPacket;
 
 type PacketCallback = unsafe extern "C" fn(
     opaque: *mut c_void,
     data: *const u8,
-    data_length: size_t,
-    packet_length: size_t,
+    data_length: usize,
+    packet_length: usize,
 );
 
 extern "C" {
@@ -47,7 +46,7 @@ extern "C" {
     fn pcap_wrapper__get_last_error(wrapper: *const c_void) -> *const c_char;
 
     fn pcap_wrapper__set_filter(wrapper: *mut c_void, filter: *const c_char) -> c_int;
-    fn pcap_wrapper__set_max_packet_length(wrapper: *mut c_void, max_packet_length: size_t);
+    fn pcap_wrapper__set_max_packet_length(wrapper: *mut c_void, max_packet_length: usize);
     fn pcap_wrapper__set_read_timeout(wrapper: *mut c_void, read_timeout: u64);
 
     fn pcap_wrapper__open(wrapper: *mut c_void) -> c_int;
@@ -57,7 +56,7 @@ extern "C" {
         callback: PacketCallback,
         opaque: *mut c_void,
     ) -> c_int;
-    fn pcap_wrapper__write_packet(wrapper: *mut c_void, data: *const u8, size: size_t) -> c_int;
+    fn pcap_wrapper__write_packet(wrapper: *mut c_void, data: *const u8, size: usize) -> c_int;
 }
 
 lazy_static! {
@@ -224,8 +223,8 @@ impl Drop for Capture {
 unsafe extern "C" fn read_packet_callback(
     opaque: *mut c_void,
     data: *const u8,
-    data_length: size_t,
-    _: size_t,
+    data_length: usize,
+    _: usize,
 ) {
     let buffer_ptr = opaque as *mut BytesMut;
 
