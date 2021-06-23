@@ -742,7 +742,7 @@ where
     futures::future::join_all(futures)
         .await
         .into_iter()
-        .filter_map(|svc| svc)
+        .flatten()
         .collect()
 }
 

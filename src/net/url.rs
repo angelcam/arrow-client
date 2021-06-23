@@ -173,11 +173,8 @@ impl Url {
 
     /// Get password.
     pub fn password(&self) -> Option<&str> {
-        if let Some(pwd_pos) = self.password {
-            Some(&self.serialized[pwd_pos..self.netloc - 1])
-        } else {
-            None
-        }
+        self.password
+            .map(|pwd_pos| &self.serialized[pwd_pos..self.netloc - 1])
     }
 
     /// Get host.
@@ -226,11 +223,7 @@ impl Url {
 
     /// Get fragment.
     pub fn fragment(&self) -> Option<&str> {
-        if let Some(fragment) = self.fragment {
-            Some(&self.serialized[fragment..])
-        } else {
-            None
-        }
+        self.fragment.map(|fragment| &self.serialized[fragment..])
     }
 }
 

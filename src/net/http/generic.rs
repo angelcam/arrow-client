@@ -82,11 +82,7 @@ impl HeaderField {
         V: ToString,
     {
         let name = name.to_string();
-
-        let value = match value {
-            Some(v) => Some(v.to_string()),
-            None => None,
-        };
+        let value = value.map(|v| v.to_string());
 
         Self {
             nname: name.to_lowercase(),
@@ -107,10 +103,7 @@ impl HeaderField {
 
     /// Get value of the field.
     pub fn value(&self) -> Option<&str> {
-        match self.value.as_ref() {
-            Some(v) => Some(v),
-            None => None,
-        }
+        self.value.as_deref()
     }
 }
 

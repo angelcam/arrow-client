@@ -76,7 +76,7 @@ struct ConnectionStateListener {
 impl ConnectionStateListener {
     /// Create a new connection state listener.
     fn new(opaque: *mut c_void, callback: ConnectionStateCallback) -> Self {
-        Self { opaque, callback }
+        Self { callback, opaque }
     }
 }
 
@@ -100,7 +100,7 @@ struct NetworkScannerStateListener {
 impl NetworkScannerStateListener {
     /// Create a new network scanner state listener.
     fn new(opaque: *mut c_void, callback: NetworkScannerStateCallback) -> Self {
-        Self { opaque, callback }
+        Self { callback, opaque }
     }
 }
 

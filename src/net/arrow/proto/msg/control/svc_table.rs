@@ -135,11 +135,7 @@ impl ServiceTable for SimpleServiceTable {
             return Some(Service::control());
         }
 
-        if let Some(elem) = self.map.get(&id) {
-            Some(elem.service.clone())
-        } else {
-            None
-        }
+        self.map.get(&id).map(|elem| elem.service.clone())
     }
 
     fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16> {
