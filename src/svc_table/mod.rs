@@ -191,13 +191,11 @@ impl ToJson for ServiceTableElement {
 
 impl FromJson for ServiceTableElement {
     fn from_json(value: JsonValue) -> Result<Self, ParseError> {
-        let service;
-
-        if let JsonValue::Object(svc) = value {
-            service = svc;
+        let service = if let JsonValue::Object(svc) = value {
+            svc
         } else {
             return Err(ParseError::new("JSON object expected"));
-        }
+        };
 
         let svc_type = service
             .get("svc_type")
@@ -448,25 +446,21 @@ impl FromJson for ServiceTableData {
     fn from_json(value: JsonValue) -> Result<Self, ParseError> {
         let mut res = Self::new();
 
-        let mut table;
-
-        if let JsonValue::Object(t) = value {
-            table = t;
+        let mut table = if let JsonValue::Object(t) = value {
+            t
         } else {
             return Err(ParseError::new("JSON object expected"));
-        }
+        };
 
         let tmp = table
             .remove("services")
             .ok_or_else(|| ParseError::new("missing field \"services\""))?;
 
-        let services;
-
-        if let JsonValue::Array(svcs) = tmp {
-            services = svcs.into_iter();
+        let services = if let JsonValue::Array(svcs) = tmp {
+            svcs.into_iter()
         } else {
             return Err(ParseError::new("JSON array expected"));
-        }
+        };
 
         for (index, service) in services.enumerate() {
             let use_array_index = !service.has_key("id");
@@ -497,6 +491,7 @@ pub struct ServiceTableIterator {
 
 impl ServiceTableIterator {
     /// Create a new service table iterator.
+    #[allow(clippy::needless_collect)]
     fn new<'a, I>(elements: I) -> Self
     where
         I: IntoIterator<Item = &'a ServiceTableElement>,

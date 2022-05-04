@@ -36,6 +36,7 @@ pub const IP_PROTO_UDP: u8 = 0x11;
 
 /// IPv4 packet header.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct Ipv4PacketHeader {
     pub version: u8,
     pub dscp: u8,

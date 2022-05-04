@@ -346,19 +346,17 @@ impl Decoder for ClientCodec {
     fn decode(&mut self, data: &mut BytesMut) -> Result<Option<Response>, Error> {
         if self.header.is_none() {
             if let Some(header) = self.hdecoder.decode(data)? {
-                let bdecoder;
-
-                if let Some(clength) = header.get_header_field("content-length") {
+                let bdecoder = if let Some(clength) = header.get_header_field("content-length") {
                     let clength = clength
                         .value()
                         .ok_or_else(|| Error::new("missing Content-Length value"))?;
                     let clength = usize::from_str(clength)
                         .map_err(|_| Error::new("unable to decode Content-Length"))?;
 
-                    bdecoder = FixedSizeBodyDecoder::new(clength, self.ignore_response_body);
+                    FixedSizeBodyDecoder::new(clength, self.ignore_response_body)
                 } else {
-                    bdecoder = FixedSizeBodyDecoder::new(0, self.ignore_response_body);
-                }
+                    FixedSizeBodyDecoder::new(0, self.ignore_response_body)
+                };
 
                 self.bdecoder = Some(bdecoder);
                 self.header = Some(header);

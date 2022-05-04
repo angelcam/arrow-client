@@ -693,7 +693,7 @@ pub struct PublicIdentity {
 impl ToJson for PublicIdentity {
     fn to_json(&self) -> JsonValue {
         object! {
-            "uuid" => format!("{}", self.uuid.to_hyphenated_ref())
+            "uuid" => format!("{}", self.uuid.as_hyphenated())
         }
     }
 }
@@ -744,8 +744,8 @@ impl Default for PersistentConfig {
 impl ToJson for PersistentConfig {
     fn to_json(&self) -> JsonValue {
         object! {
-            "uuid" => format!("{}", self.uuid.to_hyphenated_ref()),
-            "passwd" => format!("{}", self.passwd.to_hyphenated_ref()),
+            "uuid" => format!("{}", self.uuid.as_hyphenated()),
+            "passwd" => format!("{}", self.passwd.as_hyphenated()),
             "version" => self.version,
             "svc_table" => self.svc_table.to_json()
         }
@@ -754,13 +754,11 @@ impl ToJson for PersistentConfig {
 
 impl FromJson for PersistentConfig {
     fn from_json(value: JsonValue) -> Result<Self, ParseError> {
-        let mut config;
-
-        if let JsonValue::Object(cfg) = value {
-            config = cfg;
+        let mut config = if let JsonValue::Object(cfg) = value {
+            cfg
         } else {
             return Err(ParseError::new("JSON object expected"));
-        }
+        };
 
         let svc_table = config
             .remove("svc_table")

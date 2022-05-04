@@ -42,11 +42,11 @@ version = "1"
 features = ["rt", "net", "time"]
 
 [dependencies.tokio-util]
-version = "0.6"
+version = "0.7"
 features = ["codec", "io"]
 
 [dependencies.uuid]
-version  = "0.8"
+version  = "1"
 features = ["v4"]
 
 [build-dependencies]

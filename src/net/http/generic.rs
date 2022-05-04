@@ -723,7 +723,7 @@ impl Decoder for SimpleBodyDecoder {
     fn decode_eof(&mut self, data: &mut BytesMut) -> Result<Option<MessageBody>, Error> {
         Decoder::decode(self, data)?;
 
-        let body = mem::replace(&mut self.body, Vec::new());
+        let body = mem::take(&mut self.body);
 
         Ok(Some(body.into_boxed_slice()))
     }
@@ -906,7 +906,7 @@ impl ChunkedBodyDecoder {
                 self.state = ChunkedDecoderState::Completed;
 
                 // take the body without allocation
-                let body = mem::replace(&mut self.body, Vec::new());
+                let body = mem::take(&mut self.body);
 
                 return Ok(Some(body.into_boxed_slice()));
             }
@@ -943,7 +943,7 @@ impl Decoder for ChunkedBodyDecoder {
             self.state = ChunkedDecoderState::Completed;
 
             // take the body without allocation
-            let body = mem::replace(&mut self.body, Vec::new());
+            let body = mem::take(&mut self.body);
 
             Ok(Some(body.into_boxed_slice()))
         }

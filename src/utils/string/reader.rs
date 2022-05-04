@@ -174,7 +174,7 @@ impl<'a> Reader<'a> {
     {
         let rest = self.input.as_str();
 
-        let index = rest.find(cnd).unwrap_or_else(|| rest.len());
+        let index = rest.find(cnd).unwrap_or(rest.len());
 
         let (word, rest) = rest.split_at(index);
 

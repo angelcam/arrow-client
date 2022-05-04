@@ -154,7 +154,7 @@ impl ApplicationContextData {
 
     /// Get all event listeners.
     fn take_event_listeners(&mut self) -> Vec<Box<dyn ApplicationEventListener + Send>> {
-        std::mem::replace(&mut self.event_listeners, Vec::new())
+        std::mem::take(&mut self.event_listeners)
     }
 }
 

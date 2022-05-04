@@ -156,8 +156,8 @@ enum SuspendReason {
 }
 
 impl SuspendReason {
-    fn to_string(&self) -> &str {
-        match *self {
+    fn to_string(self) -> &'static str {
+        match self {
             SuspendReason::NotInPairingMode => "pairing window timeout",
             SuspendReason::UnsupportedProtocolVersion => "unsupported protocol version",
         }
