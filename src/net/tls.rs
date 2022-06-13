@@ -20,8 +20,10 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::io::{Read, Write};
 use std::pin::Pin;
+use std::time::Duration;
 
 use futures::future::Future;
+use futures::stream::StreamExt;
 use futures::task::{Context, Poll, Waker};
 
 use openssl::error::ErrorStack as SslErrorStack;
@@ -321,9 +323,30 @@ impl TlsConnector {
     where
         T: ToSocketAddrs,
     {
-        let stream = TcpStream::connect(addr);
-        let stream = stream.await?;
-        let stream = InnerSslStream::new(stream);
+        let addrs = tokio::net::lookup_host(addr).await?.enumerate();
+
+        let sockets = futures::stream::iter(addrs)
+            .then(|(idx, addr)| async move {
+                // wait 1s before we try to connect to the next address from
+                // the list
+                if idx > 0 {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+
+                addr
+            })
+            .map(TcpStream::connect)
+            .buffered(4)
+            .filter_map(|res| futures::future::ready(res.ok()));
+
+        futures::pin_mut!(sockets);
+
+        let socket = sockets
+            .next()
+            .await
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "the server is unreachable"))?;
+
+        let stream = InnerSslStream::new(socket);
 
         let configuration = self.inner.configure()?;
 
