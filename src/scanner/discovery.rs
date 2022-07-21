@@ -768,19 +768,6 @@ async fn get_mjpeg_stream(
         .unwrap_or(None)
 }
 
-/// Get a list of distinct hosts from a given list of services.
-fn get_hosts(services: &[Service]) -> Vec<IpAddr> {
-    let mut hosts = HashSet::new();
-
-    for svc in services {
-        if let Some(saddr) = svc.address() {
-            hosts.insert(saddr.ip());
-        }
-    }
-
-    hosts.into_iter().collect::<_>()
-}
-
 #[cfg(test)]
 use std::net::Ipv4Addr;
 

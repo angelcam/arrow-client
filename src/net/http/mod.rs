@@ -18,7 +18,7 @@ use std::fmt;
 use std::io;
 
 use std::error::Error as ErrorTrait;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Display, Formatter, Write};
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -164,7 +164,7 @@ impl Request {
         let mut path = url.path().to_string();
 
         if let Some(query) = url.query() {
-            path += &format!("?{}", query);
+            write!(path, "?{}", query).unwrap();
         }
 
         let app_version = env!("CARGO_PKG_VERSION");
