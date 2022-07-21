@@ -130,19 +130,6 @@ pub fn scan_network(
 
     let mjpeg_streams = runtime.block_on(find_mjpeg_streams(context, mjpeg_services.into_iter()));
 
-    let mut hosts = HashSet::new();
-
-    hosts.extend(get_hosts(&rtsp_streams));
-    hosts.extend(get_hosts(&mjpeg_streams));
-
-    let http_services = http_services.into_iter().filter_map(|(mac, saddr)| {
-        if hosts.contains(&saddr.ip()) {
-            Some(Service::http(mac, saddr))
-        } else {
-            None
-        }
-    });
-
     for svc in rtsp_streams {
         report.add_service(svc);
     }
@@ -151,8 +138,8 @@ pub fn scan_network(
         report.add_service(svc);
     }
 
-    for svc in http_services {
-        report.add_service(svc);
+    for (mac, saddr) in http_services {
+        report.add_service(Service::http(mac, saddr));
     }
 
     Ok(report)
