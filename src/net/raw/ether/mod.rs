@@ -20,6 +20,7 @@ use std::result;
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
 /// MacAddr parse error.
@@ -49,7 +50,7 @@ impl Display for AddrParseError {
 }
 
 /// MAC address type.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq)]
 pub struct MacAddr {
     bytes: [u8; 6],
 }
@@ -76,6 +77,28 @@ impl MacAddr {
     pub fn from_slice(bytes: &[u8]) -> Self {
         assert_eq!(bytes.len(), 6);
         Self::new(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
+    }
+}
+
+impl PartialEq for MacAddr {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes.eq(&other.bytes)
+    }
+}
+
+impl Hash for MacAddr {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
+        // We need the hash to be stable regardless of the system pointer
+        // width. Using u32 to represent the slice length is safe here because
+        // the MAC address is always 6 bytes long.
+        //
+        // NOTE: Even though the slice length is not necessary here, we cannot
+        // remove it without introducing a breaking change.
+        state.write_u32(6);
+        state.write(&self.bytes);
     }
 }
 

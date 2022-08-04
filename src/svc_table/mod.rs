@@ -675,7 +675,7 @@ fn test_visible_services_iterator() {
 
     visible.sort_by_key(|&(id, _)| id);
 
-    let mut expected = vec![(41839, svc_1), (26230, svc_3)];
+    let mut expected = vec![(93, svc_3), (640, svc_1)];
 
     expected.sort_by_key(|&(id, _)| id);
 
@@ -816,7 +816,7 @@ fn test_deserialization_and_initialization() {
             (2, svc_2.clone()),
             (3, svc_3.clone()),
             (10000, svc_4.clone()),
-            (33402, svc_5.clone()),
+            (11717, svc_5.clone()),
         ]
     );
 
@@ -851,7 +851,7 @@ fn test_deserialization_and_initialization() {
             (2, svc_2.clone()),
             (3, svc_3),
             (10000, svc_4),
-            (33402, svc_5.clone()),
+            (11717, svc_5.clone()),
         ]
     );
 
@@ -864,7 +864,7 @@ fn test_deserialization_and_initialization() {
 
     visible.sort_by_key(|&(id, _)| id);
 
-    assert_eq!(visible, vec![(1, svc_1), (2, svc_2), (33402, svc_5),]);
+    assert_eq!(visible, vec![(1, svc_1), (2, svc_2), (11717, svc_5),]);
 
     assert_eq!(internal.version(), 5);
 }

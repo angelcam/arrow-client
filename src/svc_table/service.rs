@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, SocketAddr};
 
 use crate::net::raw::ether::MacAddr;
@@ -28,6 +29,7 @@ pub const SVC_TYPE_TCP: u16 = 0xffff;
 
 /// Service type.
 #[allow(clippy::upper_case_acronyms)]
+#[repr(u32)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum ServiceType {
     /// Control Protocol service.
@@ -71,9 +73,9 @@ impl ServiceType {
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct ServiceIdentifier {
     svc_type: ServiceType,
-    mac: Option<MacAddr>,
-    port: Option<u16>,
-    path: Option<String>,
+    mac: StableHashOption<MacAddr>,
+    port: StableHashOption<u16>,
+    path: StableHashOption<StableHashString>,
 }
 
 impl ServiceIdentifier {
@@ -224,9 +226,96 @@ impl Service {
     pub fn to_service_identifier(&self) -> ServiceIdentifier {
         ServiceIdentifier {
             svc_type: self.service_type(),
-            mac: self.mac(),
-            port: self.port(),
-            path: self.path.clone(),
+            mac: self.mac().into(),
+            port: self.port().into(),
+            path: self.path.clone().map(StableHashString::from).into(),
         }
+    }
+}
+
+/// Custom option type with stable hash regardless of the system pointer width.
+#[derive(Clone, Eq)]
+enum StableHashOption<T> {
+    None,
+    Some(T),
+}
+
+impl<T> PartialEq for StableHashOption<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        if let Self::Some(a) = self {
+            if let Self::Some(b) = other {
+                a.eq(b)
+            } else {
+                false
+            }
+        } else {
+            matches!(other, Self::None)
+        }
+    }
+}
+
+impl<T> Hash for StableHashOption<T>
+where
+    T: Hash,
+{
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
+        if let Self::Some(v) = self {
+            // write the discriminant value
+            state.write_u32(1);
+
+            // ... and hash the inner data
+            v.hash(state);
+        } else {
+            state.write_u32(0);
+        }
+    }
+}
+
+impl<T> From<Option<T>> for StableHashOption<T> {
+    fn from(val: Option<T>) -> Self {
+        match val {
+            Some(v) => Self::Some(v),
+            None => Self::None,
+        }
+    }
+}
+
+/// String wrapper with stable hash regardless of the system pointer width.
+///
+/// Even though the default implementation for string hashing currently does
+/// not hash the string length, there is an alternative implementation being
+/// considered that would hash it.
+///
+/// Let's be careful here and fix the hash implementation.
+#[derive(Clone, Eq)]
+struct StableHashString {
+    inner: String,
+}
+
+impl PartialEq for StableHashString {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner.eq(&other.inner)
+    }
+}
+
+impl Hash for StableHashString {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
+        state.write(self.inner.as_bytes());
+        state.write_u8(0xff);
+    }
+}
+
+impl From<String> for StableHashString {
+    fn from(s: String) -> Self {
+        Self { inner: s }
     }
 }
