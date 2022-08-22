@@ -23,7 +23,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::iter::FromIterator;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -414,6 +414,8 @@ impl ConfigParser {
                 "--diagnostic-mode" => self.diagnostic_mode(),
                 "--log-stderr" => self.log_stderr(),
                 "--log-stderr-pretty" => self.log_stderr_pretty(),
+                "--help" => usage(0),
+                "--version" => version(),
 
                 arg => {
                     if arg.starts_with("--config-file=") {
@@ -1125,7 +1127,7 @@ fn parse_mjpeg_url(url: &str) -> Result<Service, ConfigError> {
 /// Print usage and exit the process with a given exit code.
 #[doc(hidden)]
 pub fn usage(exit_code: i32) -> ! {
-    println!("USAGE: arrow-client arr-host[:arr-port] [OPTIONS]\n");
+    println!("USAGE: {} arr-host[:arr-port] [OPTIONS]\n", app_name());
     println!("    arr-host  Angelcam Arrow Service host");
     println!("    arr-port  Angelcam Arrow Service port\n");
     println!("OPTIONS:\n");
@@ -1184,7 +1186,36 @@ pub fn usage(exit_code: i32) -> ! {
     println!("    --lock-file=path    make sure that there is only one instance of the");
     println!("                        process running; the file will contain also PID of the");
     println!("                        process");
+    println!("    --help              print this help and exit");
+    println!("    --version           print the version information and exit");
     println!();
 
     process::exit(exit_code);
+}
+
+/// Print version information and exit the process.
+#[doc(hidden)]
+pub fn version() -> ! {
+    println!(
+        "{} ({} v{})",
+        app_name(),
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION")
+    );
+
+    process::exit(0);
+}
+
+/// Get the application name.
+fn app_name() -> String {
+    std::env::args()
+        .next()
+        .and_then(|path| {
+            PathBuf::from(path)
+                .file_name()
+                .map(Path::new)
+                .map(|p| p.display())
+                .map(|p| p.to_string())
+        })
+        .unwrap_or_else(|| String::from(env!("CARGO_PKG_NAME")))
 }
