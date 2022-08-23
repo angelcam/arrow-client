@@ -236,7 +236,16 @@ impl DefaultStorage {
 
 impl Storage for DefaultStorage {
     fn save_configuration(&mut self, config: &PersistentConfig) -> Result<(), io::Error> {
-        save_configuration_file(config, &self.config_file)
+        save_configuration_file(config, &self.config_file).map_err(|err| {
+            io::Error::new(
+                err.kind(),
+                format!(
+                    "unable to create configuration file \"{}\": {}",
+                    self.config_file.display(),
+                    err
+                ),
+            )
+        })
     }
 
     fn load_configuration(&mut self) -> Result<PersistentConfig, io::Error> {
@@ -248,7 +257,7 @@ impl Storage for DefaultStorage {
                 &mut logger,
                 Severity::WARN,
                 format!(
-                    "unable to read configuration file skeleton\"{}\"",
+                    "unable to read configuration file skeleton \"{}\"",
                     file.to_string_lossy()
                 ),
                 load_configuration_file(file),
