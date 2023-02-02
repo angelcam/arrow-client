@@ -21,10 +21,12 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use futures::future::Either;
 use futures::sink::SinkExt;
 use futures::stream::{Stream, StreamExt};
 use futures::task::{Context, Poll, Waker};
 
+use tokio::task::JoinHandle;
 use tokio_util::codec::Decoder;
 
 use crate::cmd_handler::{Command, CommandChannel};
@@ -146,14 +148,14 @@ impl ArrowClientContext {
 
     /// Check if there is an ACK timeout.
     fn ack_timeout(&self) -> bool {
-        match self.expected_acks.front() {
-            Some(expected_ack) => expected_ack.timeout(),
-            None => false,
-        }
+        self.expected_acks
+            .front()
+            .map(|expected| expected.timeout())
+            .unwrap_or(false)
     }
 
     /// Trigger all periodical tasks.
-    fn time_event(&mut self) {
+    fn time_event(&mut self) -> Result<(), ArrowError> {
         if self.state == ProtocolState::Established {
             if self.last_ping.elapsed() >= PING_PERIOD {
                 self.send_ping_message();
@@ -162,13 +164,14 @@ impl ArrowClientContext {
             if self.last_update_chck.elapsed() >= UPDATE_CHECK_PERIOD {
                 self.check_for_updates();
             }
+        }
 
-            // notify the task consuming Arrow Messages about an ACK timeout
-            if self.ack_timeout() {
-                if let Some(task) = self.task.take() {
-                    task.wake();
-                }
-            }
+        if self.ack_timeout() {
+            Err(ArrowError::connection_error(
+                "Arrow Service connection timeout",
+            ))
+        } else {
+            Ok(())
         }
     }
 
@@ -478,11 +481,7 @@ impl Stream for ArrowClientContext {
     type Item = Result<ArrowMessage, ArrowError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        if self.ack_timeout() {
-            return Poll::Ready(Some(Err(ArrowError::connection_error(
-                "Arrow Service connection timeout",
-            ))));
-        } else if self.is_closed() {
+        if self.is_closed() {
             return Poll::Ready(None);
         } else if let Some(msg) = self.messages.pop_front() {
             return Poll::Ready(Some(Ok(msg)));
@@ -508,14 +507,18 @@ struct ArrowClient<S> {
 
 impl<S> ArrowClient<S> {
     /// Create a new instance of Arrow Client.
-    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel, stream: S) -> Self {
+    fn new(
+        app_context: ApplicationContext,
+        cmd_channel: CommandChannel,
+        stream: S,
+    ) -> (Self, JoinHandle<Result<(), ArrowError>>) {
         let context = ArrowClientContext::new(app_context, cmd_channel);
 
         let context = Arc::new(Mutex::new(context));
 
         let event_handler = context.clone();
 
-        tokio::spawn(async move {
+        let watchdog = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -524,12 +527,16 @@ impl<S> ArrowClient<S> {
                     if context.is_closed() {
                         break;
                     }
-                    context.time_event();
+                    context.time_event()?;
                 }
             }
+
+            Ok(())
         });
 
-        Self { context, stream }
+        let client = Self { context, stream };
+
+        (client, watchdog)
     }
 
     /// Get redirect address (if any).
@@ -613,11 +620,19 @@ pub async fn connect(
 
     let (mut sink, stream) = framed.split();
 
-    let mut arrow_client = ArrowClient::new(app_context, cmd_channel, stream);
+    let (mut arrow_client, watchdog) = ArrowClient::new(app_context, cmd_channel, stream);
 
     let send = sink.send_all(&mut arrow_client);
 
-    send.await?;
+    match futures::future::select(send, watchdog).await {
+        Either::Left((Err(err), _)) => return Err(err),
+        Either::Right((Ok(Err(err)), _)) => return Err(err),
+        Either::Right((Err(_), _)) => return Err(ArrowError::other("interrupted")),
+        _ => (),
+    }
+
+    // we can ignore any close errors
+    let _ = tokio::time::timeout(CONNECTION_TIMEOUT, sink.close()).await;
 
     arrow_client
         .get_redirect()
