@@ -31,7 +31,7 @@ use openssl::ssl::Error as SslError;
 use openssl::ssl::{HandshakeError, SslConnector, SslStream};
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::net::TcpStream;
 
 /// TLS error.
 #[derive(Debug, Clone)]
@@ -319,10 +319,13 @@ pub struct TlsConnector {
 
 impl TlsConnector {
     /// Take a given asynchronous stream and perform a TLS handshake.
-    pub async fn connect<T>(&self, addr: T) -> Result<TlsStream<TcpStream>, TlsError>
-    where
-        T: ToSocketAddrs,
-    {
+    pub async fn connect(&self, addr: &str) -> Result<TlsStream<TcpStream>, TlsError> {
+        let hostname = if let Some(idx) = addr.rfind(':') {
+            &addr[..idx]
+        } else {
+            addr
+        };
+
         let addrs = tokio::net::lookup_host(addr).await?.enumerate();
 
         let sockets = futures::stream::iter(addrs)
@@ -357,8 +360,8 @@ impl TlsConnector {
             // certificate. It's a self signed certificate issued directly by Angelcam and used
             // only for Arrow.
             configuration
-                .verify_hostname(false)
-                .connect("hostname", stream)
+                .verify_hostname(true)
+                .connect(hostname, stream)
         });
 
         let handshake = handshake.await;
