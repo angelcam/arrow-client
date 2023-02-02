@@ -386,8 +386,8 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
 
                 self.load_ca_certificates(&path)?;
             }
-        } else if is_cert_file(&path) {
-            self.set_ca_file(&path)
+        } else if is_cert_file(path) {
+            self.set_ca_file(path)
                 .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{}", err)))?;
         }
 
