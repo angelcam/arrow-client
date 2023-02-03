@@ -167,5 +167,5 @@ pub unsafe extern "C" fn ac__logger__clone(logger: *const BoxLogger) -> *mut Box
 /// Free a give logger.
 #[no_mangle]
 pub unsafe extern "C" fn ac__logger__free(logger: *mut BoxLogger) {
-    Box::from_raw(logger);
+    let _ = Box::from_raw(logger);
 }

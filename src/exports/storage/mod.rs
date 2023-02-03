@@ -79,5 +79,5 @@ impl Storage for DynStorage {
 /// Free a given storage.
 #[no_mangle]
 pub unsafe extern "C" fn ac__storage__free(storage: *mut DynStorage) {
-    Box::from_raw(storage);
+    let _ = Box::from_raw(storage);
 }

@@ -82,7 +82,7 @@ impl NativeService {
 /// Free the service table.
 #[no_mangle]
 pub unsafe extern "C" fn ac__service_table__free(table: *mut NativeServiceTable) {
-    Box::from_raw(table);
+    let _ = Box::from_raw(table);
 }
 
 /// Get number of services in the table.

@@ -238,7 +238,7 @@ pub unsafe extern "C" fn ac__custom_storage_builder__new(
 /// Free the storage builder.
 #[no_mangle]
 pub unsafe extern "C" fn ac__custom_storage_builder__free(builder: *mut CustomStorage) {
-    Box::from_raw(builder);
+    let _ = Box::from_raw(builder);
 }
 
 /// Set function for saving client configuration.

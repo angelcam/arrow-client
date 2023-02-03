@@ -48,7 +48,7 @@ pub unsafe extern "C" fn ac__default_storage_builder__new(
 /// Free the default storage builder.
 #[no_mangle]
 pub unsafe extern "C" fn ac__default_storage_builder__free(builder: *mut DefaultStorageBuilder) {
-    Box::from_raw(builder);
+    let _ = Box::from_raw(builder);
 }
 
 /// Set path for the configuration skeleton file.
@@ -57,7 +57,7 @@ pub unsafe extern "C" fn ac__default_storage_builder__set_config_skeleton_file(
     builder: *mut DefaultStorageBuilder,
     file: *const c_char,
 ) {
-    (&mut *builder).config_skeleton_file(optional_cstr_to_str(file));
+    (*builder).config_skeleton_file(optional_cstr_to_str(file));
 }
 
 /// Set path for the connection state file.
@@ -66,7 +66,7 @@ pub unsafe extern "C" fn ac__default_storage_builder__set_connection_state_file(
     builder: *mut DefaultStorageBuilder,
     file: *const c_char,
 ) {
-    (&mut *builder).connection_state_file(optional_cstr_to_str(file));
+    (*builder).connection_state_file(optional_cstr_to_str(file));
 }
 
 /// Set path for the identity file.
@@ -75,7 +75,7 @@ pub unsafe extern "C" fn ac__default_storage_builder__set_identity_file(
     builder: *mut DefaultStorageBuilder,
     file: *const c_char,
 ) {
-    (&mut *builder).identity_file(optional_cstr_to_str(file));
+    (*builder).identity_file(optional_cstr_to_str(file));
 }
 
 /// Set path for the file containing RTSP paths.
@@ -84,7 +84,7 @@ pub unsafe extern "C" fn ac__default_storage_builder__set_rtsp_paths_file(
     builder: *mut DefaultStorageBuilder,
     file: *const c_char,
 ) {
-    (&mut *builder).rtsp_paths_file(optional_cstr_to_str(file));
+    (*builder).rtsp_paths_file(optional_cstr_to_str(file));
 }
 
 /// Set path for the file containing MJPEG paths.
@@ -93,7 +93,7 @@ pub unsafe extern "C" fn ac__default_storage_builder__set_mjpeg_paths_file(
     builder: *mut DefaultStorageBuilder,
     file: *const c_char,
 ) {
-    (&mut *builder).mjpeg_paths_file(optional_cstr_to_str(file));
+    (*builder).mjpeg_paths_file(optional_cstr_to_str(file));
 }
 
 /// Add a path to a CA certificate.
@@ -102,7 +102,7 @@ pub unsafe extern "C" fn ac__default_storage_builder__add_ca_cerificate(
     builder: *mut DefaultStorageBuilder,
     file: *const c_char,
 ) {
-    (&mut *builder).add_ca_cerificate(cstr_to_str(file));
+    (*builder).add_ca_cerificate(cstr_to_str(file));
 }
 
 /// Set logger.
@@ -113,7 +113,7 @@ pub unsafe extern "C" fn ac__default_storage_builder__set_logger(
 ) {
     let logger = Box::from_raw(logger);
 
-    (&mut *builder).logger(*logger);
+    (*builder).logger(*logger);
 }
 
 /// Build the storage. The function takes ownership of the builder.

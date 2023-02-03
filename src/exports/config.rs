@@ -31,7 +31,7 @@ pub unsafe extern "C" fn ac__config__new() -> *mut ConfigBuilder {
 /// Free the config.
 #[no_mangle]
 pub unsafe extern "C" fn ac__config__free(config: *mut ConfigBuilder) {
-    Box::from_raw(config);
+    let _ = Box::from_raw(config);
 }
 
 /// Set logger. The function takes ownership of a given logger.
@@ -42,7 +42,7 @@ pub unsafe extern "C" fn ac__config__set_logger(
 ) {
     let logger = Box::from_raw(logger);
 
-    (&mut *config).logger(*logger);
+    (*config).logger(*logger);
 }
 
 /// Set MAC address. The `mac_address` parameter is expected to be a an array
@@ -60,7 +60,7 @@ pub unsafe extern "C" fn ac__config__set_mac_address(
 
     let mac_address = mac_address.map(MacAddr::from_slice);
 
-    (&mut *config).mac_address(mac_address);
+    (*config).mac_address(mac_address);
 }
 
 /// Enable/disable diagnostic mode.
@@ -69,17 +69,17 @@ pub unsafe extern "C" fn ac__config__set_diagnostic_mode(
     config: *mut ConfigBuilder,
     enabled: c_int,
 ) {
-    (&mut *config).diagnostic_mode(enabled != 0);
+    (*config).diagnostic_mode(enabled != 0);
 }
 
 /// Enable/disable automatic service discovery.
 #[no_mangle]
 pub unsafe extern "C" fn ac__config__set_discovery(config: *mut ConfigBuilder, enabled: c_int) {
-    (&mut *config).discovery(enabled != 0);
+    (*config).discovery(enabled != 0);
 }
 
 /// Enable/disable verbose mode.
 #[no_mangle]
 pub unsafe extern "C" fn ac__config__set_verbose(config: *mut ConfigBuilder, enabled: c_int) {
-    (&mut *config).verbose(enabled != 0);
+    (*config).verbose(enabled != 0);
 }

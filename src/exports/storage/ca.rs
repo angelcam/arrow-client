@@ -29,7 +29,7 @@ pub unsafe extern "C" fn ac__ca_cert_storage__load_ca_file(
     cert_storage: *mut SslConnectorBuilder,
     file: *const c_char,
 ) -> c_int {
-    (&mut *cert_storage)
+    (*cert_storage)
         .set_ca_file(cstr_to_str(file))
         .map(|_| 0)
         .unwrap_or(libc::EINVAL)
@@ -43,7 +43,7 @@ pub unsafe extern "C" fn ac__ca_cert_storage__load_pem(
     size: usize,
 ) -> c_int {
     if let Ok(cert) = X509::from_pem(slice::from_raw_parts(pem, size as _)) {
-        (&mut *cert_storage)
+        (*cert_storage)
             .add_client_ca(&cert)
             .map(|_| 0)
             .unwrap_or(libc::EINVAL)
@@ -60,7 +60,7 @@ pub unsafe extern "C" fn ac__ca_cert_storage__load_der(
     size: usize,
 ) -> c_int {
     if let Ok(cert) = X509::from_der(slice::from_raw_parts(der, size as _)) {
-        (&mut *cert_storage)
+        (*cert_storage)
             .add_client_ca(&cert)
             .map(|_| 0)
             .unwrap_or(libc::EINVAL)

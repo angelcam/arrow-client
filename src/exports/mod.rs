@@ -147,7 +147,7 @@ pub unsafe extern "C" fn ac__arrow_client__new(
 /// Free (and close) a given Arrow client.
 #[no_mangle]
 pub unsafe extern "C" fn ac__arrow_client__free(client: *mut NativeArrowClient) {
-    Box::from_raw(client);
+    let _ = Box::from_raw(client);
 }
 
 /// Start a given Arrow client in the background and return a join handle. The
@@ -260,7 +260,7 @@ pub unsafe extern "C" fn ac__arrow_client__rescan_network(client: *mut NativeArr
 /// Free a given join handle.
 #[no_mangle]
 pub unsafe extern "C" fn ac__join_handle__free(handle: *mut JoinHandle<()>) {
-    Box::from_raw(handle);
+    let _ = Box::from_raw(handle);
 }
 
 /// Await a given join handle.
