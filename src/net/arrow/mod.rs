@@ -95,7 +95,7 @@ struct ArrowClientContext {
     closed: bool,
     last_ping: Instant,
     last_update_chck: Instant,
-    last_stable_ver: usize,
+    last_stable_ver: u32,
 }
 
 impl ArrowClientContext {
@@ -177,7 +177,7 @@ impl ArrowClientContext {
 
     /// Check if the service table has been updated.
     fn check_for_updates(&mut self) {
-        if self.last_stable_ver != self.svc_table.version() {
+        if self.last_stable_ver != self.svc_table.visible_set_version() {
             self.send_update_message();
         }
 
@@ -213,7 +213,7 @@ impl ArrowClientContext {
 
         let msg = self.cmsg_factory.register(mac, uuid, password, svc_table);
 
-        self.last_stable_ver = self.svc_table.version();
+        self.last_stable_ver = self.svc_table.visible_set_version();
 
         self.send_unconfirmed_control_message(msg);
     }
@@ -226,7 +226,7 @@ impl ArrowClientContext {
 
         let msg = self.cmsg_factory.update(svc_table);
 
-        self.last_stable_ver = self.svc_table.version();
+        self.last_stable_ver = self.svc_table.visible_set_version();
 
         self.send_control_message(msg);
     }

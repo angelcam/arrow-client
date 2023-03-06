@@ -278,7 +278,8 @@ impl FromJson for ServiceTableElement {
 struct ServiceTableData {
     identifier_map: HashMap<ServiceIdentifier, u16>,
     service_map: HashMap<u16, ServiceTableElement>,
-    version: usize,
+    service_table_version: u32,
+    visible_set_version: u32,
 }
 
 impl ServiceTableData {
@@ -296,13 +297,24 @@ impl ServiceTableData {
         Self {
             identifier_map,
             service_map,
-            version: 0,
+            service_table_version: 0,
+            visible_set_version: 0,
         }
     }
 
     /// Get version of the service table.
-    fn version(&self) -> usize {
-        self.version
+    ///
+    /// The version is updated whenever a new service is added or an existing
+    /// service is changed (e.g. its IP address).
+    fn service_table_version(&self) -> u32 {
+        self.service_table_version
+    }
+
+    /// Get version of the set of visible services.
+    ///
+    /// The version is updated whenever service visibility changes.
+    fn visible_set_version(&self) -> u32 {
+        self.visible_set_version
     }
 
     /// Get visible service for a given ID.
@@ -354,8 +366,10 @@ impl ServiceTableData {
         let elem = ServiceTableElement::new(id, svc, static_svc, enabled);
 
         if elem.is_visible() {
-            self.version += 1;
+            self.visible_set_version = self.visible_set_version.wrapping_add(1);
         }
+
+        self.service_table_version = self.service_table_version.wrapping_add(1);
 
         self.add_element(elem)
     }
@@ -393,8 +407,12 @@ impl ServiceTableData {
 
         let new_visible = elem.is_visible();
 
+        if svc_change {
+            self.service_table_version = self.service_table_version.wrapping_add(1);
+        }
+
         if old_visible != new_visible || (new_visible && svc_change) {
-            self.version += 1;
+            self.visible_set_version = self.visible_set_version.wrapping_add(1);
         }
 
         id
@@ -421,7 +439,7 @@ impl ServiceTableData {
             let visible = elem.is_visible();
             elem.update_active_flag(timestamp);
             if visible != elem.is_visible() {
-                self.version += 1;
+                self.visible_set_version = self.visible_set_version.wrapping_add(1);
             }
         }
     }
@@ -535,8 +553,18 @@ impl SharedServiceTable {
     }
 
     /// Get version of the service table.
-    pub fn version(&self) -> usize {
-        self.data.lock().unwrap().version()
+    ///
+    /// The version is updated whenever a new service is added or an existing
+    /// service is changed (e.g. its IP address).
+    pub fn service_table_version(&self) -> u32 {
+        self.data.lock().unwrap().service_table_version()
+    }
+
+    /// Get version of the set of visible services.
+    ///
+    /// The version is updated whenever service visibility changes.
+    pub fn visible_set_version(&self) -> u32 {
+        self.data.lock().unwrap().visible_set_version()
     }
 
     /// Add a given service into the table and return its ID.
@@ -618,8 +646,18 @@ pub struct SharedServiceTableRef {
 
 impl SharedServiceTableRef {
     /// Get version of the service table.
-    pub fn version(&self) -> usize {
-        self.data.lock().unwrap().version()
+    ///
+    /// The version is updated whenever a new service is added or an existing
+    /// service is changed (e.g. its IP address).
+    pub fn service_table_version(&self) -> u32 {
+        self.data.lock().unwrap().service_table_version()
+    }
+
+    /// Get version of the set of visible services.
+    ///
+    /// The version is updated whenever service visibility changes.
+    pub fn visible_set_version(&self) -> u32 {
+        self.data.lock().unwrap().visible_set_version()
     }
 
     /// Get visible services.
@@ -729,7 +767,8 @@ fn test_deserialization_and_initialization() {
 
     let mut table = SharedServiceTable::from_json(json).expect("expected valid service table JSON");
 
-    assert_eq!(table.version(), 0);
+    assert_eq!(table.service_table_version(), 0);
+    assert_eq!(table.visible_set_version(), 0);
 
     let mac = MacAddr::zero();
     let ip = Ipv4Addr::new(0, 0, 0, 0);
@@ -763,7 +802,8 @@ fn test_deserialization_and_initialization() {
         ]
     );
 
-    assert_eq!(table.version(), 1);
+    assert_eq!(table.service_table_version(), 0);
+    assert_eq!(table.visible_set_version(), 1);
 
     // add the first static service again
     table.add_static(svc_1.clone());
@@ -781,7 +821,8 @@ fn test_deserialization_and_initialization() {
         ]
     );
 
-    assert_eq!(table.version(), 1);
+    assert_eq!(table.service_table_version(), 0);
+    assert_eq!(table.visible_set_version(), 1);
 
     // add the second static service
     table.add_static(svc_2.clone());
@@ -800,7 +841,8 @@ fn test_deserialization_and_initialization() {
         ]
     );
 
-    assert_eq!(table.version(), 2);
+    assert_eq!(table.service_table_version(), 0);
+    assert_eq!(table.visible_set_version(), 2);
 
     // add a new service
     table.add(svc_5.clone());
@@ -820,7 +862,8 @@ fn test_deserialization_and_initialization() {
         ]
     );
 
-    assert_eq!(table.version(), 3);
+    assert_eq!(table.service_table_version(), 1);
+    assert_eq!(table.visible_set_version(), 3);
 
     // some additional consistency checks
     let mut internal = table.data.lock().unwrap();
@@ -855,7 +898,8 @@ fn test_deserialization_and_initialization() {
         ]
     );
 
-    assert_eq!(internal.version(), 3);
+    assert_eq!(internal.service_table_version(), 1);
+    assert_eq!(internal.visible_set_version(), 3);
 
     // update the list of active services
     internal.update_active_services();
@@ -866,5 +910,6 @@ fn test_deserialization_and_initialization() {
 
     assert_eq!(visible, vec![(1, svc_1), (2, svc_2), (11717, svc_5),]);
 
-    assert_eq!(internal.version(), 5);
+    assert_eq!(internal.service_table_version(), 1);
+    assert_eq!(internal.visible_set_version(), 5);
 }

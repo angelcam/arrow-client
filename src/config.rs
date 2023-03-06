@@ -115,6 +115,7 @@ pub struct ConfigBuilder {
     logger: Option<BoxLogger>,
     arrow_mac: Option<MacAddr>,
     services: Vec<Service>,
+    flash_friendly: bool,
     diagnostic_mode: bool,
     discovery: bool,
     discovery_whitelist: HashSet<String>,
@@ -128,6 +129,7 @@ impl ConfigBuilder {
             logger: None,
             arrow_mac: None,
             services: Vec::new(),
+            flash_friendly: false,
             diagnostic_mode: false,
             discovery: false,
             discovery_whitelist: HashSet::new(),
@@ -160,6 +162,21 @@ impl ConfigBuilder {
         I: IntoIterator<Item = Service>,
     {
         self.services = Vec::from_iter(services);
+        self
+    }
+
+    /// Enable/disable the flash-friendly mode.
+    ///
+    /// This will limit the number of writes into the configuration file. It is
+    /// useful for embedded deployments with service discovery where it is
+    /// desirable for the configuration file to be in a persistent storage.
+    ///
+    /// If enabled, the application will write into the configuration file only
+    /// if a new service is discovered or if an existing service changes its
+    /// IP address. There will be no writes if an existing service changes its
+    /// visibility.
+    pub fn flash_friendly(&mut self, enabled: bool) -> &mut Self {
+        self.flash_friendly = enabled;
         self
     }
 
@@ -244,6 +261,7 @@ impl ConfigBuilder {
             svc_table: config.svc_table,
             logger,
             storage: Box::new(storage),
+            flash_friendly: self.flash_friendly,
         };
 
         if self.verbose {
@@ -297,6 +315,7 @@ struct ConfigParser {
     rtsp_paths_file: PathBuf,
     mjpeg_paths_file: PathBuf,
     log_file: PathBuf,
+    flash_friendly: bool,
     discovery: bool,
     discovery_whitelist: Vec<String>,
     verbose: bool,
@@ -322,6 +341,7 @@ impl ConfigParser {
             rtsp_paths_file: PathBuf::from(RTSP_PATHS_FILE),
             mjpeg_paths_file: PathBuf::from(MJPEG_PATHS_FILE),
             log_file: PathBuf::new(),
+            flash_friendly: false,
             discovery: false,
             discovery_whitelist: Vec::new(),
             verbose: false,
@@ -411,6 +431,7 @@ impl ConfigParser {
                 "-t" => self.tcp_service(&mut args)?,
                 "-v" => self.verbose(),
 
+                "--flash-friendly" => self.flash_friendly(),
                 "--diagnostic-mode" => self.diagnostic_mode(),
                 "--log-stderr" => self.log_stderr(),
                 "--log-stderr-pretty" => self.log_stderr_pretty(),
@@ -574,6 +595,11 @@ impl ConfigParser {
     /// Process the verbose argument.
     fn verbose(&mut self) {
         self.verbose = true;
+    }
+
+    /// Process the flash friendly argument.
+    fn flash_friendly(&mut self) {
+        self.flash_friendly = true;
     }
 
     /// Process the diagnostic mode argument.
@@ -812,6 +838,7 @@ pub struct Config {
     default_svc_table: SharedServiceTable,
     logger: BoxLogger,
     storage: Box<dyn Storage + Send>,
+    flash_friendly: bool,
 }
 
 impl Config {
@@ -944,7 +971,8 @@ impl Config {
     where
         I: IntoIterator<Item = Service>,
     {
-        let old_version = self.svc_table.version();
+        let old_st_version = self.svc_table.service_table_version();
+        let old_vs_version = self.svc_table.visible_set_version();
 
         for svc in services {
             self.svc_table.add(svc);
@@ -952,7 +980,12 @@ impl Config {
 
         self.svc_table.update_active_services();
 
-        if old_version == self.svc_table.version() {
+        let new_st_version = self.svc_table.service_table_version();
+        let new_vs_version = self.svc_table.visible_set_version();
+
+        if old_st_version == new_st_version
+            && (self.flash_friendly || old_vs_version == new_vs_version)
+        {
             return;
         }
 
@@ -1162,6 +1195,9 @@ pub fn usage(exit_code: i32) -> ! {
     println!("                        secret in the file)");
     println!("    --conn-state-file=path  alternative path to the client connection state");
     println!("                        file (default value: /var/lib/arrow/state)");
+    println!("    --flash-friendly    this will limit the number of writes into the");
+    println!("                        configuration file (useful for embedded device");
+    println!("                        deployments with service discovery)");
     println!("    --diagnostic-mode   start the client in diagnostic mode (i.e. the client");
     println!("                        will try to connect to a given Arrow Service and it");
     println!("                        will report success as its exit code; note: the");
