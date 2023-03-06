@@ -101,7 +101,7 @@ pub unsafe extern "C" fn ac__service_table__get_service(
 ) -> *const NativeService {
     let table = &*table;
 
-    &table.services[index as usize]
+    &table.services[index]
 }
 
 /// Get service ID.

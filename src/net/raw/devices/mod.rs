@@ -88,7 +88,7 @@ unsafe fn get_name(dev: net_device) -> String {
 /// Get device MAC address.
 unsafe fn get_mac_addr(dev: net_device) -> MacAddr {
     let addr = net_get_mac_address(dev) as *const c_void;
-    let bytes = ptr_to_bytes(addr, net_get_mac_addr_size() as usize);
+    let bytes = ptr_to_bytes(addr, net_get_mac_addr_size());
 
     MacAddr::new(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
 }
@@ -96,7 +96,7 @@ unsafe fn get_mac_addr(dev: net_device) -> MacAddr {
 /// Get device IPv4 address.
 unsafe fn get_ipv4_addr(dev: net_device) -> Ipv4Addr {
     let addr = net_get_ipv4_address(dev) as *const c_void;
-    let bytes = ptr_to_bytes(addr, net_get_ipv4_addr_size() as usize);
+    let bytes = ptr_to_bytes(addr, net_get_ipv4_addr_size());
 
     Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])
 }
@@ -104,7 +104,7 @@ unsafe fn get_ipv4_addr(dev: net_device) -> Ipv4Addr {
 /// Get device IPv4 mask.
 unsafe fn get_ipv4_mask(dev: net_device) -> Ipv4Addr {
     let addr = net_get_ipv4_netmask(dev) as *const c_void;
-    let bytes = ptr_to_bytes(addr, net_get_ipv4_addr_size() as usize);
+    let bytes = ptr_to_bytes(addr, net_get_ipv4_addr_size());
 
     Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])
 }

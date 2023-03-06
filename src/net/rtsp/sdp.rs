@@ -407,7 +407,7 @@ impl SessionDescriptionParser {
     }
 
     /// Process SDP lines.
-    fn process_lines<'a>(&mut self, lines: &mut LineIterator<'a>) -> Result<()> {
+    fn process_lines(&mut self, lines: &mut LineIterator<'_>) -> Result<()> {
         while let Some(line) = lines.next()? {
             self.process_line(&line, lines)?;
         }
@@ -416,7 +416,7 @@ impl SessionDescriptionParser {
     }
 
     /// Process a given SDP line.
-    fn process_line<'a>(&mut self, line: &[u8], lines: &mut LineIterator<'a>) -> Result<()> {
+    fn process_line(&mut self, line: &[u8], lines: &mut LineIterator<'_>) -> Result<()> {
         if let Some(first) = trim_left(line).first() {
             match *first as char {
                 'v' => self.process_version(line),
@@ -454,11 +454,7 @@ impl SessionDescriptionParser {
     }
 
     /// Process SDP time description.
-    fn process_time_description<'a>(
-        &mut self,
-        _: &[u8],
-        lines: &mut LineIterator<'a>,
-    ) -> Result<()> {
+    fn process_time_description(&mut self, _: &[u8], lines: &mut LineIterator<'_>) -> Result<()> {
         while let Some(ref line) = lines.next()? {
             if let Some(first) = trim_left(line).first() {
                 match *first as char {
@@ -472,10 +468,10 @@ impl SessionDescriptionParser {
     }
 
     /// Process SDP media description.
-    fn process_media_description<'a>(
+    fn process_media_description(
         &mut self,
         line: &[u8],
-        lines: &mut LineIterator<'a>,
+        lines: &mut LineIterator<'_>,
     ) -> Result<()> {
         let line = String::from_utf8_lossy(line);
 

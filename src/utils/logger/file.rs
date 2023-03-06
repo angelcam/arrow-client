@@ -78,7 +78,7 @@ impl InternalFileLogger {
 
             let to = PathBuf::from(to);
 
-            fs::rename(&self.path, &to)?;
+            fs::rename(&self.path, to)?;
         }
 
         self.file = File::create(&self.path)?;
