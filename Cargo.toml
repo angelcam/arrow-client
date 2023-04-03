@@ -22,7 +22,7 @@ farmhash     = "1.1"
 fs2          = "0.4"
 json         = "0.12"
 openssl      = "0.10"
-time         = "0.1"
+time         = "0.2"
 
 [dependencies.futures]
 version = "0.3"
