@@ -117,9 +117,12 @@ pub struct ConfigBuilder {
     services: Vec<Service>,
     flash_friendly: bool,
     diagnostic_mode: bool,
+    gateway_mode: bool,
     discovery: bool,
     discovery_whitelist: HashSet<String>,
     verbose: bool,
+    device_name: Option<String>,
+    device_vendor: Option<String>,
 }
 
 impl ConfigBuilder {
@@ -131,9 +134,12 @@ impl ConfigBuilder {
             services: Vec::new(),
             flash_friendly: false,
             diagnostic_mode: false,
+            gateway_mode: true,
             discovery: false,
             discovery_whitelist: HashSet::new(),
             verbose: false,
+            device_name: None,
+            device_vendor: None,
         }
     }
 
@@ -186,6 +192,12 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set gateway mode.
+    pub fn gateway_mode(&mut self, enabled: bool) -> &mut Self {
+        self.gateway_mode = enabled;
+        self
+    }
+
     /// Enable/disable automatic service discovery.
     pub fn discovery(&mut self, enabled: bool) -> &mut Self {
         self.discovery = enabled;
@@ -205,6 +217,24 @@ impl ConfigBuilder {
     /// Enable/disable verbose logging.
     pub fn verbose(&mut self, enabled: bool) -> &mut Self {
         self.verbose = enabled;
+        self
+    }
+
+    /// Set device name.
+    pub fn device_name<T>(&mut self, name: T) -> &mut Self
+    where
+        T: ToString,
+    {
+        self.device_name = Some(name.to_string());
+        self
+    }
+
+    /// Set device vendor.
+    pub fn device_vendor<T>(&mut self, vendor: T) -> &mut Self
+    where
+        T: ToString,
+    {
+        self.device_vendor = Some(vendor.to_string());
         self
     }
 
@@ -253,6 +283,7 @@ impl ConfigBuilder {
             arrow_mac: mac,
             arrow_svc_addr: arrow_service_address.to_string(),
             diagnostic_mode: self.diagnostic_mode,
+            gateway_mode: self.gateway_mode,
             discovery: self.discovery,
             discovery_whitelist: Arc::new(self.discovery_whitelist),
             rtsp_paths: Arc::new(rtsp_paths.unwrap_or_default()),
@@ -262,6 +293,8 @@ impl ConfigBuilder {
             logger,
             storage: Box::new(storage),
             flash_friendly: self.flash_friendly,
+            device_name: self.device_name,
+            device_vendor: self.device_vendor,
         };
 
         if self.verbose {
@@ -320,9 +353,12 @@ struct ConfigParser {
     discovery_whitelist: Vec<String>,
     verbose: bool,
     diagnostic_mode: bool,
+    gateway_mode: bool,
     log_file_size: usize,
     log_file_rotations: usize,
     lock_file: Option<PathBuf>,
+    device_name: Option<String>,
+    device_vendor: Option<String>,
 }
 
 impl ConfigParser {
@@ -346,9 +382,12 @@ impl ConfigParser {
             discovery_whitelist: Vec::new(),
             verbose: false,
             diagnostic_mode: false,
+            gateway_mode: true,
             log_file_size: 10 * 1024,
             log_file_rotations: 1,
             lock_file: None,
+            device_name: None,
+            device_vendor: None,
         }
     }
 
@@ -403,9 +442,18 @@ impl ConfigParser {
             .mac_address(self.arrow_mac)
             .services(self.services)
             .diagnostic_mode(self.diagnostic_mode)
+            .gateway_mode(self.gateway_mode)
             .discovery(self.discovery)
             .discovery_whitelist(self.discovery_whitelist)
             .verbose(self.verbose);
+
+        if let Some(name) = self.device_name {
+            config_builder.device_name(name);
+        }
+
+        if let Some(vendor) = self.device_vendor {
+            config_builder.device_vendor(vendor);
+        }
 
         let config = config_builder.build(storage, self.arrow_svc_addr)?;
 
@@ -433,6 +481,7 @@ impl ConfigParser {
 
                 "--flash-friendly" => self.flash_friendly(),
                 "--diagnostic-mode" => self.diagnostic_mode(),
+                "--no-gateway-mode" => self.no_gateway_mode(),
                 "--log-stderr" => self.log_stderr(),
                 "--log-stderr-pretty" => self.log_stderr_pretty(),
                 "--help" => usage(0),
@@ -459,6 +508,10 @@ impl ConfigParser {
                         self.log_file_rotations(arg)?;
                     } else if arg.starts_with("--lock-file=") {
                         self.lock_file(arg);
+                    } else if arg.starts_with("--device-name=") {
+                        self.device_name(arg);
+                    } else if arg.starts_with("--device-vendor=") {
+                        self.device_vendor(arg);
                     } else {
                         return Err(ConfigError::new(format!("unknown argument: \"{}\"", arg)));
                     }
@@ -607,6 +660,11 @@ impl ConfigParser {
         self.diagnostic_mode = true;
     }
 
+    /// Process the no gateway mode argument.
+    fn no_gateway_mode(&mut self) {
+        self.gateway_mode = false;
+    }
+
     /// Process the log-stderr argument.
     fn log_stderr(&mut self) {
         self.logger_type = LoggerType::Stderr;
@@ -709,6 +767,22 @@ impl ConfigParser {
         let lock_file = &arg[12..];
 
         self.lock_file = Some(lock_file.into());
+    }
+
+    /// Process the device-name argument.
+    fn device_name(&mut self, arg: &str) {
+        // skip "--device-name=" length
+        let device_name = &arg[14..];
+
+        self.device_name = Some(device_name.to_string());
+    }
+
+    /// Process the device-vendor argument.
+    fn device_vendor(&mut self, arg: &str) {
+        // skip "--device-vendor=" length
+        let device_vendor = &arg[16..];
+
+        self.device_vendor = Some(device_vendor.to_string());
     }
 }
 
@@ -830,6 +904,7 @@ pub struct Config {
     arrow_mac: MacAddr,
     arrow_svc_addr: String,
     diagnostic_mode: bool,
+    gateway_mode: bool,
     discovery: bool,
     discovery_whitelist: Arc<HashSet<String>>,
     rtsp_paths: Arc<Vec<String>>,
@@ -839,6 +914,8 @@ pub struct Config {
     logger: BoxLogger,
     storage: Box<dyn Storage + Send>,
     flash_friendly: bool,
+    device_name: Option<String>,
+    device_vendor: Option<String>,
 }
 
 impl Config {
@@ -893,6 +970,12 @@ impl Config {
     #[doc(hidden)]
     pub fn get_diagnostic_mode(&self) -> bool {
         self.diagnostic_mode
+    }
+
+    /// Check if the client can be used as a gateway.
+    #[doc(hidden)]
+    pub fn get_gateway_mode(&self) -> bool {
+        self.gateway_mode
     }
 
     /// Get RTSP paths for the network scanner.
@@ -1005,6 +1088,25 @@ impl Config {
             "unable to save current connection state",
             self.storage.save_connection_state(state),
         );
+    }
+
+    /// Get client extended info.
+    #[doc(hidden)]
+    pub fn get_extended_info(&self) -> JsonValue {
+        let device_name = self.device_name.as_deref().unwrap_or("unknown");
+        let device_vendor = self.device_vendor.as_deref().unwrap_or("unknown");
+
+        object! {
+            "client": {
+                "name": "arrow-client",
+                "version": env!("CARGO_PKG_VERSION"),
+                "vendor": "angelcam",
+            },
+            "device": {
+                "name": device_name.to_string(),
+                "vendor": device_vendor.to_string(),
+            }
+        }
     }
 
     /// Save the current configuration.
@@ -1203,6 +1305,9 @@ pub fn usage(exit_code: i32) -> ! {
     println!("                        will report success as its exit code; note: the");
     println!("                        \"access denied\" response from the server is also");
     println!("                        considered as a success)");
+    println!("    --no-gateway-mode   disable the gateway mode (i.e. the client won't be able");
+    println!("                        to connect to any external services except those");
+    println!("                        available via localhost)");
     println!("    --log-stderr        send log messages into stderr instead of syslog");
     println!("    --log-stderr-pretty  send log messages into stderr instead of syslog and");
     println!("                        use colored messages");
@@ -1222,6 +1327,8 @@ pub fn usage(exit_code: i32) -> ! {
     println!("    --lock-file=path    make sure that there is only one instance of the");
     println!("                        process running; the file will contain also PID of the");
     println!("                        process");
+    println!("    --device-name       name of the device running the client (informational)");
+    println!("    --device-vendor     device vendor (informational)");
     println!("    --help              print this help and exit");
     println!("    --version           print the version information and exit");
     println!();

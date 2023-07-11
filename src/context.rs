@@ -216,6 +216,11 @@ impl ApplicationContext {
         self.data.lock().unwrap().get_config().get_diagnostic_mode()
     }
 
+    /// Check if the gateway mode is enabled.
+    pub fn get_gateway_mode(&self) -> bool {
+        self.data.lock().unwrap().get_config().get_gateway_mode()
+    }
+
     /// Get RTSP paths for the network scanner.
     pub fn get_rtsp_paths(&self) -> Arc<Vec<String>> {
         self.data.lock().unwrap().get_config().get_rtsp_paths()
@@ -328,6 +333,16 @@ impl ApplicationContext {
         }
 
         self.data.lock().unwrap().add_event_listeners(listeners);
+    }
+
+    /// Get client extended info.
+    pub fn get_extended_info(&self) -> String {
+        self.data
+            .lock()
+            .unwrap()
+            .get_config()
+            .get_extended_info()
+            .dump()
     }
 
     /// Add a new event listener.

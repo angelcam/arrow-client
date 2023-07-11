@@ -34,8 +34,8 @@ use crate::context::ApplicationContext;
 use crate::net::arrow::proto::codec::{ArrowCodec, FromBytes};
 use crate::net::arrow::proto::msg::control::ControlMessageFactory;
 use crate::net::arrow::proto::msg::control::{
-    AckMessage, ControlMessage, ControlMessageType, HupMessage, RedirectMessage,
-    SimpleServiceTable, EC_INTERNAL_SERVER_ERROR, EC_NO_ERROR, EC_UNAUTHORIZED,
+    AckMessage, ConnectMessage, ControlMessage, ControlMessageType, DataAckMessage, HupMessage,
+    RedirectMessage, SimpleServiceTable, EC_INTERNAL_SERVER_ERROR, EC_NO_ERROR, EC_UNAUTHORIZED,
     EC_UNSUPPORTED_PROTOCOL_VERSION, STATUS_FLAG_SCAN,
 };
 use crate::net::arrow::proto::msg::ArrowMessage;
@@ -50,6 +50,8 @@ const ACK_TIMEOUT: Duration = Duration::from_secs(20);
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 const PING_PERIOD: Duration = Duration::from_secs(60);
 const UPDATE_CHECK_PERIOD: Duration = Duration::from_secs(5);
+
+const SESSION_WINDOW_SIZE: usize = 65_536;
 
 /// Arrow Protocol states.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -107,9 +109,15 @@ impl ArrowClientContext {
         let mac = app_context.get_arrow_mac_address();
         let uuid = app_context.get_arrow_uuid();
         let passwd = app_context.get_arrow_password();
+        let gateway_mode = app_context.get_gateway_mode();
 
         let cmsg_factory = ControlMessageFactory::new();
-        let session_manager = SessionManager::new(app_context.clone(), cmsg_factory.clone());
+        let session_manager = SessionManager::new(
+            app_context.clone(),
+            cmsg_factory.clone(),
+            SESSION_WINDOW_SIZE,
+            gateway_mode,
+        );
 
         let now = Instant::now();
 
@@ -206,12 +214,23 @@ impl ArrowClientContext {
     }
 
     /// Send REGISTER message.
-    fn send_register_message(&mut self, mac: MacAddr, uuid: [u8; 16], password: [u8; 16]) {
+    fn send_register_message(&mut self, mac: MacAddr, uuid: [u8; 16], key: [u8; 16]) {
         log_debug!(self.logger, "sending REGISTER request...");
 
         let svc_table = SimpleServiceTable::from(self.svc_table.visible());
 
-        let msg = self.cmsg_factory.register(mac, uuid, password, svc_table);
+        let gateway_mode = self.app_context.get_gateway_mode();
+        let extended_info = self.app_context.get_extended_info();
+
+        let msg = self.cmsg_factory.register(
+            uuid,
+            key,
+            mac,
+            SESSION_WINDOW_SIZE,
+            gateway_mode,
+            svc_table,
+            extended_info,
+        );
 
         self.last_stable_ver = self.svc_table.visible_set_version();
 
@@ -275,6 +294,8 @@ impl ArrowClientContext {
 
         match header.message_type() {
             ControlMessageType::ACK => self.process_ack_message(msg),
+            ControlMessageType::CONNECT => self.process_connect_message(msg),
+            ControlMessageType::DATA_ACK => self.process_data_ack_message(msg),
             ControlMessageType::PING => self.process_ping_message(msg),
             ControlMessageType::HUP => self.process_hup_message(msg),
             ControlMessageType::REDIRECT => self.process_redirect_message(msg),
@@ -340,6 +361,41 @@ impl ArrowClientContext {
         } else {
             Err(ArrowError::other("Arrow REGISTER failed (unknown error)"))
         }
+    }
+
+    /// Process a given CONNECT message.
+    fn process_connect_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
+        if self.state != ProtocolState::Established {
+            return Err(ArrowError::other(
+                "cannot handle CONNECT message in the Handshake state",
+            ));
+        }
+
+        let connect = msg
+            .body::<ConnectMessage>()
+            .expect("CONNECT message expected");
+
+        self.sessions
+            .connect(connect.service_id, connect.session_id);
+
+        Ok(())
+    }
+
+    /// Process a given DATA_ACK message.
+    fn process_data_ack_message(&mut self, msg: ControlMessage) -> Result<(), ArrowError> {
+        if self.state != ProtocolState::Established {
+            return Err(ArrowError::other(
+                "cannot handle DATA_ACK message in the Handshake state",
+            ));
+        }
+
+        let ack = msg
+            .body::<DataAckMessage>()
+            .expect("DATA_ACK message expected");
+
+        self.sessions.process_data_ack(ack.session_id, ack.length);
+
+        Ok(())
     }
 
     /// Process a given PING message.
