@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-///! Network scanner for RTSP streams.
+//! Network scanner for RTSP streams.
 use std::fmt;
 use std::io;
 use std::result;

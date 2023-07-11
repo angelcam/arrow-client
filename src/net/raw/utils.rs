@@ -42,9 +42,9 @@ pub fn sum_type<T: Sized>(data: &T) -> u32 {
 /// Sum a given slice of Sized type instances as 16-bit unsigned big endian
 /// numbers.
 pub fn sum_slice<T: Sized>(data: &[T]) -> u32 {
-    let size = mem::size_of::<T>();
+    let size = mem::size_of_val(data);
     let ptr = data.as_ptr();
-    unsafe { sum_raw_be(ptr as *const u8, size * data.len()) }
+    unsafe { sum_raw_be(ptr as *const u8, size) }
 }
 
 /// Sum given raw data as 16-bit unsigned big endian numbers.

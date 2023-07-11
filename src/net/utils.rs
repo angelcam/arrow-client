@@ -14,8 +14,6 @@
 
 //! Common networking utils.
 
-use std::mem;
-
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
 use crate::utils::RuntimeError;
@@ -45,19 +43,15 @@ impl Ipv4AddrEx for Ipv4Addr {
     fn from_slice(bytes: &[u8]) -> Ipv4Addr {
         assert_eq!(bytes.len(), 4);
 
-        #[allow(clippy::cast_ptr_alignment)]
-        let ptr = bytes.as_ptr() as *const u32;
-        let addr = unsafe { u32::from_be(*ptr) };
+        let mut tmp = [0u8; 4];
 
-        Self::from(addr)
+        tmp.copy_from_slice(bytes);
+
+        Self::from(u32::from_be_bytes(tmp))
     }
 
     fn as_u32(&self) -> u32 {
-        let octets = self.octets();
-
-        let nr: u32 = unsafe { mem::transmute(octets) };
-
-        nr.to_be()
+        u32::from_be_bytes(self.octets())
     }
 }
 
