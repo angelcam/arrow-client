@@ -13,6 +13,8 @@
 // limitations under the License.
 
 mod ack;
+mod connect;
+mod data_ack;
 mod hup;
 mod redirect;
 mod register;
@@ -44,6 +46,8 @@ use self::status::StatusMessage;
 use self::update::UpdateMessage;
 
 pub use self::ack::AckMessage;
+pub use self::connect::ConnectMessage;
+pub use self::data_ack::DataAckMessage;
 pub use self::hup::HupMessage;
 pub use self::redirect::RedirectMessage;
 pub use self::svc_table::SimpleServiceTable;
@@ -74,6 +78,8 @@ const CMSG_GET_STATUS: u16 = 0x0008;
 const CMSG_STATUS: u16 = 0x0009;
 const CMSG_GET_SCAN_REPORT: u16 = 0x000a;
 const CMSG_SCAN_REPORT: u16 = 0x000b;
+const CMSG_DATA_ACK: u16 = 0x000c;
+const CMSG_CONNECT: u16 = 0x000d;
 
 /// Arrow Control Protocol message types.
 #[allow(non_camel_case_types)]
@@ -93,6 +99,8 @@ pub enum ControlMessageType {
     UNKNOWN,
     GET_SCAN_REPORT,
     SCAN_REPORT,
+    DATA_ACK,
+    CONNECT,
 }
 
 impl ControlMessageType {
@@ -110,6 +118,8 @@ impl ControlMessageType {
             Self::STATUS => CMSG_STATUS,
             Self::GET_SCAN_REPORT => CMSG_GET_SCAN_REPORT,
             Self::SCAN_REPORT => CMSG_SCAN_REPORT,
+            Self::DATA_ACK => CMSG_DATA_ACK,
+            Self::CONNECT => CMSG_CONNECT,
             Self::UNKNOWN => panic!("UNKNOWN Control Protocol message type has no code"),
         }
     }
@@ -146,6 +156,8 @@ impl ControlMessageHeader {
             CMSG_STATUS => ControlMessageType::STATUS,
             CMSG_GET_SCAN_REPORT => ControlMessageType::GET_SCAN_REPORT,
             CMSG_SCAN_REPORT => ControlMessageType::SCAN_REPORT,
+            CMSG_DATA_ACK => ControlMessageType::DATA_ACK,
+            CMSG_CONNECT => ControlMessageType::CONNECT,
             _ => ControlMessageType::UNKNOWN,
         }
     }
@@ -210,6 +222,15 @@ impl ControlMessage {
         Self::new(msg_id, ControlMessageType::ACK, AckMessage::new(err))
     }
 
+    /// Create a new DATA_ACK Control Protocol message.
+    pub fn data_ack(msg_id: u16, session_id: u32, length: u32) -> Self {
+        Self::new(
+            msg_id,
+            ControlMessageType::DATA_ACK,
+            DataAckMessage::new(session_id, length),
+        )
+    }
+
     /// Create a new HUP Control Protocol message.
     pub fn hup(msg_id: u16, session_id: u32, error_code: u32) -> Self {
         Self::new(
@@ -251,18 +272,35 @@ impl ControlMessage {
     }
 
     /// Create a new REGISTER Control Protocol message.
-    pub fn register(
+    #[allow(clippy::too_many_arguments)]
+    pub fn register<T>(
         msg_id: u16,
-        mac: MacAddr,
         uuid: [u8; 16],
-        password: [u8; 16],
+        key: [u8; 16],
+        mac: MacAddr,
+        window_size: usize,
+        gateway_mode: bool,
         svc_table: SimpleServiceTable,
-    ) -> Self {
-        Self::new(
-            msg_id,
-            ControlMessageType::REGISTER,
-            RegisterMessage::new(mac, uuid, password, svc_table),
-        )
+        extended_info: T,
+    ) -> Self
+    where
+        T: ToString,
+    {
+        let mut flags = 0;
+
+        if gateway_mode {
+            flags |= RegisterMessage::FLAG_GATEWAY_MODE;
+        }
+
+        assert!(window_size > 0);
+        assert!(window_size <= 65_536);
+
+        let msg = RegisterMessage::new(uuid, key, mac, svc_table)
+            .with_window_size((window_size - 1) as u16)
+            .with_flags(flags)
+            .with_extended_info(extended_info);
+
+        Self::new(msg_id, ControlMessageType::REGISTER, msg)
     }
 
     /// Create a new UPDATE Control Protocol message.
@@ -303,6 +341,8 @@ impl ControlMessage {
     ) -> Result<Box<dyn ControlMessageBody>, DecodeError> {
         match mtype {
             ControlMessageType::ACK => Self::decode_ack_message(bytes),
+            ControlMessageType::CONNECT => Self::decode_connect_message(bytes),
+            ControlMessageType::DATA_ACK => Self::decode_data_ack_message(bytes),
             ControlMessageType::REDIRECT => Self::decode_redirect_message(bytes),
             ControlMessageType::HUP => Self::decode_hup_message(bytes),
             ControlMessageType::PING
@@ -325,6 +365,24 @@ impl ControlMessage {
             Ok(Box::new(msg))
         } else {
             panic!("unable to decode an Arrow Control Protocol ACK message")
+        }
+    }
+
+    /// Decode a CONNECT message from given data.
+    fn decode_connect_message(bytes: &[u8]) -> Result<Box<dyn ControlMessageBody>, DecodeError> {
+        if let Some(msg) = ConnectMessage::from_bytes(bytes)? {
+            Ok(Box::new(msg))
+        } else {
+            panic!("unable to decode an Arrow Control Protocol CONNECT message")
+        }
+    }
+
+    /// Decode a DATA_ACK message from given data.
+    fn decode_data_ack_message(bytes: &[u8]) -> Result<Box<dyn ControlMessageBody>, DecodeError> {
+        if let Some(msg) = DataAckMessage::from_bytes(bytes)? {
+            Ok(Box::new(msg))
+        } else {
+            panic!("unable to decode an Arrow Control Protocol DATA_ACK message")
         }
     }
 
@@ -415,6 +473,11 @@ impl ControlMessageFactory {
         ControlMessage::ack(msg_id, error_code)
     }
 
+    /// Create a new DATA_ACK message with a given session ID and length.
+    pub fn data_ack(&mut self, session_id: u32, length: u32) -> ControlMessage {
+        ControlMessage::data_ack(self.next_id(), session_id, length)
+    }
+
     /// Create a new HUP message with a given session ID and error code.
     pub fn hup(&mut self, session_id: u32, error_code: u32) -> ControlMessage {
         ControlMessage::hup(self.next_id(), session_id, error_code)
@@ -450,14 +513,30 @@ impl ControlMessageFactory {
     }
 
     /// Create a new REGISTER message.
-    pub fn register(
+    #[allow(clippy::too_many_arguments)]
+    pub fn register<T>(
         &mut self,
-        mac: MacAddr,
         uuid: [u8; 16],
-        password: [u8; 16],
+        key: [u8; 16],
+        mac: MacAddr,
+        window_size: usize,
+        gateway_mode: bool,
         svc_table: SimpleServiceTable,
-    ) -> ControlMessage {
-        ControlMessage::register(self.next_id(), mac, uuid, password, svc_table)
+        extended_info: T,
+    ) -> ControlMessage
+    where
+        T: ToString,
+    {
+        ControlMessage::register(
+            self.next_id(),
+            uuid,
+            key,
+            mac,
+            window_size,
+            gateway_mode,
+            svc_table,
+            extended_info,
+        )
     }
 
     /// Create a new UPDATE message.

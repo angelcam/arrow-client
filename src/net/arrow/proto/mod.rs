@@ -17,4 +17,4 @@ pub mod error;
 pub mod msg;
 
 /// Currently supported version of the Arrow protocol.
-pub const ARROW_PROTOCOL_VERSION: u8 = 1;
+pub const ARROW_PROTOCOL_VERSION: u8 = 2;
