@@ -121,7 +121,7 @@ pub struct ConfigBuilder {
     discovery: bool,
     discovery_whitelist: HashSet<String>,
     verbose: bool,
-    device_name: Option<String>,
+    device_model: Option<String>,
     device_vendor: Option<String>,
 }
 
@@ -138,7 +138,7 @@ impl ConfigBuilder {
             discovery: false,
             discovery_whitelist: HashSet::new(),
             verbose: false,
-            device_name: None,
+            device_model: None,
             device_vendor: None,
         }
     }
@@ -220,12 +220,12 @@ impl ConfigBuilder {
         self
     }
 
-    /// Set device name.
-    pub fn device_name<T>(&mut self, name: T) -> &mut Self
+    /// Set device model identifier.
+    pub fn device_model<T>(&mut self, name: T) -> &mut Self
     where
         T: ToString,
     {
-        self.device_name = Some(name.to_string());
+        self.device_model = Some(name.to_string());
         self
     }
 
@@ -293,7 +293,7 @@ impl ConfigBuilder {
             logger,
             storage: Box::new(storage),
             flash_friendly: self.flash_friendly,
-            device_name: self.device_name,
+            device_model: self.device_model,
             device_vendor: self.device_vendor,
         };
 
@@ -357,7 +357,7 @@ struct ConfigParser {
     log_file_size: usize,
     log_file_rotations: usize,
     lock_file: Option<PathBuf>,
-    device_name: Option<String>,
+    device_model: Option<String>,
     device_vendor: Option<String>,
 }
 
@@ -386,7 +386,7 @@ impl ConfigParser {
             log_file_size: 10 * 1024,
             log_file_rotations: 1,
             lock_file: None,
-            device_name: None,
+            device_model: None,
             device_vendor: None,
         }
     }
@@ -447,8 +447,8 @@ impl ConfigParser {
             .discovery_whitelist(self.discovery_whitelist)
             .verbose(self.verbose);
 
-        if let Some(name) = self.device_name {
-            config_builder.device_name(name);
+        if let Some(model) = self.device_model {
+            config_builder.device_model(model);
         }
 
         if let Some(vendor) = self.device_vendor {
@@ -508,8 +508,8 @@ impl ConfigParser {
                         self.log_file_rotations(arg)?;
                     } else if arg.starts_with("--lock-file=") {
                         self.lock_file(arg);
-                    } else if arg.starts_with("--device-name=") {
-                        self.device_name(arg);
+                    } else if arg.starts_with("--device-model=") {
+                        self.device_model(arg);
                     } else if arg.starts_with("--device-vendor=") {
                         self.device_vendor(arg);
                     } else {
@@ -769,12 +769,12 @@ impl ConfigParser {
         self.lock_file = Some(lock_file.into());
     }
 
-    /// Process the device-name argument.
-    fn device_name(&mut self, arg: &str) {
-        // skip "--device-name=" length
-        let device_name = &arg[14..];
+    /// Process the device-model argument.
+    fn device_model(&mut self, arg: &str) {
+        // skip "--device-model=" length
+        let device_model = &arg[15..];
 
-        self.device_name = Some(device_name.to_string());
+        self.device_model = Some(device_model.to_string());
     }
 
     /// Process the device-vendor argument.
@@ -914,7 +914,7 @@ pub struct Config {
     logger: BoxLogger,
     storage: Box<dyn Storage + Send>,
     flash_friendly: bool,
-    device_name: Option<String>,
+    device_model: Option<String>,
     device_vendor: Option<String>,
 }
 
@@ -1093,17 +1093,17 @@ impl Config {
     /// Get client extended info.
     #[doc(hidden)]
     pub fn get_extended_info(&self) -> JsonValue {
-        let device_name = self.device_name.as_deref().unwrap_or("unknown");
+        let device_model = self.device_model.as_deref().unwrap_or("unknown");
         let device_vendor = self.device_vendor.as_deref().unwrap_or("unknown");
 
         object! {
             "client": {
-                "name": "arrow-client",
+                "id": "arrow-client",
                 "version": env!("CARGO_PKG_VERSION"),
                 "vendor": "angelcam",
             },
             "device": {
-                "name": device_name.to_string(),
+                "model": device_model.to_string(),
                 "vendor": device_vendor.to_string(),
             }
         }
@@ -1327,7 +1327,8 @@ pub fn usage(exit_code: i32) -> ! {
     println!("    --lock-file=path    make sure that there is only one instance of the");
     println!("                        process running; the file will contain also PID of the");
     println!("                        process");
-    println!("    --device-name       name of the device running the client (informational)");
+    println!("    --device-model      name of the device model running the client");
+    println!("                        (informational)");
     println!("    --device-vendor     device vendor (informational)");
     println!("    --help              print this help and exit");
     println!("    --version           print the version information and exit");
