@@ -286,11 +286,13 @@ impl ArrowClientContext {
 
         let header = msg.header();
 
-        log_debug!(
-            self.logger,
-            "received control message: {:?}",
-            header.message_type()
-        );
+        if header.message_type() != ControlMessageType::DATA_ACK {
+            log_debug!(
+                self.logger,
+                "received control message: {:?}",
+                header.message_type()
+            );
+        }
 
         match header.message_type() {
             ControlMessageType::ACK => self.process_ack_message(msg),
