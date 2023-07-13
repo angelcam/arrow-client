@@ -121,7 +121,7 @@ pub struct ConfigBuilder {
     discovery: bool,
     discovery_whitelist: HashSet<String>,
     verbose: bool,
-    device_model: Option<String>,
+    device_type: Option<String>,
     device_vendor: Option<String>,
 }
 
@@ -138,7 +138,7 @@ impl ConfigBuilder {
             discovery: false,
             discovery_whitelist: HashSet::new(),
             verbose: false,
-            device_model: None,
+            device_type: None,
             device_vendor: None,
         }
     }
@@ -220,21 +220,21 @@ impl ConfigBuilder {
         self
     }
 
-    /// Set device model identifier.
-    pub fn device_model<T>(&mut self, name: T) -> &mut Self
+    /// Set device type.
+    pub fn device_type<T>(&mut self, device_type: T) -> &mut Self
     where
         T: ToString,
     {
-        self.device_model = Some(name.to_string());
+        self.device_type = Some(device_type.to_string());
         self
     }
 
     /// Set device vendor.
-    pub fn device_vendor<T>(&mut self, vendor: T) -> &mut Self
+    pub fn device_vendor<T>(&mut self, device_vendor: T) -> &mut Self
     where
         T: ToString,
     {
-        self.device_vendor = Some(vendor.to_string());
+        self.device_vendor = Some(device_vendor.to_string());
         self
     }
 
@@ -293,7 +293,7 @@ impl ConfigBuilder {
             logger,
             storage: Box::new(storage),
             flash_friendly: self.flash_friendly,
-            device_model: self.device_model,
+            device_type: self.device_type,
             device_vendor: self.device_vendor,
         };
 
@@ -357,7 +357,7 @@ struct ConfigParser {
     log_file_size: usize,
     log_file_rotations: usize,
     lock_file: Option<PathBuf>,
-    device_model: Option<String>,
+    device_type: Option<String>,
     device_vendor: Option<String>,
 }
 
@@ -386,7 +386,7 @@ impl ConfigParser {
             log_file_size: 10 * 1024,
             log_file_rotations: 1,
             lock_file: None,
-            device_model: None,
+            device_type: None,
             device_vendor: None,
         }
     }
@@ -447,12 +447,12 @@ impl ConfigParser {
             .discovery_whitelist(self.discovery_whitelist)
             .verbose(self.verbose);
 
-        if let Some(model) = self.device_model {
-            config_builder.device_model(model);
+        if let Some(t) = self.device_type {
+            config_builder.device_type(t);
         }
 
-        if let Some(vendor) = self.device_vendor {
-            config_builder.device_vendor(vendor);
+        if let Some(v) = self.device_vendor {
+            config_builder.device_vendor(v);
         }
 
         let config = config_builder.build(storage, self.arrow_svc_addr)?;
@@ -508,8 +508,8 @@ impl ConfigParser {
                         self.log_file_rotations(arg)?;
                     } else if arg.starts_with("--lock-file=") {
                         self.lock_file(arg);
-                    } else if arg.starts_with("--device-model=") {
-                        self.device_model(arg);
+                    } else if arg.starts_with("--device-type=") {
+                        self.device_type(arg);
                     } else if arg.starts_with("--device-vendor=") {
                         self.device_vendor(arg);
                     } else {
@@ -660,7 +660,7 @@ impl ConfigParser {
         self.diagnostic_mode = true;
     }
 
-    /// Process the no gateway mode argument.
+    /// Process the no-gateway mode argument.
     fn no_gateway_mode(&mut self) {
         self.gateway_mode = false;
     }
@@ -769,12 +769,12 @@ impl ConfigParser {
         self.lock_file = Some(lock_file.into());
     }
 
-    /// Process the device-model argument.
-    fn device_model(&mut self, arg: &str) {
-        // skip "--device-model=" length
-        let device_model = &arg[15..];
+    /// Process the device-type argument.
+    fn device_type(&mut self, arg: &str) {
+        // skip "--device-type=" length
+        let device_type = &arg[14..];
 
-        self.device_model = Some(device_model.to_string());
+        self.device_type = Some(device_type.to_string());
     }
 
     /// Process the device-vendor argument.
@@ -914,7 +914,7 @@ pub struct Config {
     logger: BoxLogger,
     storage: Box<dyn Storage + Send>,
     flash_friendly: bool,
-    device_model: Option<String>,
+    device_type: Option<String>,
     device_vendor: Option<String>,
 }
 
@@ -1093,9 +1093,6 @@ impl Config {
     /// Get client extended info.
     #[doc(hidden)]
     pub fn get_extended_info(&self) -> JsonValue {
-        let device_model = self.device_model.as_deref().unwrap_or("unknown");
-        let device_vendor = self.device_vendor.as_deref().unwrap_or("unknown");
-
         object! {
             "client": {
                 "id": "arrow-client",
@@ -1103,8 +1100,8 @@ impl Config {
                 "vendor": "angelcam",
             },
             "device": {
-                "model": device_model.to_string(),
-                "vendor": device_vendor.to_string(),
+                "type": self.device_type.clone(),
+                "vendor": self.device_vendor.clone(),
             }
         }
     }
@@ -1327,8 +1324,7 @@ pub fn usage(exit_code: i32) -> ! {
     println!("    --lock-file=path    make sure that there is only one instance of the");
     println!("                        process running; the file will contain also PID of the");
     println!("                        process");
-    println!("    --device-model      name of the device model running the client");
-    println!("                        (informational)");
+    println!("    --device-type       type of a device running the client (informational)");
     println!("    --device-vendor     device vendor (informational)");
     println!("    --help              print this help and exit");
     println!("    --version           print the version information and exit");
