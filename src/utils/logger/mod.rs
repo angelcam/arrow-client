@@ -14,24 +14,28 @@
 
 //! Logger definitions.
 
+#[macro_export]
 macro_rules! log {
     ($logger:expr, $severity:expr, $( $arg:tt )*) => {
         $logger.log(file!(), line!(), $severity, format_args!($($arg)*))
     };
 }
 
+#[macro_export]
 macro_rules! log_debug {
     ($logger:expr, $( $arg:tt )*) => {
         $logger.debug(file!(), line!(), format_args!($($arg)*))
     };
 }
 
+#[macro_export]
 macro_rules! log_info {
     ($logger:expr, $( $arg:tt )*) => {
         $logger.info(file!(), line!(), format_args!($($arg)*))
     };
 }
 
+#[macro_export]
 macro_rules! log_warn {
     ($logger:expr, $( $arg:tt )*) => {
         $logger.warn(file!(), line!(), format_args!($($arg)*))
