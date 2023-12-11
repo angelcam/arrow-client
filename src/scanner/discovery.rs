@@ -116,10 +116,7 @@ pub fn scan_network(
 
     let rtsp_services = filter_duplicit_services(rtsp_services, rtsp_port_priorities);
 
-    let rtsp_streams = runtime.block_on(find_rtsp_streams(
-        context.clone(),
-        rtsp_services.into_iter(),
-    ));
+    let rtsp_streams = runtime.block_on(find_rtsp_streams(context.clone(), rtsp_services));
 
     let http_services =
         runtime.block_on(find_http_services(context.clone(), report.socket_addrs()));
@@ -128,7 +125,7 @@ pub fn scan_network(
 
     let mjpeg_services = http_services.clone();
 
-    let mjpeg_streams = runtime.block_on(find_mjpeg_streams(context, mjpeg_services.into_iter()));
+    let mjpeg_streams = runtime.block_on(find_mjpeg_streams(context, mjpeg_services));
 
     for svc in rtsp_streams {
         report.add_service(svc);
@@ -297,14 +294,14 @@ fn find_open_ports(scanner: Context) -> ScanResult {
     let devices = EthernetDevice::list();
 
     for dev in devices {
-        if discovery_whitelist.is_empty() || discovery_whitelist.contains(&dev.name) {
+        if discovery_whitelist.is_empty() || discovery_whitelist.contains(dev.name()) {
             let res = find_open_ports_in_network(scanner.clone(), &dev);
 
             if let Err(err) = res {
                 log_warn!(
                     &mut logger,
                     "unable to find open ports in local network on interface {}: {}",
-                    dev.name,
+                    dev.name(),
                     err
                 );
             } else if let Ok(res) = res {
@@ -325,7 +322,7 @@ fn find_open_ports_in_network(context: Context, device: &EthernetDevice) -> Resu
     log_debug!(
         &mut logger,
         "running ARP scan in local network on interface {}",
-        device.name
+        device.name()
     );
 
     for (mac, ip) in Ipv4ArpScanner::scan_device(device)? {
@@ -335,7 +332,7 @@ fn find_open_ports_in_network(context: Context, device: &EthernetDevice) -> Resu
     log_debug!(
         &mut logger,
         "running ICMP echo scan in local network on interface {}",
-        device.name
+        device.name()
     );
 
     for (mac, ip) in IcmpScanner::scan_device(device)? {
@@ -371,7 +368,7 @@ where
     log_debug!(
         &mut logger,
         "running TCP port scan in local network on interface {}",
-        device.name
+        device.name()
     );
 
     let hosts = hosts.into_iter().filter_map(|(mac, ip)| match ip {

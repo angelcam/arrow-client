@@ -239,7 +239,7 @@ impl SessionContext {
             Poll::Pending
         } else if let Poll::Ready(res) = self.poll_read_input_buf(cx, stream) {
             match res {
-                Ok(len) if len == 0 => self.close(),
+                Ok(0) => self.close(),
                 Err(err) => self.set_error(ConnectionError::from(err)),
                 _ => (),
             }

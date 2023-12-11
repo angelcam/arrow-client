@@ -37,7 +37,6 @@ use crate::net;
 use crate::utils;
 
 use crate::context::ConnectionState;
-use crate::net::raw::devices::EthernetDevice;
 use crate::net::tls::TlsConnector;
 use crate::net::url::Url;
 use crate::storage::{DefaultStorage, Storage};
@@ -51,6 +50,7 @@ use crate::utils::logger::syslog::Syslog;
 use crate::utils::logger::{BoxLogger, DummyLogger, Logger, Severity};
 use crate::utils::RuntimeError;
 
+pub use crate::net::raw::devices::EthernetDevice as NetworkInterface;
 pub use crate::net::raw::ether::{AddrParseError, MacAddr};
 pub use crate::svc_table::{Service, ServiceType};
 pub use crate::utils::json::{FromJson, ParseError, ToJson};
@@ -1131,19 +1131,19 @@ impl Config {
 
 /// Get MAC address of the first configured ethernet device.
 fn get_first_mac() -> Result<MacAddr, ConfigError> {
-    EthernetDevice::list()
+    NetworkInterface::list()
         .into_iter()
         .next()
-        .map(|dev| dev.mac_addr)
+        .map(|dev| dev.mac())
         .ok_or_else(|| ConfigError::new("there is no configured ethernet device"))
 }
 
 /// Get MAC address of a given network interface.
 fn get_mac(iface: &str) -> Result<MacAddr, ConfigError> {
-    EthernetDevice::list()
+    NetworkInterface::list()
         .into_iter()
-        .find(|dev| dev.name == iface)
-        .map(|dev| dev.mac_addr)
+        .find(|dev| dev.name() == iface)
+        .map(|dev| dev.mac())
         .ok_or_else(|| ConfigError::new(format!("there is no such ethernet device: {}", iface)))
 }
 

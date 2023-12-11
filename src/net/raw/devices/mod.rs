@@ -16,7 +16,7 @@
 
 use std::slice;
 
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::os::raw::{c_char, c_void};
 
 use crate::utils;
@@ -39,17 +39,17 @@ extern "C" {
     fn net_get_ipv4_addr_size() -> usize;
 }
 
-/// Ethernet device.
+/// Network interface.
 #[derive(Clone, Debug)]
 pub struct EthernetDevice {
-    pub name: String,
-    pub mac_addr: MacAddr,
-    pub ip_addr: Ipv4Addr,
-    pub netmask: Ipv4Addr,
+    pub(crate) name: String,
+    pub(crate) mac_addr: MacAddr,
+    pub(crate) ip_addr: Ipv4Addr,
+    pub(crate) netmask: Ipv4Addr,
 }
 
 impl EthernetDevice {
-    /// List all configured IPv4 network devices.
+    /// List all configured IPv4 network interfaces.
     pub fn list() -> Vec<Self> {
         let mut result = Vec::new();
 
@@ -69,7 +69,7 @@ impl EthernetDevice {
         result
     }
 
-    /// Create a new ethernet device instance from its raw counterpart.
+    /// Create a new network interface instance from its raw counterpart.
     unsafe fn new(dev: net_device) -> Self {
         Self {
             name: get_name(dev),
@@ -78,11 +78,35 @@ impl EthernetDevice {
             netmask: get_ipv4_mask(dev),
         }
     }
+
+    /// Get the name of the interface.
+    #[inline]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Get the MAC address.
+    #[inline]
+    pub fn mac(&self) -> MacAddr {
+        self.mac_addr
+    }
+
+    /// Get the IP address.
+    #[inline]
+    pub fn ip(&self) -> IpAddr {
+        self.ip_addr.into()
+    }
+
+    /// Get the network mask.
+    #[inline]
+    pub fn mask(&self) -> IpAddr {
+        self.netmask.into()
+    }
 }
 
 /// Get device name.
 unsafe fn get_name(dev: net_device) -> String {
-    utils::cstr_to_string(net_get_name(dev) as *const i8)
+    utils::cstr_to_string(net_get_name(dev) as *const _)
 }
 
 /// Get device MAC address.

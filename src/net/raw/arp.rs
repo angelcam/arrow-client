@@ -221,7 +221,7 @@ pub mod scanner {
         fn new(device: &EthernetDevice) -> Self {
             Self {
                 device: device.clone(),
-                scanner: Scanner::new(&device.name),
+                scanner: Scanner::new(device.name()),
             }
         }
 
@@ -266,7 +266,7 @@ pub mod scanner {
                 }
             };
 
-            let filter = format!("arp and ether dst {}", self.device.mac_addr);
+            let filter = format!("arp and ether dst {}", self.device.mac());
 
             let packets = self.scanner.sr(
                 &filter,

@@ -235,7 +235,7 @@ pub mod scanner {
 
             Self {
                 device: device.clone(),
-                scanner: Scanner::new(&device.name),
+                scanner: Scanner::new(device.name()),
                 mask,
                 network,
             }
@@ -283,7 +283,7 @@ pub mod scanner {
             let filter = format!(
                 "icmp and icmp[icmptype] = icmp-echoreply \
                  and ip dst {}",
-                self.device.ip_addr
+                self.device.ip()
             );
             let packets = self.scanner.sr(
                 &filter,

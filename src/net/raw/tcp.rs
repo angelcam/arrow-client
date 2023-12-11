@@ -359,7 +359,7 @@ pub mod scanner {
         fn new(device: &EthernetDevice) -> Self {
             Self {
                 device: device.clone(),
-                scanner: Scanner::new(&device.name),
+                scanner: Scanner::new(device.name()),
             }
         }
 
@@ -379,7 +379,8 @@ pub mod scanner {
                 "tcp and dst host {} and dst port {} and \
                  tcp[tcpflags] & tcp-syn != 0 and \
                  tcp[tcpflags] & tcp-ack != 0",
-                self.device.ip_addr, sport
+                self.device.ip(),
+                sport
             );
             let packets = self.scanner.sr(
                 &filter,
