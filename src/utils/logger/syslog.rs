@@ -16,7 +16,7 @@
 
 use std::ptr;
 
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fmt::Arguments;
 use std::os::raw::{c_char, c_int, c_void};
 use std::sync::Once;
@@ -69,8 +69,8 @@ impl Default for Syslog {
 impl Logger for Syslog {
     fn log(&mut self, file: &str, line: u32, s: Severity, msg: Arguments) {
         let msg = format!("[{}:{}] {}", file, line, msg);
-        let cstr_fmt = CString::new("%s").unwrap();
-        let cstr_msg = CString::new(msg).unwrap();
+        let cstr_fmt = CStr::from_bytes_with_nul(b"%s\0").unwrap();
+        let cstr_msg = CString::new(msg.replace('\0', "\\0")).unwrap();
         let fmt_ptr = cstr_fmt.as_ptr() as *const c_char;
         let msg_ptr = cstr_msg.as_ptr() as *const c_char;
 
@@ -92,5 +92,18 @@ impl Logger for Syslog {
 
     fn get_level(&self) -> Severity {
         self.level
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_syslog_nul_character() {
+        let mut logger = Syslog::default();
+
+        // Check that there is no panic on attempt to log the nul-character.
+        log_warn!(logger, "nul character: \0");
     }
 }

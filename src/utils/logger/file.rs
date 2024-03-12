@@ -138,11 +138,7 @@ impl FileLogger {
             Err(_) => 0,
         };
 
-        let file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         let logger = InternalFileLogger {
             level: Severity::INFO,
