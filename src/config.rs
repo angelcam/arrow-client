@@ -121,6 +121,7 @@ pub struct ConfigBuilder {
     discovery: bool,
     discovery_whitelist: HashSet<String>,
     verbose: bool,
+    device_category: Option<String>,
     device_type: Option<String>,
     device_vendor: Option<String>,
 }
@@ -138,6 +139,7 @@ impl ConfigBuilder {
             discovery: false,
             discovery_whitelist: HashSet::new(),
             verbose: false,
+            device_category: None,
             device_type: None,
             device_vendor: None,
         }
@@ -220,6 +222,15 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set device category.
+    pub fn device_category<T>(&mut self, device_category: T) -> &mut Self
+    where
+        T: ToString,
+    {
+        self.device_category = Some(device_category.to_string());
+        self
+    }
+
     /// Set device type.
     pub fn device_type<T>(&mut self, device_type: T) -> &mut Self
     where
@@ -293,6 +304,7 @@ impl ConfigBuilder {
             logger,
             storage: Box::new(storage),
             flash_friendly: self.flash_friendly,
+            device_category: self.device_category,
             device_type: self.device_type,
             device_vendor: self.device_vendor,
         };
@@ -357,6 +369,7 @@ struct ConfigParser {
     log_file_size: usize,
     log_file_rotations: usize,
     lock_file: Option<PathBuf>,
+    device_category: Option<String>,
     device_type: Option<String>,
     device_vendor: Option<String>,
 }
@@ -386,6 +399,7 @@ impl ConfigParser {
             log_file_size: 10 * 1024,
             log_file_rotations: 1,
             lock_file: None,
+            device_category: None,
             device_type: None,
             device_vendor: None,
         }
@@ -446,6 +460,10 @@ impl ConfigParser {
             .discovery(self.discovery)
             .discovery_whitelist(self.discovery_whitelist)
             .verbose(self.verbose);
+
+        if let Some(c) = self.device_category {
+            config_builder.device_category(c);
+        }
 
         if let Some(t) = self.device_type {
             config_builder.device_type(t);
@@ -508,6 +526,8 @@ impl ConfigParser {
                         self.log_file_rotations(arg)?;
                     } else if arg.starts_with("--lock-file=") {
                         self.lock_file(arg);
+                    } else if arg.starts_with("--device-category=") {
+                        self.device_category(arg);
                     } else if arg.starts_with("--device-type=") {
                         self.device_type(arg);
                     } else if arg.starts_with("--device-vendor=") {
@@ -769,20 +789,31 @@ impl ConfigParser {
         self.lock_file = Some(lock_file.into());
     }
 
+    /// Process the device-category argument.
+    fn device_category(&mut self, arg: &str) {
+        // skip "--device-category=" length
+        self.device_category = Some(&arg[18..])
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_string());
+    }
+
     /// Process the device-type argument.
     fn device_type(&mut self, arg: &str) {
         // skip "--device-type=" length
-        let device_type = &arg[14..];
-
-        self.device_type = Some(device_type.to_string());
+        self.device_type = Some(&arg[14..])
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_string());
     }
 
     /// Process the device-vendor argument.
     fn device_vendor(&mut self, arg: &str) {
         // skip "--device-vendor=" length
-        let device_vendor = &arg[16..];
-
-        self.device_vendor = Some(device_vendor.to_string());
+        self.device_vendor = Some(&arg[16..])
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_string());
     }
 }
 
@@ -914,6 +945,7 @@ pub struct Config {
     logger: BoxLogger,
     storage: Box<dyn Storage + Send>,
     flash_friendly: bool,
+    device_category: Option<String>,
     device_type: Option<String>,
     device_vendor: Option<String>,
 }
@@ -1100,6 +1132,7 @@ impl Config {
                 "vendor": "angelcam",
             },
             "device": {
+                "category": self.device_category.clone(),
                 "type": self.device_type.clone(),
                 "vendor": self.device_vendor.clone(),
             }
