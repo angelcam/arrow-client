@@ -356,7 +356,14 @@ impl Storage for DefaultStorage {
         ssl_connector_builder: &mut SslConnectorBuilder,
     ) -> Result<(), io::Error> {
         for path in &self.ca_cert_files {
-            ssl_connector_builder.load_ca_certificates(path)?;
+            if let Err(err) = ssl_connector_builder.load_ca_certificates(path) {
+                log_warn!(
+                    &mut self.logger,
+                    "unable to open certificate file/dir \"{}\" ({})",
+                    path.display(),
+                    err
+                );
+            }
         }
 
         Ok(())
