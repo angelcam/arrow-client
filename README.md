@@ -45,14 +45,21 @@ Angelcam Arrow Service is:
 arr-rs.angelcam.com:8900
 ```
 
-Currently, a custom root CA certificate is being used. You can find the
-certificate in this repository (file `ca.pem`).
+We use custom root CA certificates. You can find the certificates in this
+repository (files `root-g1.pem` and `root-g2.pem`). Currently, there are two
+root certificates. The older certificate expires on 2025-03-02, the other
+certificate is valid until 2044-04-18. We recommend starting the application
+with both certificates to ensure uninterrupted service after we switch our
+servers to the new certificate.
 
 Here is an example of starting the Arrow Client with one fixed RTSP service and
 with network scanning enabled:
 
 ```bash
-arrow-client arr-rs.angelcam.com:8900 -c ca.pem -d -r "rtsp://localhost:8554/stream.sdp?prof=baseline&res=low"
+arrow-client arr-rs.angelcam.com:8900 -d \
+    -c root-g1.pem \
+    -c root-g2.pem \
+    -r "rtsp://localhost:8554/stream.sdp?prof=baseline&res=low"
 ```
 
 Note that the application requires root privileges for direct access to local
