@@ -34,6 +34,8 @@ use crate::svc_table::Service;
 use crate::utils::logger::{BoxLogger, Logger};
 use crate::ArrowClientEventListener;
 
+pub use crate::net::arrow::{DefaultServiceConnector, ServiceConnection, ServiceConnector};
+
 /// Connection retry timeout.
 const RETRY_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -41,9 +43,10 @@ const RETRY_TIMEOUT: Duration = Duration::from_secs(60);
 const PAIRING_MODE_TIMEOUT: Duration = Duration::from_secs(1200);
 
 /// This future ensures maintaining connection with a remote Arrow Service.
-struct ArrowMainTask {
+struct ArrowMainTask<C> {
     app_context: ApplicationContext,
     cmd_channel: CommandChannel,
+    svc_connector: C,
     logger: BoxLogger,
     default_addr: String,
     current_addr: String,
@@ -52,9 +55,13 @@ struct ArrowMainTask {
     diagnostic_mode: bool,
 }
 
-impl ArrowMainTask {
+impl<C> ArrowMainTask<C>
+where
+    C: ServiceConnector + Clone + Unpin + 'static,
+    C::Connection: Send + Unpin,
+{
     /// Create a new task.
-    async fn start(app_context: ApplicationContext, cmd_channel: CommandChannel) {
+    async fn start(app_context: ApplicationContext, cmd_channel: CommandChannel, svc_connector: C) {
         let logger = app_context.get_logger();
         let addr = app_context.get_arrow_service_address();
         let diagnostic_mode = app_context.get_diagnostic_mode();
@@ -66,6 +73,7 @@ impl ArrowMainTask {
         let mut task = ArrowMainTask {
             app_context,
             cmd_channel,
+            svc_connector,
             logger,
             default_addr: addr.clone(),
             current_addr: addr,
@@ -97,6 +105,7 @@ impl ArrowMainTask {
         arrow::connect(
             self.app_context.clone(),
             self.cmd_channel.clone(),
+            self.svc_connector.clone(),
             &self.current_addr,
         )
         .await
@@ -128,7 +137,7 @@ impl ArrowMainTask {
 
             let retry = process_connection_error(err, self.last_attempt, self.pairing_mode_timeout);
 
-            self.current_addr = self.default_addr.clone();
+            self.current_addr.clone_from(&self.default_addr);
 
             let fut = wait_for_retry(&mut self.logger, retry);
 
@@ -273,14 +282,31 @@ pub struct ArrowClient {
 
 impl ArrowClient {
     /// Create a new Arrow client from a given config.
+    ///
+    /// # Arguments
+    /// * `config` - Arrow client configuration
     pub fn new(config: Config) -> (ArrowClient, ArrowClientTask) {
+        Self::new_with_connector(config, DefaultServiceConnector::new())
+    }
+
+    /// Create a new Arrow client from a given config.
+    ///
+    /// # Arguments
+    /// * `config` - Arrow client configuration
+    /// * `svc_connector` - custom service connector
+    pub fn new_with_connector<C>(config: Config, svc_connector: C) -> (ArrowClient, ArrowClientTask)
+    where
+        C: ServiceConnector + Clone + Unpin + 'static,
+        C::Connection: Send + Unpin,
+    {
         let context = ApplicationContext::new(config);
 
         // create command handler
         let (cmd_channel, cmd_handler) = cmd_handler::new(context.clone());
 
         // create Arrow client main task
-        let arrow_main_task = ArrowMainTask::start(context.clone(), cmd_channel.clone());
+        let arrow_main_task =
+            ArrowMainTask::start(context.clone(), cmd_channel.clone(), svc_connector);
 
         let nw_scan_cmd_channel = cmd_channel.clone();
 

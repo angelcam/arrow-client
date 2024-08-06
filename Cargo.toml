@@ -17,12 +17,13 @@ all = ["discovery", "threads", "exports"]
 crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
-bytes        = "1"
-farmhash     = "1.1"
-fs2          = "0.4"
-json         = "0.12"
-openssl      = "0.10"
-time         = "0.1"
+bytes = "1"
+farmhash = "1.1"
+fs2 = "0.4"
+json = "0.12"
+openssl = "0.10"
+time = "0.1"
+trait-variant = "0.1"
 
 [dependencies.futures]
 version = "0.3"

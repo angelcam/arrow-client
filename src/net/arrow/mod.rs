@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod connector;
 mod error;
 mod proto;
 mod session;
@@ -44,6 +45,7 @@ use crate::net::raw::ether::MacAddr;
 use crate::svc_table::SharedServiceTableRef;
 use crate::utils::logger::{BoxLogger, Logger};
 
+pub use self::connector::{DefaultServiceConnector, ServiceConnection, ServiceConnector};
 pub use self::error::{ArrowError, ErrorKind};
 
 const ACK_TIMEOUT: Duration = Duration::from_secs(20);
@@ -82,13 +84,13 @@ impl ExpectedAck {
 }
 
 /// Arrow Client implementation.
-struct ArrowClientContext {
+struct ArrowClientContext<C> {
     logger: BoxLogger,
     app_context: ApplicationContext,
     cmd_channel: CommandChannel,
     svc_table: SharedServiceTableRef,
     cmsg_factory: ControlMessageFactory,
-    sessions: SessionManager,
+    sessions: SessionManager<C>,
     messages: VecDeque<ArrowMessage>,
     expected_acks: VecDeque<ExpectedAck>,
     state: ProtocolState,
@@ -100,9 +102,13 @@ struct ArrowClientContext {
     last_stable_ver: u32,
 }
 
-impl ArrowClientContext {
+impl<C> ArrowClientContext<C>
+where
+    C: ServiceConnector + Clone + Send + 'static,
+    C::Connection: Send + Unpin,
+{
     /// Create a new Arrow Client.
-    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel) -> Self {
+    fn new(app_context: ApplicationContext, cmd_channel: CommandChannel, svc_connector: C) -> Self {
         let logger = app_context.get_logger();
         let svc_table = app_context.get_service_table();
 
@@ -115,6 +121,7 @@ impl ArrowClientContext {
         let session_manager = SessionManager::new(
             app_context.clone(),
             cmsg_factory.clone(),
+            svc_connector,
             SESSION_WINDOW_SIZE,
             gateway_mode,
         );
@@ -535,7 +542,11 @@ impl ArrowClientContext {
     }
 }
 
-impl Stream for ArrowClientContext {
+impl<C> Stream for ArrowClientContext<C>
+where
+    C: ServiceConnector + Clone + Unpin + 'static,
+    C::Connection: Send + Unpin,
+{
     type Item = Result<ArrowMessage, ArrowError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -558,19 +569,24 @@ impl Stream for ArrowClientContext {
     }
 }
 
-struct ArrowClient<S> {
-    context: Arc<Mutex<ArrowClientContext>>,
+struct ArrowClient<C, S> {
+    context: Arc<Mutex<ArrowClientContext<C>>>,
     stream: S,
 }
 
-impl<S> ArrowClient<S> {
+impl<C, S> ArrowClient<C, S>
+where
+    C: ServiceConnector + Clone + 'static,
+    C::Connection: Send + Unpin,
+{
     /// Create a new instance of Arrow Client.
     fn new(
         app_context: ApplicationContext,
         cmd_channel: CommandChannel,
+        svc_connector: C,
         stream: S,
     ) -> (Self, JoinHandle<Result<(), ArrowError>>) {
-        let context = ArrowClientContext::new(app_context, cmd_channel);
+        let context = ArrowClientContext::new(app_context, cmd_channel, svc_connector);
 
         let context = Arc::new(Mutex::new(context));
 
@@ -603,7 +619,7 @@ impl<S> ArrowClient<S> {
     }
 }
 
-impl<S> Drop for ArrowClient<S> {
+impl<C, S> Drop for ArrowClient<C, S> {
     fn drop(&mut self) {
         let mut context = self.context.lock().unwrap();
 
@@ -613,8 +629,10 @@ impl<S> Drop for ArrowClient<S> {
     }
 }
 
-impl<S> Stream for ArrowClient<S>
+impl<C, S> Stream for ArrowClient<C, S>
 where
+    C: ServiceConnector + Clone + Unpin + 'static,
+    C::Connection: Send + Unpin,
     S: Stream<Item = Result<ArrowMessage, ArrowError>> + Unpin,
 {
     type Item = Result<ArrowMessage, ArrowError>;
@@ -650,11 +668,16 @@ where
 }
 
 /// Connect Arrow Client to a given address and return either a redirect address or an error.
-pub async fn connect(
+pub async fn connect<C>(
     app_context: ApplicationContext,
     cmd_channel: CommandChannel,
+    svc_connector: C,
     addr: &str,
-) -> Result<String, ArrowError> {
+) -> Result<String, ArrowError>
+where
+    C: ServiceConnector + Clone + Unpin + 'static,
+    C::Connection: Send + Unpin,
+{
     let tls_connector = app_context
         .get_tls_connector()
         .map_err(|err| ArrowError::other(format!("unable to get TLS context: {}", err)))?;
@@ -678,7 +701,8 @@ pub async fn connect(
 
     let (mut sink, stream) = framed.split();
 
-    let (mut arrow_client, watchdog) = ArrowClient::new(app_context, cmd_channel, stream);
+    let (mut arrow_client, watchdog) =
+        ArrowClient::new(app_context, cmd_channel, svc_connector, stream);
 
     let send = sink.send_all(&mut arrow_client);
 

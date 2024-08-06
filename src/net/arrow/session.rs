@@ -26,16 +26,17 @@ use futures::task::{Context, Poll, Waker};
 use futures::{Future, Stream};
 
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
 use tokio_util::io::{poll_read_buf, poll_write_buf};
 
 use crate::context::ApplicationContext;
+use crate::net::arrow::connector::ServiceConnector;
 use crate::net::arrow::error::{ArrowError, ConnectionError};
 use crate::net::arrow::proto::msg::control::{
     ControlMessage, ControlMessageFactory, EC_CONNECTION_ERROR, EC_NO_ERROR,
 };
 use crate::net::arrow::proto::msg::ArrowMessage;
-use crate::svc_table::{BoxServiceTable, ServiceTable};
+use crate::net::raw::ether::MacAddr;
+use crate::svc_table::{BoxServiceTable, ServiceTable, ServiceType};
 use crate::utils::logger::{BoxLogger, Logger};
 
 const BUFFER_CAPACITY: usize = 8192;
@@ -345,13 +346,21 @@ struct Session {
 
 impl Session {
     /// Create a new session for a given service ID and session ID.
-    fn new(
+    #[allow(clippy::too_many_arguments)]
+    fn new<C, S>(
         cmsg_factory: ControlMessageFactory,
+        svc_connector: C,
         service_id: u16,
         session_id: u32,
+        svc_type: ServiceType,
+        mac: MacAddr,
         addr: SocketAddr,
         window_size: usize,
-    ) -> Self {
+    ) -> Self
+    where
+        C: ServiceConnector<Connection = S> + 'static,
+        S: AsyncRead + AsyncWrite + Send + Unpin,
+    {
         let context = Arc::new(Mutex::new(SessionContext::new(
             cmsg_factory,
             service_id,
@@ -364,7 +373,8 @@ impl Session {
         };
 
         tokio::spawn(async move {
-            let transport = SessionTransport::connect(context.clone(), addr);
+            let transport =
+                SessionTransport::connect(context.clone(), svc_connector, svc_type, mac, addr);
 
             match transport.await {
                 Ok(transport) => transport.await,
@@ -406,18 +416,27 @@ impl Session {
 
 /// Session transport. It is a future that drives communication with the remote
 /// host.
-struct SessionTransport {
+struct SessionTransport<S> {
     context: Arc<Mutex<SessionContext>>,
-    stream: TcpStream,
+    stream: S,
 }
 
-impl SessionTransport {
+impl<S> SessionTransport<S> {
     /// Create a new session transport by connecting to a given host.
-    async fn connect(
+    async fn connect<C>(
         context: Arc<Mutex<SessionContext>>,
+        svc_connector: C,
+        svc_type: ServiceType,
+        mac: MacAddr,
         addr: SocketAddr,
-    ) -> Result<Self, ConnectionError> {
-        let stream = tokio::time::timeout(CONNECTION_TIMEOUT, TcpStream::connect(addr))
+    ) -> Result<Self, ConnectionError>
+    where
+        C: ServiceConnector<Connection = S>,
+        S: Unpin,
+    {
+        let connect = svc_connector.connect(svc_type, mac, addr);
+
+        let stream = tokio::time::timeout(CONNECTION_TIMEOUT, connect)
             .await
             .map_err(|_| ConnectionError::new("connection timeout"))?
             .map_err(ConnectionError::from)?;
@@ -428,7 +447,10 @@ impl SessionTransport {
     }
 }
 
-impl Future for SessionTransport {
+impl<S> Future for SessionTransport<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -454,23 +476,29 @@ impl Future for SessionTransport {
 }
 
 /// Arrow session manager.
-pub struct SessionManager {
+pub struct SessionManager<C> {
     logger: BoxLogger,
     window_size: usize,
     gateway_mode: bool,
     svc_table: BoxServiceTable,
     cmsg_factory: ControlMessageFactory,
     cmsg_queue: VecDeque<ArrowMessage>,
+    svc_connector: C,
     sessions: HashMap<u32, Session>,
     poll_order: VecDeque<u32>,
     task: Option<Waker>,
 }
 
-impl SessionManager {
+impl<C> SessionManager<C>
+where
+    C: ServiceConnector + Clone + 'static,
+    C::Connection: Send + Unpin,
+{
     /// Create a new session manager.
     pub fn new(
         app_context: ApplicationContext,
         cmsg_factory: ControlMessageFactory,
+        svc_connector: C,
         window_size: usize,
         gateway_mode: bool,
     ) -> Self {
@@ -483,6 +511,7 @@ impl SessionManager {
             svc_table: svc_table.boxed(),
             cmsg_factory,
             cmsg_queue: VecDeque::new(),
+            svc_connector,
             sessions: HashMap::new(),
             poll_order: VecDeque::new(),
             task: None,
@@ -576,6 +605,8 @@ impl SessionManager {
             .get(service_id)
             .ok_or_else(|| ArrowError::other(format!("unknown service ID: {:04x}", service_id)))?;
 
+        let mac = svc.mac().unwrap_or_else(MacAddr::zero);
+
         let addr = svc.address().ok_or_else(|| {
             ArrowError::other(format!(
                 "there is no address for a given service; service ID: {:04x}",
@@ -583,7 +614,9 @@ impl SessionManager {
             ))
         })?;
 
-        if !self.gateway_mode && !addr.ip().is_loopback() {
+        let ip = addr.ip();
+
+        if !self.gateway_mode && !ip.is_loopback() {
             return Err(ArrowError::other(format!(
                 "gateway mode disabled (service ID: {:04x})",
                 service_id
@@ -600,8 +633,11 @@ impl SessionManager {
 
         Ok(Session::new(
             self.cmsg_factory.clone(),
+            self.svc_connector.clone(),
             service_id,
             session_id,
+            svc.service_type(),
+            mac,
             addr,
             self.window_size,
         ))
@@ -620,7 +656,7 @@ impl SessionManager {
     }
 }
 
-impl Drop for SessionManager {
+impl<C> Drop for SessionManager<C> {
     fn drop(&mut self) {
         for (session_id, mut session) in self.sessions.drain() {
             log_info!(
@@ -634,7 +670,11 @@ impl Drop for SessionManager {
     }
 }
 
-impl Stream for SessionManager {
+impl<C> Stream for SessionManager<C>
+where
+    C: ServiceConnector + Clone + Unpin + 'static,
+    C::Connection: Send + Unpin,
+{
     type Item = Result<ArrowMessage, ArrowError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
