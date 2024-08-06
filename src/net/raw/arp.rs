@@ -106,7 +106,7 @@ impl ArpPacket {
             let ptr = data.as_ptr();
             let ptr = ptr as *const RawArpPacketHeader;
 
-            let rh = unsafe { &*ptr };
+            let rh = unsafe { ptr.read_unaligned() };
 
             let hlen = rh.hlen as usize;
             let plen = rh.plen as usize;

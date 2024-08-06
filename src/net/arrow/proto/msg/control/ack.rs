@@ -63,7 +63,8 @@ impl FromBytes for AckMessage {
         }
 
         let ptr = bytes.as_ptr() as *const Self;
-        let msg = unsafe { &*ptr };
+
+        let msg = unsafe { ptr.read_unaligned() };
 
         let res = Self {
             err: u32::from_be(msg.err),

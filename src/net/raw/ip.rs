@@ -97,7 +97,7 @@ impl Ipv4PacketHeader {
         } else {
             let ptr = data.as_ptr();
 
-            let rh = unsafe { &*(ptr as *const RawIpv4PacketHeader) };
+            let rh = unsafe { std::ptr::read_unaligned(ptr as *const RawIpv4PacketHeader) };
 
             let flags_foffset = u16::from_be(rh.flags_foffset);
             let ihl = rh.vihl & 0x0f;
@@ -109,9 +109,11 @@ impl Ipv4PacketHeader {
                     "unable to parse IPv4 packet, not enough data",
                 ))
             } else {
-                #[allow(clippy::cast_ptr_alignment)]
                 let options = unsafe {
-                    utils::vec_from_raw_parts(ptr.offset(offset_1) as *const u32, options_len)
+                    utils::vec_from_raw_parts_unaligned(
+                        ptr.offset(offset_1) as *const u32,
+                        options_len,
+                    )
                 };
 
                 let res = Ipv4PacketHeader {

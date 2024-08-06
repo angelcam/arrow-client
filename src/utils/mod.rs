@@ -95,9 +95,25 @@ pub fn slice_as_bytes<T: Sized>(data: &[T]) -> &[u8] {
 ///
 /// # Safety
 /// The given pointer MUST point to an array that contains at least `len`
-/// elements. Each element is expected to be of size T.
+/// elements. Each element is expected to be of size T. The pointer must meet
+/// the alignment requirements for T.
 pub unsafe fn vec_from_raw_parts<T: Clone>(ptr: *const T, len: usize) -> Vec<T> {
     slice::from_raw_parts(ptr, len).to_vec()
+}
+
+/// Convert a given typed pointer into a new vector (copying the data).
+///
+/// # Safety
+/// The given pointer MUST point to an array that contains at least `len`
+/// elements. Each element is expected to be of size T.
+pub unsafe fn vec_from_raw_parts_unaligned<T: Copy>(ptr: *const T, len: usize) -> Vec<T> {
+    let mut res = Vec::with_capacity(len);
+
+    for idx in 0..len {
+        res.push(std::ptr::read_unaligned(ptr.add(idx)));
+    }
+
+    res
 }
 
 /// Convert a given C-string pointer to a new instance of String.

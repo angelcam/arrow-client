@@ -80,7 +80,7 @@ impl From<SslErrorStack> for TlsError {
 thread_local! {
     /// An async context set when entering an async function to be later used
     /// by the IO methods within the `InnerSslStream`.
-    static ASYNC_CONTEXT: RefCell<Option<Waker>> = RefCell::new(None);
+    static ASYNC_CONTEXT: RefCell<Option<Waker>> = const { RefCell::new(None) };
 }
 
 /// A struct that will remove the async context when dropped.

@@ -100,7 +100,7 @@ impl EtherPacketHeader {
         let ptr = data.as_ptr();
         let ptr = ptr as *const RawEtherPacketHeader;
 
-        let rh = unsafe { &*ptr };
+        let rh = unsafe { ptr.read_unaligned() };
 
         Self {
             src: MacAddr::from_slice(&rh.src),

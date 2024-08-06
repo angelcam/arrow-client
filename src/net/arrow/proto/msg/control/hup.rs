@@ -70,7 +70,8 @@ impl FromBytes for HupMessage {
         }
 
         let ptr = bytes.as_ptr() as *const Self;
-        let msg = unsafe { &*ptr };
+
+        let msg = unsafe { ptr.read_unaligned() };
 
         let res = Self {
             session_id: u32::from_be(msg.session_id),

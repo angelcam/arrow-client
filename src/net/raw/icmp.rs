@@ -96,7 +96,7 @@ impl IcmpPacket {
             let ptr = data.as_ptr();
             let ptr = ptr as *const RawIcmpPacketHeader;
 
-            let rh = unsafe { &*ptr };
+            let rh = unsafe { ptr.read_unaligned() };
 
             let body = &data[size..];
 

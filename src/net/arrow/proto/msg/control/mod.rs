@@ -179,7 +179,8 @@ impl FromBytes for ControlMessageHeader {
         assert_eq!(bytes.len(), mem::size_of::<Self>());
 
         let ptr = bytes.as_ptr() as *const Self;
-        let header = unsafe { &*ptr };
+
+        let header = unsafe { ptr.read_unaligned() };
 
         let header = Self {
             msg_id: u16::from_be(header.msg_id),

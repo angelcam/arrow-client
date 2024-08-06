@@ -60,7 +60,8 @@ impl FromBytes for ConnectMessage {
         }
 
         let ptr = bytes.as_ptr() as *const Self;
-        let msg = unsafe { &*ptr };
+
+        let msg = unsafe { ptr.read_unaligned() };
 
         let res = Self {
             service_id: u16::from_be(msg.service_id),

@@ -19,26 +19,24 @@ use std::os::raw::c_void;
 
 /// Allocate a block of memory with a given size.
 #[no_mangle]
-#[allow(clippy::cast_ptr_alignment)]
 pub unsafe extern "C" fn ac__malloc(size: usize) -> *mut c_void {
     let layout_size = std::mem::size_of::<Layout>();
     let layout = Layout::from_size_align_unchecked(layout_size + size, 1);
     let block = std::alloc::alloc(layout);
 
-    *(block as *mut Layout) = layout;
+    std::ptr::write_unaligned(block as *mut Layout, layout);
 
     block.add(layout_size) as _
 }
 
 /// Free a given block of memory.
 #[no_mangle]
-#[allow(clippy::cast_ptr_alignment)]
 pub unsafe extern "C" fn ac__free(ptr: *mut c_void) {
     let ptr = ptr as *mut u8;
 
     let layout_size = std::mem::size_of::<Layout>();
     let block = ptr.sub(layout_size);
-    let layout = *(block as *mut Layout);
+    let layout = std::ptr::read_unaligned(block as *const Layout);
 
     std::alloc::dealloc(block, layout);
 }

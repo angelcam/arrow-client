@@ -16,7 +16,6 @@
 
 use std::io;
 use std::mem;
-use std::slice;
 
 use std::io::Write;
 
@@ -78,7 +77,7 @@ impl TcpPacket {
         } else {
             let ptr = data.as_ptr();
 
-            let rh = unsafe { &*(ptr as *const RawTcpPacketHeader) };
+            let rh = unsafe { std::ptr::read_unaligned(ptr as *const RawTcpPacketHeader) };
 
             let doffset_flags = u16::from_be(rh.doffset_flags);
             let doffset = doffset_flags >> 12;
@@ -92,9 +91,12 @@ impl TcpPacket {
                     "unable to parse TCP packet, not enough data",
                 ))
             } else {
-                #[allow(clippy::cast_ptr_alignment)]
-                let options =
-                    unsafe { slice::from_raw_parts(ptr.add(offset_1) as *const u32, options_len) };
+                let options = unsafe {
+                    utils::vec_from_raw_parts_unaligned(
+                        ptr.add(offset_1) as *const u32,
+                        options_len,
+                    )
+                };
 
                 let payload = &data[offset_2..];
 
@@ -106,7 +108,7 @@ impl TcpPacket {
                     flags: doffset_flags & 0x01ff,
                     wsize: u16::from_be(rh.wsize),
                     uptr: u16::from_be(rh.uptr),
-                    options: options.to_vec().into_boxed_slice(),
+                    options: options.into_boxed_slice(),
                     data: payload.to_vec().into_boxed_slice(),
                 };
 
