@@ -116,19 +116,21 @@ pub fn scan_network(
 
     let rtsp_services = filter_duplicit_services(rtsp_services, rtsp_port_priorities);
 
-    let rtsp_streams = runtime.block_on(find_rtsp_streams(context.clone(), rtsp_services));
+    let rtsp_streams = runtime.block_on(find_rtsp_streams(context.clone(), rtsp_services.clone()));
 
     let http_services =
         runtime.block_on(find_http_services(context.clone(), report.socket_addrs()));
 
     let http_services = filter_duplicit_services(http_services, http_port_priorities);
 
-    let mjpeg_services = http_services.clone();
-
-    let mjpeg_streams = runtime.block_on(find_mjpeg_streams(context, mjpeg_services));
+    let mjpeg_streams = runtime.block_on(find_mjpeg_streams(context, http_services.clone()));
 
     for svc in rtsp_streams {
         report.add_service(svc);
+    }
+
+    for (mac, saddr) in rtsp_services {
+        report.add_service(Service::tcp(mac, saddr));
     }
 
     for svc in mjpeg_streams {
