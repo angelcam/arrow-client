@@ -93,13 +93,13 @@ fn build_pcap_wrapper() {
             .cargo_metadata(false)
             .emit_includes(false)
             .copy_dlls(false)
-            .find_package("winpcap");
+            .find_package("npcap");
 
         if let Ok(lib) = lib {
             for include in lib.include_paths {
                 wrapper_builder.include(include);
             }
-        } else if let Some(dir) = dir_from_var("WINPCAP_INCLUDE_DIR") {
+        } else if let Some(dir) = dir_from_var("NPCAP_INCLUDE_DIR") {
             // if vcpkg cannot find the lib, we try the env. variable
             wrapper_builder.include(dir);
         }
@@ -124,15 +124,15 @@ fn link_pcap() {
             .cargo_metadata(true)
             .emit_includes(false)
             .copy_dlls(false)
-            .find_package("winpcap");
+            .find_package("npcap");
 
         // if vcpkg cannot find the lib, we try the env. variables
         if lib.is_err() {
-            if let Some(dir) = dir_from_var("WINPCAP_LIB_DIR") {
+            if let Some(dir) = dir_from_var("NPCAP_LIB_DIR") {
                 emit_lib_path(&dir);
             }
 
-            link("winpcap", "WINPCAP_STATIC");
+            link("wpcap", "NPCAP_STATIC");
         }
     } else {
         // on other platforms, we expect the lib will be in standard paths or the paths will be
