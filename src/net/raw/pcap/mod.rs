@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,23 +14,22 @@
 
 //! PCAP network scanner definitions.
 
-use std::fmt;
-use std::ptr;
-use std::slice;
-use std::sync::mpsc;
-use std::thread;
-
-use std::error::Error;
-use std::ffi::{CStr, CString};
-use std::fmt::{Display, Formatter};
-use std::os::raw::{c_char, c_int, c_void};
-use std::sync::mpsc::Sender;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::{
+    ffi::{CStr, CString},
+    fmt::{self, Display, Formatter},
+    os::raw::{c_char, c_int, c_void},
+    ptr, slice,
+    sync::{
+        LazyLock, Mutex,
+        mpsc::{self, Sender},
+    },
+    thread,
+    time::{Duration, Instant},
+};
 
 use bytes::{Bytes, BytesMut};
 
-use crate::net::raw::ether::packet::EtherPacket;
+use crate::{error::Error, net::raw::ether::packet::EtherPacket};
 
 type PacketCallback = unsafe extern "C" fn(
     opaque: *mut c_void,
@@ -39,46 +38,46 @@ type PacketCallback = unsafe extern "C" fn(
     packet_length: usize,
 );
 
-extern "C" {
-    fn pcap_wrapper__new(device: *const c_char) -> *mut c_void;
-    fn pcap_wrapper__free(wrapper: *mut c_void);
+unsafe extern "C" {
+    unsafe fn pcap_wrapper__new(device: *const c_char) -> *mut c_void;
+    unsafe fn pcap_wrapper__free(wrapper: *mut c_void);
 
-    fn pcap_wrapper__get_last_error(wrapper: *const c_void) -> *const c_char;
+    unsafe fn pcap_wrapper__get_last_error(wrapper: *const c_void) -> *const c_char;
 
-    fn pcap_wrapper__set_filter(wrapper: *mut c_void, filter: *const c_char) -> c_int;
-    fn pcap_wrapper__set_max_packet_length(wrapper: *mut c_void, max_packet_length: usize);
-    fn pcap_wrapper__set_read_timeout(wrapper: *mut c_void, read_timeout: u64);
+    unsafe fn pcap_wrapper__set_filter(wrapper: *mut c_void, filter: *const c_char) -> c_int;
+    unsafe fn pcap_wrapper__set_max_packet_length(wrapper: *mut c_void, max_packet_length: usize);
+    unsafe fn pcap_wrapper__set_read_timeout(wrapper: *mut c_void, read_timeout: u64);
 
-    fn pcap_wrapper__open(wrapper: *mut c_void) -> c_int;
+    unsafe fn pcap_wrapper__open(wrapper: *mut c_void) -> c_int;
 
-    fn pcap_wrapper__read_packet(
+    unsafe fn pcap_wrapper__read_packet(
         wrapper: *mut c_void,
         callback: PacketCallback,
         opaque: *mut c_void,
     ) -> c_int;
-    fn pcap_wrapper__write_packet(wrapper: *mut c_void, data: *const u8, size: usize) -> c_int;
+    unsafe fn pcap_wrapper__write_packet(
+        wrapper: *mut c_void,
+        data: *const u8,
+        size: usize,
+    ) -> c_int;
 }
 
-lazy_static! {
-    /// PCAP context for synchronizing thread unsafe calls.
-    static ref TC: Mutex<()> = Mutex::new(());
-}
+/// PCAP context for synchronizing thread unsafe calls.
+static TC: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// PCAP error.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PcapError {
     msg: String,
 }
 
 impl PcapError {
     /// Create a new error with a given error message.
-    pub fn new<T>(msg: T) -> Self
+    fn new<T>(msg: T) -> Self
     where
-        T: ToString,
+        T: Into<String>,
     {
-        Self {
-            msg: msg.to_string(),
-        }
+        Self { msg: msg.into() }
     }
 }
 
@@ -88,7 +87,13 @@ impl Display for PcapError {
     }
 }
 
-impl Error for PcapError {}
+impl std::error::Error for PcapError {}
+
+impl From<PcapError> for Error {
+    fn from(err: PcapError) -> Self {
+        Error::from_msg_and_cause("pcap error", err)
+    }
+}
 
 /// Common result type for this module.
 pub type Result<T> = std::result::Result<T, PcapError>;
@@ -226,11 +231,13 @@ unsafe extern "C" fn read_packet_callback(
     data_length: usize,
     _: usize,
 ) {
-    let buffer_ptr = opaque as *mut BytesMut;
+    unsafe {
+        let buffer_ptr = opaque as *mut BytesMut;
 
-    let data = slice::from_raw_parts(data, data_length as _);
+        let data = slice::from_raw_parts(data, data_length as _);
 
-    (*buffer_ptr).extend_from_slice(data);
+        (*buffer_ptr).extend_from_slice(data);
+    }
 }
 
 /// PCAP packet scanner (implementation of a send-receive service).
@@ -323,10 +330,10 @@ fn packet_listener(
             buffer.clear();
         }
 
-        if let Some(timeout) = total_timeout {
-            if start_time.elapsed() > timeout {
-                break;
-            }
+        if let Some(timeout) = total_timeout
+            && start_time.elapsed() > timeout
+        {
+            break;
         }
 
         if last_packet_time.elapsed() > packet_timeout {

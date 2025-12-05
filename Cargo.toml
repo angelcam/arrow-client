@@ -1,67 +1,82 @@
 [package]
-name    = "arrow-client"
-version = "0.12.7"
+name = "arrow-client"
+version = "0.13.0"
 authors = ["Ondrej Perutka <ondrej.perutka@angelcam.com>"]
 license = "Apache-2.0"
-readme  = "README.md"
-build   = "build.rs"
-edition = "2021"
+readme = "README.md"
+build = "build.rs"
+edition = "2024"
 
 [features]
-discovery = ["lazy_static"]
+default = []
+discovery = ["dep:str-reader", "dep:tokio-util"]
 threads = ["tokio/rt-multi-thread"]
-exports = ["libc"]
-all = ["discovery", "threads", "exports"]
+all = ["discovery", "threads"]
 
 [lib]
 crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
+argh = "0.1"
 bytes = "1"
 farmhash = "1.1"
-fs2 = "0.4"
-json = "0.12"
-openssl = "0.10"
-time = "0.1"
+futures = "0.3"
+libc = "0.2"
+pin-project-lite = "0.2"
+serde_json = "1"
+tokio-native-tls = "0.3"
 trait-variant = "0.1"
+ttpkit-url = "0.1"
 
-[dependencies.futures]
-version = "0.3"
-default-features = false
-features = ["std"]
+[dependencies.arrow-protocol]
+git = "ssh://git@github.com/angelcam/arrow-protocol.git"
+tag = "v0.5.0"
 
-[dependencies.lazy_static]
-version = "1.3"
-optional = true
+[dependencies.log]
+version = "0.4"
+features = ["max_level_debug", "release_max_level_debug", "std"]
 
-[dependencies.libc]
-version = "0.2"
-optional = true
+[dependencies.serde-lite]
+version = "0.5"
+features = ["derive"]
 
 [dependencies.tokio]
 version = "1"
-features = ["rt", "net", "time"]
+features = ["net", "rt", "time"]
 
 [dependencies.tokio-util]
 version = "0.7"
-features = ["codec", "io"]
+features = ["codec"]
+optional = true
+
+[dependencies.str-reader]
+version = "0.1"
+optional = true
 
 [dependencies.uuid]
-version  = "1"
+version = "1"
 features = ["v4"]
 
 [build-dependencies]
-cc    = "1.0"
+cc = "1"
 vcpkg = "0.2"
 
-[profile.dev]
-opt-level = 0
-debug     = true
+[dev-dependencies.serde-lite]
+version = "0.5"
+features = ["derive", "preserve-order"]
+
+[dev-dependencies.tokio]
+version = "1"
+features = ["full"]
+
+[dev-dependencies.tokio-util]
+version = "0.7"
+features = ["codec", "io"]
 
 [profile.release]
-opt-level     = "s"
-debug         = false
-panic         = "abort"
-lto           = true
+opt-level = "s"
+debug = false
+panic = "abort"
+lto = true
 codegen-units = 1
-incremental   = false
+incremental = false

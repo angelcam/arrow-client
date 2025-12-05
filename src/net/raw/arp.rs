@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,17 +14,22 @@
 
 //! ARP packet definitions.
 
-use std::io;
-use std::mem;
+use std::{
+    io::{self, Write},
+    mem,
+    net::Ipv4Addr,
+};
 
-use std::io::Write;
-use std::net::Ipv4Addr;
-
-use crate::utils;
-
-use crate::net::raw::ether::packet::{EtherPacketBody, PacketParseError, Result};
-use crate::net::raw::ether::MacAddr;
-use crate::net::raw::utils::Serialize;
+use crate::{
+    net::raw::{
+        ether::{
+            MacAddr,
+            packet::{EtherPacketBody, PacketParseError, Result},
+        },
+        utils::Serialize,
+    },
+    utils::AsBytes,
+};
 
 /// ARP packet.
 #[derive(Debug, Clone)]
@@ -149,7 +154,7 @@ impl Serialize for ArpPacket {
     fn serialize(&self, w: &mut dyn Write) -> io::Result<()> {
         let rh = RawArpPacketHeader::new(self);
 
-        w.write_all(utils::as_bytes(&rh))?;
+        w.write_all(rh.as_bytes())?;
 
         w.write_all(&self.sha)?;
         w.write_all(&self.spa)?;
@@ -163,7 +168,8 @@ impl Serialize for ArpPacket {
 impl EtherPacketBody for ArpPacket {}
 
 /// Packed representation of ARP packet header.
-#[repr(packed)]
+#[repr(C, packed)]
+#[derive(Copy, Clone)]
 struct RawArpPacketHeader {
     htype: u16,
     ptype: u16,
@@ -198,12 +204,10 @@ pub mod scanner {
     use crate::net::raw::pcap;
 
     use crate::net::raw::devices::EthernetDevice;
-    use crate::net::raw::ether::packet::EtherPacket;
     use crate::net::raw::ether::MacAddr;
+    use crate::net::raw::ether::packet::EtherPacket;
     use crate::net::raw::pcap::Scanner;
     use crate::net::raw::utils::Serialize;
-
-    use crate::net::utils::Ipv4AddrEx;
 
     /// IPv4 ARP scanner.
     pub struct Ipv4ArpScanner {
@@ -231,8 +235,8 @@ pub mod scanner {
             let hdst = MacAddr::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
             let hsrc = self.device.mac_addr;
             let psrc = self.device.ip_addr;
-            let mask = self.device.netmask.as_u32();
-            let addr = self.device.ip_addr.as_u32();
+            let mask = u32::from(self.device.netmask);
+            let addr = u32::from(self.device.ip_addr);
 
             let end = addr | !mask;
 
@@ -279,8 +283,14 @@ pub mod scanner {
 
             for ep in packets {
                 if let Some(arp) = ep.body::<ArpPacket>() {
-                    let sha = MacAddr::from_slice(arp.sha.as_ref());
-                    let spa = Ipv4Addr::from_slice(arp.spa.as_ref());
+                    let mut sha = [0u8; 6];
+                    let mut spa = [0u8; 4];
+
+                    sha.copy_from_slice(&arp.sha[..6]);
+                    spa.copy_from_slice(&arp.spa[..4]);
+
+                    let sha = MacAddr::from(sha);
+                    let spa = Ipv4Addr::from(spa);
 
                     hosts.push((sha, spa));
                 }
@@ -297,8 +307,8 @@ mod tests {
 
     use std::net::Ipv4Addr;
 
-    use crate::net::raw::ether::packet::EtherPacket;
     use crate::net::raw::ether::MacAddr;
+    use crate::net::raw::ether::packet::EtherPacket;
     use crate::net::raw::utils::Serialize;
 
     #[test]

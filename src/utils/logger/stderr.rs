@@ -1,4 +1,4 @@
-// Copyright 2016 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,83 +12,67 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! stderr logger definitions.
+use std::{
+    io::{Stderr, Write},
+    sync::Mutex,
+};
 
-use std::fmt::Arguments;
-use std::io::{Stderr, Write};
+use log::{Level, Log, Metadata, Record};
 
-use crate::utils::logger::{Logger, Severity};
+use crate::utils::logger::LogTimeFormatter;
 
-/// stderr logger structure.
+/// Stderr logger.
 pub struct StderrLogger {
-    level: Severity,
-    stderr: Stderr,
+    stderr: Mutex<Stderr>,
     pretty: bool,
 }
 
 impl StderrLogger {
-    /// Create a new stderr logger with log level set to INFO.
+    /// Create a new stderr logger.
     pub fn new(pretty: bool) -> Self {
         Self {
-            level: Severity::INFO,
-            stderr: std::io::stderr(),
+            stderr: Mutex::new(std::io::stderr()),
             pretty,
         }
     }
 }
 
-impl Clone for StderrLogger {
-    fn clone(&self) -> Self {
-        Self {
-            level: self.level,
-            stderr: std::io::stderr(),
-            pretty: self.pretty,
-        }
+impl Log for StderrLogger {
+    fn enabled(&self, _: &Metadata) -> bool {
+        true
     }
-}
 
-impl Logger for StderrLogger {
-    fn log(&mut self, file: &str, line: u32, s: Severity, msg: Arguments) {
-        let t = time::strftime("%F %T", &time::now()).unwrap();
+    fn log(&self, record: &Record) {
+        let file = record.file().unwrap_or("-");
+        let line = record.line().unwrap_or(0);
 
-        let severity = match s {
-            Severity::DEBUG => "DEBUG",
-            Severity::INFO => "INFO",
-            Severity::WARN => "WARNING",
-            Severity::ERROR => "ERROR",
+        let args = record.args();
+
+        let (level, color) = match record.level() {
+            Level::Trace => ("TRACE", "1;30"),
+            Level::Debug => ("DEBUG", "1;30"),
+            Level::Info => ("INFO", "0;37"),
+            Level::Warn => ("WARNING", "0;33"),
+            Level::Error => ("ERROR", "0;31"),
         };
 
-        let color = match s {
-            Severity::DEBUG => "1;30",
-            Severity::INFO => "0;37",
-            Severity::WARN => "0;33",
-            Severity::ERROR => "0;31",
-        };
+        let mut time_formatter = LogTimeFormatter::new();
 
-        if s >= self.level {
-            if self.pretty {
-                writeln!(
-                    &mut self.stderr,
-                    "\x1b[{}m{} {:<7} [{}:{}] {}\x1b[m",
-                    color, t, severity, file, line, msg
-                )
-                .unwrap();
-            } else {
-                writeln!(
-                    &mut self.stderr,
-                    "{} {:<7} [{}:{}] {}",
-                    t, severity, file, line, msg
-                )
-                .unwrap();
-            }
+        let t = time_formatter.format();
+
+        let mut stderr = self.stderr.lock().unwrap();
+
+        if self.pretty {
+            let _ = writeln!(
+                stderr,
+                "\x1b[{color}m{t} {level:<7} [{file}:{line}] {args}\x1b[m"
+            );
+        } else {
+            let _ = writeln!(stderr, "{t} {level:<7} [{file}:{line}] {args}");
         }
     }
 
-    fn set_level(&mut self, s: Severity) {
-        self.level = s;
-    }
-
-    fn get_level(&self) -> Severity {
-        self.level
+    fn flush(&self) {
+        let _ = self.stderr.lock().unwrap().flush();
     }
 }

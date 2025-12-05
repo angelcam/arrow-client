@@ -1,8 +1,0 @@
-language = "C"
-include_guard = "ARROW_CLIENT_H"
-
-[parse]
-parse_deps = false
-
-[parse.expand]
-all_features = true

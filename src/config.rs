@@ -1,4 +1,4 @@
-// Copyright 2017 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,48 +12,41 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fmt;
-use std::io;
-use std::process;
-use std::str;
+use std::{
+    fmt::{self, Display, Write},
+    io,
+    iter::FromIterator,
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    path::{Path, PathBuf},
+    process,
+    sync::Arc,
+};
 
-use std::collections::HashSet;
-use std::env::Args;
-use std::error::Error;
-use std::fmt::{Display, Formatter};
-use std::iter::FromIterator;
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::sync::Arc;
-
-use json::JsonValue;
-
-use openssl::ssl::{SslConnector, SslMethod, SslOptions, SslVerifyMode};
-
+use argh::FromArgs;
+use log::{LevelFilter, Log};
+use serde_lite::{Deserialize, Intermediate, Serialize};
+use tokio_native_tls::TlsConnector;
+use ttpkit_url::Url;
 use uuid::Uuid;
 
-use crate::net;
-use crate::utils;
-
-use crate::context::ConnectionState;
-use crate::net::tls::TlsConnector;
-use crate::net::url::Url;
-use crate::storage::{DefaultStorage, Storage};
-use crate::svc_table::{SharedServiceTable, SharedServiceTableRef};
-use crate::utils::logger::file::FileLogger;
-use crate::utils::logger::stderr::StderrLogger;
+use crate::{
+    context::ConnectionState,
+    error::Error,
+    storage::{DefaultStorage, Storage},
+    svc_table::{SharedServiceTable, SharedServiceTableRef},
+    utils::logger::{FileLogger, StderrLogger},
+};
 
 #[cfg(not(target_os = "windows"))]
-use crate::utils::logger::syslog::Syslog;
+use crate::utils::logger::Syslog;
 
-use crate::utils::logger::{BoxLogger, DummyLogger, Logger, Severity};
-use crate::utils::RuntimeError;
-
-pub use crate::net::raw::devices::EthernetDevice as NetworkInterface;
-pub use crate::net::raw::ether::{AddrParseError, MacAddr};
-pub use crate::svc_table::{Service, ServiceType};
-pub use crate::utils::json::{FromJson, ParseError, ToJson};
+pub use crate::{
+    net::raw::{
+        devices::EthernetDevice as NetworkInterface,
+        ether::{AddrParseError, MacAddr},
+    },
+    svc_table::{Service, ServiceType},
+};
 
 /*const EXIT_CODE_USAGE:         i32 = 1;
 const EXIT_CODE_NETWORK_ERROR: i32 = 2;
@@ -72,55 +65,32 @@ const STATE_FILE: &str = "/var/lib/arrow/state";
 
 /// A file containing RTSP paths tested on service discovery (one path per
 /// line).
+#[cfg(feature = "discovery")]
 const RTSP_PATHS_FILE: &str = "/etc/arrow/rtsp-paths";
 
 /// A file containing MJPEG paths tested on service discovery (one path per
 /// line).
+#[cfg(feature = "discovery")]
 const MJPEG_PATHS_FILE: &str = "/etc/arrow/mjpeg-paths";
 
 /// Default port number for connecting to an Arrow Service.
 const DEFAULT_ARROW_SERVICE_PORT: u16 = 8900;
 
-/// List of cipher that can be used for TLS connections to Arrow services.
-const SSL_CIPHER_LIST: &str = "HIGH:!aNULL:!kRSA:!PSK:!MD5:!RC4";
+/// Arrow Client ID.
+pub type ClientId = Uuid;
 
-/// Arrow configuration loading/parsing/saving error.
-#[derive(Debug, Clone)]
-pub struct ConfigError {
-    msg: String,
-}
-
-impl ConfigError {
-    /// Create a new error.
-    fn new<T>(msg: T) -> Self
-    where
-        T: ToString,
-    {
-        Self {
-            msg: msg.to_string(),
-        }
-    }
-}
-
-impl Error for ConfigError {}
-
-impl Display for ConfigError {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        f.write_str(&self.msg)
-    }
-}
+/// Arrow Client secret key.
+pub type ClientKey = [u8; 16];
 
 /// Builder for the Arrow client configuration.
 pub struct ConfigBuilder {
-    logger: Option<BoxLogger>,
     arrow_mac: Option<MacAddr>,
     services: Vec<Service>,
     flash_friendly: bool,
     diagnostic_mode: bool,
     gateway_mode: bool,
     discovery: bool,
-    discovery_whitelist: HashSet<String>,
-    verbose: bool,
+    discovery_whitelist: Vec<String>,
     device_category: Option<String>,
     device_type: Option<String>,
     device_vendor: Option<String>,
@@ -130,25 +100,17 @@ impl ConfigBuilder {
     /// Create a new configuration builder.
     fn new() -> Self {
         Self {
-            logger: None,
             arrow_mac: None,
             services: Vec::new(),
             flash_friendly: false,
             diagnostic_mode: false,
             gateway_mode: true,
             discovery: false,
-            discovery_whitelist: HashSet::new(),
-            verbose: false,
+            discovery_whitelist: Vec::new(),
             device_category: None,
             device_type: None,
             device_vendor: None,
         }
-    }
-
-    /// Set logger.
-    pub fn logger(&mut self, logger: BoxLogger) -> &mut Self {
-        self.logger = Some(logger);
-        self
     }
 
     /// Set MAC address. (The MAC address can be used as a client identifier in the pairing
@@ -212,13 +174,7 @@ impl ConfigBuilder {
     where
         I: IntoIterator<Item = String>,
     {
-        self.discovery_whitelist = HashSet::from_iter(whitelist);
-        self
-    }
-
-    /// Enable/disable verbose logging.
-    pub fn verbose(&mut self, enabled: bool) -> &mut Self {
-        self.verbose = enabled;
+        self.discovery_whitelist = Vec::from_iter(whitelist);
         self
     }
 
@@ -250,591 +206,85 @@ impl ConfigBuilder {
     }
 
     /// Build the configuration.
-    pub fn build<S, T>(
-        self,
-        mut storage: S,
-        arrow_service_address: T,
-    ) -> Result<Config, ConfigError>
+    pub fn build<S, T>(mut self, mut storage: S, arrow_service_address: T) -> Result<Config, Error>
     where
         S: 'static + Storage + Send,
         T: ToString,
     {
-        let mut logger = self
-            .logger
-            .unwrap_or_else(|| BoxLogger::new(DummyLogger::default()));
-
         let config = storage.load_configuration().map_err(|err| {
-            ConfigError::new(format!("unable to load client configuration: {}", err))
+            Error::from_static_msg_and_cause("unable to load client configuration", err)
         })?;
 
         let mac = self
             .arrow_mac
             .map(Ok)
             .unwrap_or_else(get_first_mac)
-            .map_err(|_| ConfigError::new("unable to get any network interface MAC address"))?;
+            .map_err(|_| {
+                Error::from_static_msg("unable to get any network interface MAC address")
+            })?;
 
-        let rtsp_paths = utils::result_or_log(
-            &mut logger,
-            Severity::WARN,
-            "unable to load RTSP paths",
-            storage.load_rtsp_paths(),
-        );
+        let tls_connector = create_tls_connector(&mut storage).map_err(|err| {
+            Error::from_static_msg_and_cause("unable to create TLS connector: {}", err)
+        })?;
 
-        let mjpeg_paths = utils::result_or_log(
-            &mut logger,
-            Severity::WARN,
-            "unable to load MJPEG paths",
-            storage.load_mjpeg_paths(),
-        );
+        let rtsp_paths = storage
+            .load_rtsp_paths()
+            .inspect_err(|err| warn!("unable to load RTSP paths ({err})"))
+            .unwrap_or_default();
+
+        let mjpeg_paths = storage
+            .load_mjpeg_paths()
+            .inspect_err(|err| warn!("unable to load MJPEG paths ({err})"))
+            .unwrap_or_default();
+
+        self.discovery_whitelist.sort_unstable();
+        self.discovery_whitelist.dedup();
 
         let mut config = Config {
             version: config.version,
-            uuid: config.uuid,
-            passwd: config.passwd,
+            uuid: config.uuid.into(),
+            passwd: config.passwd.into(),
             arrow_mac: mac,
             arrow_svc_addr: arrow_service_address.to_string(),
             diagnostic_mode: self.diagnostic_mode,
             gateway_mode: self.gateway_mode,
             discovery: self.discovery,
             discovery_whitelist: Arc::new(self.discovery_whitelist),
-            rtsp_paths: Arc::new(rtsp_paths.unwrap_or_default()),
-            mjpeg_paths: Arc::new(mjpeg_paths.unwrap_or_default()),
+            rtsp_paths: Arc::new(rtsp_paths),
+            mjpeg_paths: Arc::new(mjpeg_paths),
             default_svc_table: config.svc_table.clone(),
             svc_table: config.svc_table,
-            logger,
             storage: Box::new(storage),
+            tls_connector,
             flash_friendly: self.flash_friendly,
             device_category: self.device_category,
             device_type: self.device_type,
             device_vendor: self.device_vendor,
         };
 
-        if self.verbose {
-            config.logger.set_level(Severity::DEBUG);
-        }
-
         for svc in self.services {
             config.svc_table.add_static(svc.clone());
             config.default_svc_table.add_static(svc);
         }
 
-        config.save().map_err(ConfigError::new)?;
+        config.save().map_err(Error::from_other)?;
 
         Ok(config)
-    }
-}
-
-/// Type of the logger backend that should be used.
-enum LoggerType {
-    #[cfg(not(target_os = "windows"))]
-    Syslog,
-
-    Stderr,
-    StderrPretty,
-    FileLogger,
-}
-
-impl Default for LoggerType {
-    #[cfg(not(target_os = "windows"))]
-    fn default() -> Self {
-        Self::Syslog
-    }
-
-    #[cfg(target_os = "windows")]
-    fn default() -> Self {
-        Self::Stderr
-    }
-}
-
-/// Builder for application configuration.
-struct ConfigParser {
-    arrow_mac: Option<MacAddr>,
-    arrow_svc_addr: String,
-    ca_certificates: Vec<PathBuf>,
-    services: Vec<Service>,
-    logger_type: LoggerType,
-    config_file: PathBuf,
-    config_file_skel: PathBuf,
-    identity_file: Option<PathBuf>,
-    state_file: PathBuf,
-    rtsp_paths_file: PathBuf,
-    mjpeg_paths_file: PathBuf,
-    log_file: PathBuf,
-    flash_friendly: bool,
-    discovery: bool,
-    discovery_whitelist: Vec<String>,
-    verbose: bool,
-    diagnostic_mode: bool,
-    gateway_mode: bool,
-    log_file_size: usize,
-    log_file_rotations: usize,
-    lock_file: Option<PathBuf>,
-    device_category: Option<String>,
-    device_type: Option<String>,
-    device_vendor: Option<String>,
-}
-
-impl ConfigParser {
-    /// Create a new application configuration builder.
-    fn new() -> Self {
-        Self {
-            arrow_mac: None,
-            arrow_svc_addr: String::new(),
-            ca_certificates: Vec::new(),
-            services: Vec::new(),
-            logger_type: LoggerType::default(),
-            config_file: PathBuf::from(CONFIG_FILE),
-            config_file_skel: PathBuf::from(CONFIG_FILE_SKELETON),
-            identity_file: None,
-            state_file: PathBuf::from(STATE_FILE),
-            rtsp_paths_file: PathBuf::from(RTSP_PATHS_FILE),
-            mjpeg_paths_file: PathBuf::from(MJPEG_PATHS_FILE),
-            log_file: PathBuf::new(),
-            flash_friendly: false,
-            discovery: false,
-            discovery_whitelist: Vec::new(),
-            verbose: false,
-            diagnostic_mode: false,
-            gateway_mode: true,
-            log_file_size: 10 * 1024,
-            log_file_rotations: 1,
-            lock_file: None,
-            device_category: None,
-            device_type: None,
-            device_vendor: None,
-        }
-    }
-
-    /// Create a new logger.
-    fn create_logger(&self) -> Result<BoxLogger, ConfigError> {
-        let logger = match self.logger_type {
-            #[cfg(not(target_os = "windows"))]
-            LoggerType::Syslog => BoxLogger::new(Syslog::new()),
-
-            LoggerType::Stderr => BoxLogger::new(StderrLogger::new(false)),
-            LoggerType::StderrPretty => BoxLogger::new(StderrLogger::new(true)),
-            LoggerType::FileLogger => {
-                FileLogger::new(&self.log_file, self.log_file_size, self.log_file_rotations)
-                    .map(BoxLogger::new)
-                    .map_err(|_| {
-                        ConfigError::new(format!(
-                            "unable to open the given log file: \"{}\"",
-                            self.log_file.to_string_lossy()
-                        ))
-                    })?
-            }
-        };
-
-        Ok(logger)
-    }
-
-    /// Build application configuration.
-    fn build(self) -> Result<Config, ConfigError> {
-        // because of the lock file, we need to create the storage builder before creating the
-        // logger
-        let mut storage_builder =
-            DefaultStorage::builder(&self.config_file, self.lock_file.as_ref())
-                .map_err(ConfigError::new)?;
-
-        let logger = self.create_logger()?;
-
-        storage_builder
-            .logger(logger.clone())
-            .config_skeleton_file(Some(self.config_file_skel))
-            .connection_state_file(Some(self.state_file))
-            .identity_file(self.identity_file)
-            .rtsp_paths_file(Some(self.rtsp_paths_file))
-            .mjpeg_paths_file(Some(self.mjpeg_paths_file))
-            .ca_certificates(self.ca_certificates);
-
-        let storage = storage_builder.build();
-
-        let mut config_builder = Config::builder();
-
-        config_builder
-            .logger(logger)
-            .mac_address(self.arrow_mac)
-            .services(self.services)
-            .diagnostic_mode(self.diagnostic_mode)
-            .gateway_mode(self.gateway_mode)
-            .discovery(self.discovery)
-            .discovery_whitelist(self.discovery_whitelist)
-            .verbose(self.verbose);
-
-        if let Some(c) = self.device_category {
-            config_builder.device_category(c);
-        }
-
-        if let Some(t) = self.device_type {
-            config_builder.device_type(t);
-        }
-
-        if let Some(v) = self.device_vendor {
-            config_builder.device_vendor(v);
-        }
-
-        let config = config_builder.build(storage, self.arrow_svc_addr)?;
-
-        Ok(config)
-    }
-
-    /// Parse given command line arguments.
-    fn parse(mut self, mut args: Args) -> Result<Self, ConfigError> {
-        // skip the application name
-        args.next();
-
-        self.arrow_service_address(&mut args)?;
-
-        while let Some(ref arg) = args.next() {
-            match arg as &str {
-                "-c" => self.ca_certificates(&mut args)?,
-                "-d" => self.discovery()?,
-                "-D" => self.discovery_whitelist(&mut args)?,
-                "-i" => self.interface(&mut args)?,
-                "-r" => self.rtsp_service(&mut args)?,
-                "-m" => self.mjpeg_service(&mut args)?,
-                "-h" => self.http_service(&mut args)?,
-                "-t" => self.tcp_service(&mut args)?,
-                "-v" => self.verbose(),
-
-                "--flash-friendly" => self.flash_friendly(),
-                "--diagnostic-mode" => self.diagnostic_mode(),
-                "--no-gateway-mode" => self.no_gateway_mode(),
-                "--log-stderr" => self.log_stderr(),
-                "--log-stderr-pretty" => self.log_stderr_pretty(),
-                "--help" => usage(0),
-                "--version" => version(),
-
-                arg => {
-                    if arg.starts_with("--config-file=") {
-                        self.config_file(arg);
-                    } else if arg.starts_with("--config-file-skel=") {
-                        self.config_file_skel(arg);
-                    } else if arg.starts_with("--conn-state-file=") {
-                        self.conn_state_file(arg);
-                    } else if arg.starts_with("--identity-file=") {
-                        self.identity_file(arg);
-                    } else if arg.starts_with("--rtsp-paths=") {
-                        self.rtsp_paths(arg)?;
-                    } else if arg.starts_with("--mjpeg-paths=") {
-                        self.mjpeg_paths(arg)?;
-                    } else if arg.starts_with("--log-file=") {
-                        self.log_file(arg);
-                    } else if arg.starts_with("--log-file-size=") {
-                        self.log_file_size(arg)?;
-                    } else if arg.starts_with("--log-file-rotations=") {
-                        self.log_file_rotations(arg)?;
-                    } else if arg.starts_with("--lock-file=") {
-                        self.lock_file(arg);
-                    } else if arg.starts_with("--device-category=") {
-                        self.device_category(arg);
-                    } else if arg.starts_with("--device-type=") {
-                        self.device_type(arg);
-                    } else if arg.starts_with("--device-vendor=") {
-                        self.device_vendor(arg);
-                    } else {
-                        return Err(ConfigError::new(format!("unknown argument: \"{}\"", arg)));
-                    }
-                }
-            }
-        }
-
-        Ok(self)
-    }
-
-    /// Process the Arrow Service address argument.
-    fn arrow_service_address(&mut self, args: &mut Args) -> Result<(), ConfigError> {
-        let addr = args
-            .next()
-            .ok_or_else(|| ConfigError::new("missing Angelcam Arrow Service address"))?;
-
-        // add the default port number if the given address has no port
-        if addr.ends_with(']') || !addr.contains(':') {
-            self.arrow_svc_addr = format!("{}:{}", addr, DEFAULT_ARROW_SERVICE_PORT);
-        } else {
-            self.arrow_svc_addr = addr;
-        }
-
-        Ok(())
-    }
-
-    /// Process the CA certificate argument.
-    fn ca_certificates(&mut self, args: &mut Args) -> Result<(), ConfigError> {
-        let path = args
-            .next()
-            .ok_or_else(|| ConfigError::new("CA certificate path expected"))?;
-
-        self.ca_certificates.push(path.into());
-
-        Ok(())
-    }
-
-    /// Process the discovery argument.
-    fn discovery(&mut self) -> Result<(), ConfigError> {
-        if !cfg!(feature = "discovery") {
-            return Err(ConfigError::new("unknown argument: \"-d\""));
-        }
-
-        self.discovery = true;
-
-        Ok(())
-    }
-
-    /// Process the discovery argument.
-    fn discovery_whitelist(&mut self, args: &mut Args) -> Result<(), ConfigError> {
-        if !cfg!(feature = "discovery") {
-            return Err(ConfigError::new("unknown argument: \"-D\""));
-        }
-
-        let iface = args
-            .next()
-            .ok_or_else(|| ConfigError::new("network interface name expected"))?;
-
-        self.discovery_whitelist.push(iface);
-        self.discovery = true;
-
-        Ok(())
-    }
-
-    /// Process the interface argument.
-    fn interface(&mut self, args: &mut Args) -> Result<(), ConfigError> {
-        let iface = args
-            .next()
-            .ok_or_else(|| ConfigError::new("network interface name expected"))?;
-
-        self.arrow_mac = Some(get_mac(&iface)?);
-
-        Ok(())
-    }
-
-    /// Process the RTSP service argument.
-    fn rtsp_service(&mut self, args: &mut Args) -> Result<(), ConfigError> {
-        let url = args
-            .next()
-            .ok_or_else(|| ConfigError::new("RTSP URL expected"))?;
-
-        let service = parse_rtsp_url(&url)?;
-
-        self.services.push(service);
-
-        Ok(())
-    }
-
-    /// Process the MJPEG service argument.
-    fn mjpeg_service(&mut self, args: &mut Args) -> Result<(), ConfigError> {
-        let url = args
-            .next()
-            .ok_or_else(|| ConfigError::new("HTTP URL expected"))?;
-
-        let service = parse_mjpeg_url(&url)?;
-
-        self.services.push(service);
-
-        Ok(())
-    }
-
-    /// Process the HTTP service argument.
-    fn http_service(&mut self, args: &mut Args) -> Result<(), ConfigError> {
-        let addr = args
-            .next()
-            .ok_or_else(|| ConfigError::new("TCP socket address expected"))?;
-
-        let addr = net::utils::get_socket_address(addr.as_str())
-            .map_err(|_| ConfigError::new(format!("unable to resolve socket address: {}", addr)))?;
-
-        let mac = get_fake_mac(0xffff, &addr);
-
-        self.services.push(Service::http(mac, addr));
-
-        Ok(())
-    }
-
-    /// Process the TCP service argument.
-    fn tcp_service(&mut self, args: &mut Args) -> Result<(), ConfigError> {
-        let addr = args
-            .next()
-            .ok_or_else(|| ConfigError::new("TCP socket address expected"))?;
-
-        let addr = net::utils::get_socket_address(addr.as_str())
-            .map_err(|_| ConfigError::new(format!("unable to resolve socket address: {}", addr)))?;
-
-        let mac = get_fake_mac(0xffff, &addr);
-
-        self.services.push(Service::tcp(mac, addr));
-
-        Ok(())
-    }
-
-    /// Process the verbose argument.
-    fn verbose(&mut self) {
-        self.verbose = true;
-    }
-
-    /// Process the flash friendly argument.
-    fn flash_friendly(&mut self) {
-        self.flash_friendly = true;
-    }
-
-    /// Process the diagnostic mode argument.
-    fn diagnostic_mode(&mut self) {
-        self.diagnostic_mode = true;
-    }
-
-    /// Process the no-gateway mode argument.
-    fn no_gateway_mode(&mut self) {
-        self.gateway_mode = false;
-    }
-
-    /// Process the log-stderr argument.
-    fn log_stderr(&mut self) {
-        self.logger_type = LoggerType::Stderr;
-    }
-
-    /// Process the log-stderr-pretty argument.
-    fn log_stderr_pretty(&mut self) {
-        self.logger_type = LoggerType::StderrPretty;
-    }
-
-    /// Process the log-file argument.
-    fn log_file(&mut self, arg: &str) {
-        self.logger_type = LoggerType::FileLogger;
-
-        // skip "--log-file=" length
-        let log_file = &arg[11..];
-
-        self.log_file = log_file.into();
-    }
-
-    /// Process the log-file-size argument.
-    fn log_file_size(&mut self, arg: &str) -> Result<(), ConfigError> {
-        // skip "--log-file-size=" length
-        let size = &arg[16..];
-
-        self.log_file_size = size.parse().map_err(|_| {
-            ConfigError::new(format!("invalid value given for {}, number expeced", arg))
-        })?;
-
-        Ok(())
-    }
-
-    /// Process the log-file-rotations argument.
-    fn log_file_rotations(&mut self, arg: &str) -> Result<(), ConfigError> {
-        // skip "--log-file-rotations=" length
-        let rotations = &arg[21..];
-
-        self.log_file_rotations = rotations.parse().map_err(|_| {
-            ConfigError::new(format!("invalid value given for {}, number expeced", arg))
-        })?;
-
-        Ok(())
-    }
-
-    /// Process the config-file argument.
-    fn config_file(&mut self, arg: &str) {
-        // skip "--config-file=" length
-        self.config_file = PathBuf::from(&arg[14..])
-    }
-
-    /// Process the config-file-skel argument.
-    fn config_file_skel(&mut self, arg: &str) {
-        // skip "--config-file-skel=" length
-        self.config_file_skel = PathBuf::from(&arg[19..])
-    }
-
-    /// Process the identity-file argument.
-    fn identity_file(&mut self, arg: &str) {
-        // skip "--identity-file=" length
-        self.identity_file = Some(PathBuf::from(&arg[16..]))
-    }
-
-    /// Process the conn-state-file argument.
-    fn conn_state_file(&mut self, arg: &str) {
-        // skip "--conn-state-file=" length
-        self.state_file = PathBuf::from(&arg[18..])
-    }
-
-    /// Process the rtsp-paths argument.
-    fn rtsp_paths(&mut self, arg: &str) -> Result<(), ConfigError> {
-        if !cfg!(feature = "discovery") {
-            return Err(ConfigError::new("unknown argument: \"--rtsp-paths\""));
-        }
-
-        // skip "--rtsp-paths=" length
-        let rtsp_paths_file = &arg[13..];
-
-        self.rtsp_paths_file = rtsp_paths_file.into();
-
-        Ok(())
-    }
-
-    /// Process the mjpeg-paths argument.
-    fn mjpeg_paths(&mut self, arg: &str) -> Result<(), ConfigError> {
-        if !cfg!(feature = "discovery") {
-            return Err(ConfigError::new("unknown argument: \"--mjpeg-paths\""));
-        }
-
-        // skip "--mjpeg-paths=" length
-        let mjpeg_paths_file = &arg[14..];
-
-        self.mjpeg_paths_file = mjpeg_paths_file.into();
-
-        Ok(())
-    }
-
-    /// Process the lock-file argument.
-    fn lock_file(&mut self, arg: &str) {
-        // skip "--lock-file=" length
-        let lock_file = &arg[12..];
-
-        self.lock_file = Some(lock_file.into());
-    }
-
-    /// Process the device-category argument.
-    fn device_category(&mut self, arg: &str) {
-        // skip "--device-category=" length
-        self.device_category = Some(&arg[18..])
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-            .map(|v| v.to_string());
-    }
-
-    /// Process the device-type argument.
-    fn device_type(&mut self, arg: &str) {
-        // skip "--device-type=" length
-        self.device_type = Some(&arg[14..])
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-            .map(|v| v.to_string());
-    }
-
-    /// Process the device-vendor argument.
-    fn device_vendor(&mut self, arg: &str) {
-        // skip "--device-vendor=" length
-        self.device_vendor = Some(&arg[16..])
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-            .map(|v| v.to_string());
     }
 }
 
 /// Client identification that can be publicly available.
 #[doc(hidden)]
+#[derive(Serialize)]
 pub struct PublicIdentity {
-    uuid: Uuid,
-}
-
-impl ToJson for PublicIdentity {
-    fn to_json(&self) -> JsonValue {
-        object! {
-            "uuid" => format!("{}", self.uuid.as_hyphenated())
-        }
-    }
+    uuid: UuidSerializer,
 }
 
 /// Persistent part of application configuration.
+#[derive(Deserialize, Serialize)]
 pub struct PersistentConfig {
-    uuid: Uuid,
-    passwd: Uuid,
+    uuid: UuidSerializer,
+    passwd: UuidSerializer,
     version: usize,
     svc_table: SharedServiceTable,
 }
@@ -866,84 +316,31 @@ impl PersistentConfig {
 impl Default for PersistentConfig {
     fn default() -> Self {
         Self {
-            uuid: Uuid::new_v4(),
-            passwd: Uuid::new_v4(),
+            uuid: UuidSerializer::from(Uuid::new_v4()),
+            passwd: UuidSerializer::from(Uuid::new_v4()),
             version: 0,
             svc_table: SharedServiceTable::new(),
         }
     }
 }
 
-impl ToJson for PersistentConfig {
-    fn to_json(&self) -> JsonValue {
-        object! {
-            "uuid" => format!("{}", self.uuid.as_hyphenated()),
-            "passwd" => format!("{}", self.passwd.as_hyphenated()),
-            "version" => self.version,
-            "svc_table" => self.svc_table.to_json()
-        }
-    }
-}
-
-impl FromJson for PersistentConfig {
-    fn from_json(value: JsonValue) -> Result<Self, ParseError> {
-        let mut config = if let JsonValue::Object(cfg) = value {
-            cfg
-        } else {
-            return Err(ParseError::new("JSON object expected"));
-        };
-
-        let svc_table = config
-            .remove("svc_table")
-            .ok_or_else(|| ParseError::new("missing field \"svc_table\""))?;
-
-        let svc_table = SharedServiceTable::from_json(svc_table)
-            .map_err(|err| ParseError::new(format!("unable to parse service table: {}", err)))?;
-
-        let uuid = config
-            .get("uuid")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ParseError::new("missing field \"uuid\""))?;
-        let passwd = config
-            .get("passwd")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ParseError::new("missing field \"passwd\""))?;
-        let version = config
-            .get("version")
-            .and_then(|v| v.as_usize())
-            .ok_or_else(|| ParseError::new("missing field \"version\""))?;
-
-        let uuid = Uuid::from_str(uuid).map_err(|_| ParseError::new("unable to parse UUID"))?;
-        let passwd = Uuid::from_str(passwd).map_err(|_| ParseError::new("unable to parse UUID"))?;
-
-        let res = Self {
-            uuid,
-            passwd,
-            version,
-            svc_table,
-        };
-
-        Ok(res)
-    }
-}
-
 /// Arrow client configuration.
 pub struct Config {
     version: usize,
-    uuid: Uuid,
-    passwd: Uuid,
+    uuid: ClientId,
+    passwd: ClientKey,
     arrow_mac: MacAddr,
     arrow_svc_addr: String,
     diagnostic_mode: bool,
     gateway_mode: bool,
     discovery: bool,
-    discovery_whitelist: Arc<HashSet<String>>,
+    discovery_whitelist: Arc<Vec<String>>,
     rtsp_paths: Arc<Vec<String>>,
     mjpeg_paths: Arc<Vec<String>>,
     svc_table: SharedServiceTable,
     default_svc_table: SharedServiceTable,
-    logger: BoxLogger,
     storage: Box<dyn Storage + Send>,
+    tls_connector: TlsConnector,
     flash_friendly: bool,
     device_category: Option<String>,
     device_type: Option<String>,
@@ -956,10 +353,12 @@ impl Config {
         ConfigBuilder::new()
     }
 
-    /// Create a new application configuration. The methods reads all command line arguments and
-    /// loads the configuration file.
-    pub fn from_args(args: Args) -> Result<Self, ConfigError> {
-        ConfigParser::new().parse(args)?.build()
+    /// Create a new application configuration.
+    ///
+    /// The method reads all command line arguments and loads the configuration
+    /// file.
+    pub fn from_args() -> Result<Self, Error> {
+        argh::from_env::<ConfigParser>().into_config()
     }
 
     /// Get address of the remote Arrow Service.
@@ -968,15 +367,15 @@ impl Config {
         &self.arrow_svc_addr
     }
 
-    /// Get Arrow Client UUID.
+    /// Get Arrow Client ID.
     #[doc(hidden)]
-    pub fn get_uuid(&self) -> Uuid {
+    pub fn get_client_id(&self) -> ClientId {
         self.uuid
     }
 
-    /// Get Arrow Client password.
+    /// Get Arrow Client key.
     #[doc(hidden)]
-    pub fn get_password(&self) -> Uuid {
+    pub fn get_client_key(&self) -> ClientKey {
         self.passwd
     }
 
@@ -994,7 +393,7 @@ impl Config {
 
     /// Get network discovery whitelist.
     #[doc(hidden)]
-    pub fn get_discovery_whitelist(&self) -> Arc<HashSet<String>> {
+    pub fn get_discovery_whitelist(&self) -> Arc<Vec<String>> {
         self.discovery_whitelist.clone()
     }
 
@@ -1022,44 +421,10 @@ impl Config {
         self.mjpeg_paths.clone()
     }
 
-    /// Get logger.
+    /// Get TLS connector.
     #[doc(hidden)]
-    pub fn get_logger(&self) -> BoxLogger {
-        self.logger.clone()
-    }
-
-    /// Get TLS connector for a given server hostname.
-    #[doc(hidden)]
-    pub fn get_tls_connector(&mut self) -> Result<TlsConnector, RuntimeError> {
-        let mut builder = SslConnector::builder(SslMethod::tls()).map_err(|err| {
-            RuntimeError::new(format!(
-                "unable to create a TLS connection builder: {}",
-                err
-            ))
-        })?;
-
-        let mut options = builder.options();
-
-        options.insert(SslOptions::NO_COMPRESSION);
-        options.insert(SslOptions::NO_SSLV2);
-        options.insert(SslOptions::NO_SSLV3);
-        options.insert(SslOptions::NO_TLSV1);
-        options.insert(SslOptions::NO_TLSV1_1);
-
-        builder.set_options(options);
-
-        builder.set_verify(SslVerifyMode::PEER);
-        builder
-            .set_cipher_list(SSL_CIPHER_LIST)
-            .map_err(|err| RuntimeError::new(format!("unable to set TLS cipher list: {}", err)))?;
-
-        self.storage
-            .load_ca_certificates(&mut builder)
-            .map_err(RuntimeError::new)?;
-
-        let connector = TlsConnector::from(builder.build());
-
-        Ok(connector)
+    pub fn get_tls_connector(&self) -> TlsConnector {
+        self.tls_connector.clone()
     }
 
     /// Get read-only reference to the shared service table.
@@ -1076,7 +441,7 @@ impl Config {
         self.version += 1;
 
         if let Err(err) = self.save() {
-            log_warn!(&mut self.logger, "{}", err);
+            warn!("{err}");
         }
     }
 
@@ -1107,35 +472,28 @@ impl Config {
         self.version += 1;
 
         if let Err(err) = self.save() {
-            log_warn!(&mut self.logger, "{}", err);
+            warn!("{err}");
         }
     }
 
     /// Update connection state.
     #[doc(hidden)]
     pub fn update_connection_state(&mut self, state: ConnectionState) {
-        utils::result_or_log(
-            &mut self.logger,
-            Severity::DEBUG,
-            "unable to save current connection state",
-            self.storage.save_connection_state(state),
-        );
+        if let Err(err) = self.storage.save_connection_state(state) {
+            debug!("unable to save current connection state ({err})");
+        }
     }
 
     /// Get client extended info.
     #[doc(hidden)]
-    pub fn get_extended_info(&self) -> JsonValue {
-        object! {
-            "client": {
-                "id": "arrow-client",
-                "version": env!("CARGO_PKG_VERSION"),
-                "vendor": "angelcam",
+    pub fn get_extended_info(&self) -> ExtendedInfo {
+        ExtendedInfo {
+            client: ExtendedClientInfo::new(),
+            device: ExtendedDeviceInfo {
+                category: self.device_category.clone(),
+                device_type: self.device_type.clone(),
+                vendor: self.device_vendor.clone(),
             },
-            "device": {
-                "category": self.device_category.clone(),
-                "type": self.device_type.clone(),
-                "vendor": self.device_vendor.clone(),
-            }
         }
     }
 
@@ -1143,41 +501,320 @@ impl Config {
     fn save(&mut self) -> Result<(), io::Error> {
         let config = self.to_persistent_config();
 
-        self.storage.save_configuration(&config).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("unable to save client configuration: {}", err),
-            )
-        })
+        self.storage
+            .save_configuration(&config)
+            .map_err(|err| io::Error::other(format!("unable to save client configuration: {err}")))
     }
 
     /// Create persistent configuration.
     fn to_persistent_config(&self) -> PersistentConfig {
         PersistentConfig {
-            uuid: self.uuid,
-            passwd: self.passwd,
+            uuid: self.uuid.into(),
+            passwd: self.passwd.into(),
             version: self.version,
             svc_table: self.svc_table.clone(),
         }
     }
 }
 
+/// Arrow Client configuration parser.
+#[derive(FromArgs)]
+#[argh(help_triggers("-h", "--help"))]
+struct ConfigParser {
+    /// address of the Angelcam Arrow Service ("host[:port]" format expected)
+    #[argh(positional)]
+    arrow_service: String,
+
+    /// ethernet interface used for client identification (the first configured
+    /// network interface is used by default)
+    #[argh(option, short = 'i')]
+    default_interface: Option<String>,
+
+    /// path to a CA certificate for Arrow Service identity verification; in
+    /// case the path is a directory, it's scanned recursively for all files
+    /// with the following extensions: *.der, *.cer, *.crr, *.pem
+    #[argh(option, short = 'c')]
+    ca_certificate: Vec<PathBuf>,
+
+    /// automatic service discovery
+    #[cfg(feature = "discovery")]
+    #[argh(switch, short = 'd')]
+    discovery: bool,
+
+    /// limit automatic service discovery only to a given network interface
+    /// (implies -d; can be used multiple times)
+    #[cfg(feature = "discovery")]
+    #[argh(option, short = 'D')]
+    discovery_interface: Vec<String>,
+
+    /// add a given RTSP service URL
+    #[argh(option, short = 'R')]
+    rtsp_service: Vec<String>,
+
+    /// add a given MJPEG service URL
+    #[argh(option, short = 'M')]
+    mjpeg_service: Vec<String>,
+
+    /// add a given HTTP service ("host:port" format expected)
+    #[argh(option, short = 'H')]
+    http_service: Vec<String>,
+
+    /// add a given TCP service ("host:port" format expected)
+    #[argh(option, short = 'T')]
+    tcp_service: Vec<String>,
+
+    /// enable debug logs
+    #[argh(switch, short = 'v')]
+    verbose: bool,
+
+    /// alternative path to the client configuration file (default value:
+    /// /etc/arrow/config.json)
+    #[argh(option, default = "String::from(CONFIG_FILE)")]
+    config_file: String,
+
+    /// the client will use this file as a backup for its credentials (default
+    /// value: /etc/arrow/config-skel.json)
+    #[argh(option, default = "String::from(CONFIG_FILE_SKELETON)")]
+    config_file_skel: String,
+
+    /// a file that will contain only the public part of the client
+    /// identification (i.e. there will be no secret in the file)
+    #[argh(option)]
+    identity_file: Option<String>,
+
+    /// alternative path to a file for saving the client connection state
+    /// (default value: /var/lib/arrow/state)
+    #[argh(option, default = "String::from(STATE_FILE)")]
+    conn_state_file: String,
+
+    /// limit the number of writes into the configuration file (useful for
+    /// embedded device deployments with service discovery)
+    #[argh(switch)]
+    flash_friendly: bool,
+
+    /// start the client in the diagnostic mode (i.e. the client will try to
+    /// connect to a given Arrow Service and it will report success as its
+    /// exit code; note: the "access denied" response from the server is also
+    /// considered as a success)
+    #[argh(switch)]
+    diagnostic_mode: bool,
+
+    /// disable the gateway mode (i.e. the client won't be able to connect to
+    /// any external services except those available via localhost)
+    #[argh(switch)]
+    no_gateway_mode: bool,
+
+    /// send log messages into stderr instead of syslog
+    #[argh(switch)]
+    log_stderr: bool,
+
+    /// send log messages into stderr instead of syslog and use colored
+    /// messages
+    #[argh(switch)]
+    log_stderr_pretty: bool,
+
+    /// send log messages into a given file instead of syslog
+    #[argh(option)]
+    log_file: Option<String>,
+
+    /// size limit for the log file (in bytes; default value: 10240)
+    #[argh(option, default = "10240")]
+    log_file_size: usize,
+
+    /// number of backup files (i.e. rotations) for the log file (default
+    /// value: 1)
+    #[argh(option, default = "1")]
+    log_file_rotations: usize,
+
+    /// alternative path to a file containing a list of RTSP paths used for
+    /// service discovery (default value: /etc/arrow/rtsp-paths)
+    #[cfg(feature = "discovery")]
+    #[argh(option, default = "String::from(RTSP_PATHS_FILE)")]
+    rtsp_paths: String,
+
+    /// alternative path to a file containing a list of MJPEG paths used for
+    /// service discovery (default value: /etc/arrow/mjpeg-paths)
+    #[cfg(feature = "discovery")]
+    #[argh(option, default = "String::from(MJPEG_PATHS_FILE)")]
+    mjpeg_paths: String,
+
+    /// use a given lock file to make sure that there is only one instance of
+    /// the process running; the file will contain also the PID of the process
+    #[argh(option)]
+    lock_file: Option<String>,
+
+    /// type of a device running the client (informational)
+    #[argh(option)]
+    device_type: Option<String>,
+
+    /// device vendor (informational)
+    #[argh(option)]
+    device_vendor: Option<String>,
+
+    /// device category (informational)
+    #[argh(option)]
+    device_category: Option<String>,
+
+    /// print the version information and exit
+    #[argh(switch)]
+    version: bool,
+}
+
+impl ConfigParser {
+    /// Build the client configuration from the parsed command line arguments.
+    fn into_config(self) -> Result<Config, Error> {
+        if self.version {
+            version();
+        }
+
+        // because of the lock file, we need to create the storage builder
+        // before creating the logger
+        let mut storage_builder =
+            DefaultStorage::builder(&self.config_file, self.lock_file.as_ref())
+                .map_err(Error::from_other)?;
+
+        self.init_logger()?;
+
+        let arrow_mac = self.get_arrow_mac()?;
+        let services = self.collect_services()?;
+
+        storage_builder
+            .config_skeleton_file(Some(self.config_file_skel))
+            .connection_state_file(Some(self.conn_state_file))
+            .identity_file(self.identity_file)
+            .ca_certificates(self.ca_certificate);
+
+        #[cfg(feature = "discovery")]
+        storage_builder
+            .rtsp_paths_file(Some(self.rtsp_paths))
+            .mjpeg_paths_file(Some(self.mjpeg_paths));
+
+        let storage = storage_builder.build();
+
+        let mut config_builder = Config::builder();
+
+        config_builder
+            .mac_address(arrow_mac)
+            .services(services)
+            .diagnostic_mode(self.diagnostic_mode)
+            .gateway_mode(!self.no_gateway_mode)
+            .flash_friendly(self.flash_friendly);
+
+        #[cfg(feature = "discovery")]
+        config_builder
+            .discovery(self.discovery || !self.discovery_interface.is_empty())
+            .discovery_whitelist(self.discovery_interface);
+
+        if let Some(c) = self.device_category {
+            config_builder.device_category(c);
+        }
+
+        if let Some(t) = self.device_type {
+            config_builder.device_type(t);
+        }
+
+        if let Some(v) = self.device_vendor {
+            config_builder.device_vendor(v);
+        }
+
+        let mut arrow_service = self.arrow_service;
+
+        // add the default port number if the given address has no port
+        if arrow_service.ends_with(']') || !arrow_service.contains(':') {
+            let _ = write!(arrow_service, ":{}", DEFAULT_ARROW_SERVICE_PORT);
+        }
+
+        config_builder.build(storage, arrow_service)
+    }
+
+    /// Initialize the application logger.
+    fn init_logger(&self) -> Result<(), Error> {
+        let logger: Box<dyn Log> = if let Some(file) = self.log_file.as_deref() {
+            let logger = FileLogger::new(file, self.log_file_size, self.log_file_rotations)
+                .map_err(|err| {
+                    Error::from_msg_and_cause(
+                        format!("unable to open the given log file: \"{file}\""),
+                        err,
+                    )
+                })?;
+
+            Box::new(logger)
+        } else if self.log_stderr || self.log_stderr_pretty || cfg!(target_os = "windows") {
+            Box::new(StderrLogger::new(self.log_stderr_pretty))
+        } else {
+            Box::new(Syslog::new())
+        };
+
+        log::set_boxed_logger(logger).expect("unable to configure application logger");
+
+        let max_log_level = if self.verbose {
+            LevelFilter::Debug
+        } else {
+            LevelFilter::Info
+        };
+
+        log::set_max_level(max_log_level);
+
+        Ok(())
+    }
+
+    /// Collect services passed via command line arguments.
+    fn collect_services(&self) -> Result<Vec<Service>, Error> {
+        let mut services = Vec::new();
+
+        for url in &self.rtsp_service {
+            services.push(parse_rtsp_url(url)?);
+        }
+
+        for url in &self.mjpeg_service {
+            services.push(parse_mjpeg_url(url)?);
+        }
+
+        for addr in &self.http_service {
+            let addr = crate::net::utils::get_socket_address(addr.as_str()).map_err(|_| {
+                Error::from_msg(format!("unable to resolve socket address: {addr}"))
+            })?;
+
+            let mac = get_fake_mac(0xffff, &addr);
+
+            services.push(Service::http(mac, addr));
+        }
+
+        for addr in &self.tcp_service {
+            let addr = crate::net::utils::get_socket_address(addr.as_str()).map_err(|_| {
+                Error::from_msg(format!("unable to resolve socket address: {addr}"))
+            })?;
+
+            let mac = get_fake_mac(0xffff, &addr);
+
+            services.push(Service::tcp(mac, addr));
+        }
+
+        Ok(services)
+    }
+
+    /// Get the Arrow Client MAC address.
+    fn get_arrow_mac(&self) -> Result<Option<MacAddr>, Error> {
+        self.default_interface.as_deref().map(get_mac).transpose()
+    }
+}
+
 /// Get MAC address of the first configured ethernet device.
-fn get_first_mac() -> Result<MacAddr, ConfigError> {
+fn get_first_mac() -> Result<MacAddr, Error> {
     NetworkInterface::list()
         .into_iter()
         .next()
         .map(|dev| dev.mac())
-        .ok_or_else(|| ConfigError::new("there is no configured ethernet device"))
+        .ok_or_else(|| Error::from_static_msg("there is no configured ethernet device"))
 }
 
 /// Get MAC address of a given network interface.
-fn get_mac(iface: &str) -> Result<MacAddr, ConfigError> {
+fn get_mac(iface: &str) -> Result<MacAddr, Error> {
     NetworkInterface::list()
         .into_iter()
         .find(|dev| dev.name() == iface)
         .map(|dev| dev.mac())
-        .ok_or_else(|| ConfigError::new(format!("there is no such ethernet device: {}", iface)))
+        .ok_or_else(|| Error::from_msg(format!("there is no such ethernet device: {iface}")))
 }
 
 /// Generate a fake MAC address from a given prefix and socket address.
@@ -1185,9 +822,9 @@ fn get_mac(iface: &str) -> Result<MacAddr, ConfigError> {
 /// Note: It is used in case we do not know the device MAC address (e.g. for
 /// services passed as command line arguments).
 fn get_fake_mac(prefix: u16, addr: &SocketAddr) -> MacAddr {
-    match &addr {
-        SocketAddr::V4(ref addr) => get_fake_mac_from_ipv4(prefix, addr),
-        SocketAddr::V6(ref addr) => get_fake_mac_from_ipv6(prefix, addr),
+    match addr {
+        SocketAddr::V4(addr) => get_fake_mac_from_ipv4(prefix, addr),
+        SocketAddr::V6(addr) => get_fake_mac_from_ipv6(prefix, addr),
     }
 }
 
@@ -1216,24 +853,23 @@ fn get_fake_mac_from_ipv6(prefix: u16, addr: &SocketAddrV6) -> MacAddr {
 }
 
 /// Parse a given RTSP URL and return an RTSP service, a LockedRTSP service or an error.
-fn parse_rtsp_url(url: &str) -> Result<Service, ConfigError> {
+fn parse_rtsp_url(url: &str) -> Result<Service, Error> {
     let url = url
         .parse::<Url>()
-        .map_err(|_| ConfigError::new(format!("invalid RTSP URL given: {}", url)))?;
+        .map_err(|_| Error::from_msg(format!("invalid RTSP URL given: {url}")))?;
 
     let scheme = url.scheme();
 
     if !scheme.eq_ignore_ascii_case("rtsp") {
-        return Err(ConfigError::new(format!("invalid RTSP URL given: {}", url)));
+        return Err(Error::from_msg(format!("invalid RTSP URL given: {url}")));
     }
 
     let host = url.host();
     let port = url.port().unwrap_or(554);
 
-    let socket_addr = net::utils::get_socket_address((host, port)).map_err(|_| {
-        ConfigError::new(format!(
-            "unable to resolve RTSP service address: {}:{}",
-            host, port
+    let socket_addr = crate::net::utils::get_socket_address((host, port)).map_err(|_| {
+        Error::from_msg(format!(
+            "unable to resolve RTSP service address: {host}:{port}"
         ))
     })?;
 
@@ -1253,24 +889,23 @@ fn parse_rtsp_url(url: &str) -> Result<Service, ConfigError> {
 }
 
 /// Parse a given HTTP URL and return an MJPEG service, a LockedMJPEG service or an error.
-fn parse_mjpeg_url(url: &str) -> Result<Service, ConfigError> {
+fn parse_mjpeg_url(url: &str) -> Result<Service, Error> {
     let url = url
         .parse::<Url>()
-        .map_err(|_| ConfigError::new(format!("invalid HTTP URL given: {}", url)))?;
+        .map_err(|_| Error::from_msg(format!("invalid HTTP URL given: {url}")))?;
 
     let scheme = url.scheme();
 
     if !scheme.eq_ignore_ascii_case("http") {
-        return Err(ConfigError::new(format!("invalid HTTP URL given: {}", url)));
+        return Err(Error::from_msg(format!("invalid HTTP URL given: {url}")));
     }
 
     let host = url.host();
     let port = url.port().unwrap_or(80);
 
-    let socket_addr = net::utils::get_socket_address((host, port)).map_err(|_| {
-        ConfigError::new(format!(
-            "unable to resolve HTTP service address: {}:{}",
-            host, port
+    let socket_addr = crate::net::utils::get_socket_address((host, port)).map_err(|_| {
+        Error::from_msg(format!(
+            "unable to resolve HTTP service address: {host}:{port}"
         ))
     })?;
 
@@ -1292,76 +927,11 @@ fn parse_mjpeg_url(url: &str) -> Result<Service, ConfigError> {
 /// Print usage and exit the process with a given exit code.
 #[doc(hidden)]
 pub fn usage(exit_code: i32) -> ! {
-    println!("USAGE: {} arr-host[:arr-port] [OPTIONS]\n", app_name());
-    println!("    arr-host  Angelcam Arrow Service host");
-    println!("    arr-port  Angelcam Arrow Service port\n");
-    println!("OPTIONS:\n");
-    println!("    -i iface  ethernet interface used for client identification (the first");
-    println!("              configured network interface is used by default)");
-    println!("    -c path   path to a CA certificate for Arrow Service identity verification;");
-    println!("              in case the path is a directory, it's scanned recursively for");
-    println!("              all files with the following extensions:\n");
-    println!("              .der");
-    println!("              .cer");
-    println!("              .crr");
-    println!("              .pem\n");
-    if cfg!(feature = "discovery") {
-        println!("    -d        automatic service discovery");
-        println!("    -D iface  limit automatic service discovery only on a given network");
-        println!("              interface (implies -d; can be used multiple times)");
-    }
-    println!("    -r URL    add a given RTSP service");
-    println!("    -m URL    add a given MJPEG service");
-    println!("    -h addr   add a given HTTP service (addr must be in the \"host:port\"");
-    println!("              format)");
-    println!("    -t addr   add a given TCP service (addr must be in the \"host:port\"");
-    println!("              format)");
-    println!("    -v        enable debug logs\n");
-    println!("    --config-file=path  alternative path to the client configuration file");
-    println!("                        (default value: /etc/arrow/config.json)");
-    println!("    --config-file-skel=path  the client will use this file as a backup for");
-    println!("                        its credentials (default value:");
-    println!("                        /etc/arrow/config-skel.json)");
-    println!("    --identity-file=path  a file that will contain only the public part of");
-    println!("                        the client identification (i.e. there will be no");
-    println!("                        secret in the file)");
-    println!("    --conn-state-file=path  alternative path to the client connection state");
-    println!("                        file (default value: /var/lib/arrow/state)");
-    println!("    --flash-friendly    this will limit the number of writes into the");
-    println!("                        configuration file (useful for embedded device");
-    println!("                        deployments with service discovery)");
-    println!("    --diagnostic-mode   start the client in diagnostic mode (i.e. the client");
-    println!("                        will try to connect to a given Arrow Service and it");
-    println!("                        will report success as its exit code; note: the");
-    println!("                        \"access denied\" response from the server is also");
-    println!("                        considered as a success)");
-    println!("    --no-gateway-mode   disable the gateway mode (i.e. the client won't be able");
-    println!("                        to connect to any external services except those");
-    println!("                        available via localhost)");
-    println!("    --log-stderr        send log messages into stderr instead of syslog");
-    println!("    --log-stderr-pretty  send log messages into stderr instead of syslog and");
-    println!("                        use colored messages");
-    println!("    --log-file=path     send log messages into a given file instead of syslog");
-    println!("    --log-file-size=n   size limit for the log file (in bytes; default value:");
-    println!("                        10240)");
-    println!("    --log-file-rotations=n  number of backup files (i.e. rotations) for the");
-    println!("                        log file (default value: 1)");
-    if cfg!(feature = "discovery") {
-        println!("    --rtsp-paths=path   alternative path to a file containing list of RTSP");
-        println!("                        paths used on service discovery (default value:");
-        println!("                        /etc/arrow/rtsp-paths)");
-        println!("    --mjpeg-paths=path  alternative path to a file containing list of MJPEG");
-        println!("                        paths used on service discovery (default value:");
-        println!("                        /etc/arrow/mjpeg-paths)");
-    }
-    println!("    --lock-file=path    make sure that there is only one instance of the");
-    println!("                        process running; the file will contain also PID of the");
-    println!("                        process");
-    println!("    --device-type       type of a device running the client (informational)");
-    println!("    --device-vendor     device vendor (informational)");
-    println!("    --help              print this help and exit");
-    println!("    --version           print the version information and exit");
-    println!();
+    let cmd = app_name();
+
+    let err = ConfigParser::from_args(&[&cmd], &["--help"]).err().unwrap();
+
+    println!("{}", err.output);
 
     process::exit(exit_code);
 }
@@ -1391,4 +961,129 @@ fn app_name() -> String {
                 .map(|p| p.to_string())
         })
         .unwrap_or_else(|| String::from(env!("CARGO_PKG_NAME")))
+}
+
+/// UUID wrapper for serialization and deserialization.
+#[derive(Copy, Clone)]
+struct UuidSerializer {
+    inner: Uuid,
+}
+
+impl Deserialize for UuidSerializer {
+    fn deserialize(value: &Intermediate) -> Result<Self, serde_lite::Error> {
+        let inner = value
+            .as_str()
+            .map(|v| v.parse())
+            .and_then(Result::ok)
+            .ok_or_else(|| serde_lite::Error::invalid_value("UUID"))?;
+
+        let res = Self { inner };
+
+        Ok(res)
+    }
+}
+
+impl Serialize for UuidSerializer {
+    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
+        Ok(Intermediate::from(format!(
+            "{}",
+            self.inner.as_hyphenated()
+        )))
+    }
+}
+
+impl From<[u8; 16]> for UuidSerializer {
+    fn from(bytes: [u8; 16]) -> Self {
+        Self::from(Uuid::from_bytes(bytes))
+    }
+}
+
+impl From<Uuid> for UuidSerializer {
+    fn from(uuid: Uuid) -> Self {
+        Self { inner: uuid }
+    }
+}
+
+impl From<UuidSerializer> for [u8; 16] {
+    fn from(serializer: UuidSerializer) -> Self {
+        serializer.inner.into_bytes()
+    }
+}
+
+impl From<UuidSerializer> for Uuid {
+    fn from(serializer: UuidSerializer) -> Self {
+        serializer.inner
+    }
+}
+
+/// Extended client and device information.
+#[derive(Serialize)]
+pub struct ExtendedInfo {
+    client: ExtendedClientInfo,
+    device: ExtendedDeviceInfo,
+}
+
+impl Display for ExtendedInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = self
+            .serialize()
+            .ok()
+            .map(|val| serde_json::to_string(&val))
+            .and_then(Result::ok)
+            .expect("unable to serialize extended info");
+
+        f.write_str(&s)
+    }
+}
+
+/// Extended client information.
+#[derive(Serialize)]
+struct ExtendedClientInfo {
+    id: &'static str,
+    version: &'static str,
+    vendor: &'static str,
+}
+
+impl ExtendedClientInfo {
+    /// Create a new instance of extended client info.
+    const fn new() -> Self {
+        Self {
+            id: "arrow-client",
+            version: env!("CARGO_PKG_VERSION"),
+            vendor: "angelcam",
+        }
+    }
+}
+
+/// Extended device information.
+#[derive(Serialize)]
+struct ExtendedDeviceInfo {
+    category: Option<String>,
+
+    #[serde(rename = "type")]
+    device_type: Option<String>,
+
+    vendor: Option<String>,
+}
+
+/// Create a TLS connector with loaded CA certificates.
+fn create_tls_connector<S>(storage: &mut S) -> Result<TlsConnector, Error>
+where
+    S: Storage,
+{
+    use tokio_native_tls::native_tls::Protocol;
+
+    let mut builder = tokio_native_tls::native_tls::TlsConnector::builder();
+
+    builder
+        .min_protocol_version(Some(Protocol::Tlsv12))
+        .disable_built_in_roots(true);
+
+    storage
+        .load_ca_certificates(&mut builder)
+        .map_err(Error::from_other)?;
+
+    let connector = builder.build().map_err(Error::from_other)?;
+
+    Ok(connector.into())
 }

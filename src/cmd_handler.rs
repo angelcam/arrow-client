@@ -1,4 +1,4 @@
-// Copyright 2017 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,31 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[cfg(feature = "discovery")]
-use std::thread;
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+    thread::JoinHandle,
+    time::{Duration, Instant},
+};
 
-use std::pin::Pin;
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use futures::{
+    FutureExt, StreamExt,
+    channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
+};
 
-use futures::channel::mpsc;
-
-use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
-use futures::future::{Future, FutureExt};
-use futures::stream::StreamExt;
-use futures::task::{Context, Poll};
+use crate::context::ApplicationContext;
 
 #[cfg(feature = "discovery")]
 use crate::scanner::discovery;
-
-#[cfg(feature = "discovery")]
-use crate::utils;
-
-use crate::context::ApplicationContext;
-use crate::utils::logger::{BoxLogger, Logger};
-
-#[cfg(feature = "discovery")]
-use crate::utils::logger::Severity;
 
 /// Network scan period.
 const NETWORK_SCAN_PERIOD: Duration = Duration::from_secs(300);
@@ -84,7 +75,6 @@ impl CommandChannel {
 /// Command handler context.
 struct CommandHandlerContext {
     app_context: ApplicationContext,
-    logger: BoxLogger,
     cmd_sender: CommandSender,
     last_nw_scan: Option<Instant>,
     scanner: Option<JoinHandle<()>>,
@@ -93,11 +83,8 @@ struct CommandHandlerContext {
 impl CommandHandlerContext {
     /// Create a new command handler context.
     fn new(app_context: ApplicationContext, cmd_sender: CommandSender) -> Self {
-        let logger = app_context.get_logger();
-
         Self {
             app_context,
-            logger,
             cmd_sender,
             last_nw_scan: None,
             scanner: None,
@@ -148,7 +135,7 @@ impl CommandHandlerContext {
         let app_context = self.app_context.clone();
         let cmd_sender = self.cmd_sender.clone();
 
-        let handle = thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
             network_scanner_thread(app_context);
 
             cmd_sender.unbounded_send(Event::ScanCompleted).unwrap();
@@ -168,8 +155,10 @@ impl CommandHandlerContext {
     /// Cleanup the scanner context.
     fn scan_completed(&mut self) {
         if let Some(handle) = self.scanner.take() {
-            if handle.join().is_err() {
-                log_warn!(self.logger, "network scanner thread panicked");
+            let res = handle.join();
+
+            if res.is_err() {
+                warn!("network scanner thread panicked");
             }
         }
 
@@ -221,26 +210,18 @@ pub fn new(app_context: ApplicationContext) -> (CommandChannel, CommandHandler) 
 #[cfg(feature = "discovery")]
 /// Run device discovery and update the service table.
 fn network_scanner_thread(mut app_context: ApplicationContext) {
-    let mut logger = app_context.get_logger();
-
-    let slogger = logger.clone();
-
     let discovery_whitelist = app_context.get_discovery_whitelist();
     let rtsp_paths = app_context.get_rtsp_paths();
     let mjpeg_paths = app_context.get_mjpeg_paths();
 
     app_context.set_scanning(true);
 
-    log_info!(logger, "looking for local services...");
+    info!("looking for local services...");
 
-    let result = utils::result_or_log(
-        &mut logger,
-        Severity::WARN,
-        "network scanner error",
-        discovery::scan_network(slogger, discovery_whitelist, rtsp_paths, mjpeg_paths),
-    );
+    let result = discovery::scan_network(discovery_whitelist, rtsp_paths, mjpeg_paths)
+        .inspect_err(|err| warn!("network scanner error ({err})"));
 
-    if let Some(result) = result {
+    if let Ok(result) = result {
         let services = result.services().cloned().collect::<Vec<_>>();
 
         let count = services.len();
@@ -248,8 +229,7 @@ fn network_scanner_thread(mut app_context: ApplicationContext) {
         app_context.update_service_table(services);
         app_context.set_scan_result(result);
 
-        log_info!(
-            logger,
+        info!(
             "{} services found, current service table: {}",
             count,
             app_context.get_service_table()

@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,22 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fmt;
-use std::io;
-use std::mem;
-use std::result;
+use std::{
+    any::Any,
+    fmt::{self, Display, Formatter},
+    io::{self, Write},
+};
 
-use std::error::Error;
-use std::fmt::{Display, Formatter};
-use std::io::Write;
-
-use crate::utils;
-
-use crate::net::raw::arp::ArpPacket;
-use crate::net::raw::ether::MacAddr;
-use crate::net::raw::ip::Ipv4Packet;
-use crate::net::raw::utils::Serialize;
-use crate::utils::AsAny;
+use crate::{
+    net::raw::{arp::ArpPacket, ether::MacAddr, ip::Ipv4Packet, utils::Serialize},
+    utils::AsBytes,
+};
 
 /// Packet parser error.
 #[derive(Debug, Clone)]
@@ -47,16 +41,16 @@ impl PacketParseError {
     }
 }
 
-impl Error for PacketParseError {}
+impl std::error::Error for PacketParseError {}
 
 impl Display for PacketParseError {
-    fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.write_str(&self.msg)
     }
 }
 
 /// Type alias for parser results.
-pub type Result<T> = result::Result<T, PacketParseError>;
+pub type Result<T> = std::result::Result<T, PacketParseError>;
 
 pub const ETYPE_ARP: u16 = 0x0806;
 pub const ETYPE_IPV4: u16 = 0x0800;
@@ -95,7 +89,7 @@ impl EtherPacketHeader {
 
     /// Read header from a given raw representation.
     fn parse(data: &[u8]) -> Self {
-        assert_eq!(data.len(), mem::size_of::<RawEtherPacketHeader>());
+        assert_eq!(data.len(), std::mem::size_of::<RawEtherPacketHeader>());
 
         let ptr = data.as_ptr();
         let ptr = ptr as *const RawEtherPacketHeader;
@@ -112,12 +106,15 @@ impl EtherPacketHeader {
 
 impl Serialize for EtherPacketHeader {
     fn serialize(&self, w: &mut dyn Write) -> io::Result<()> {
-        w.write_all(utils::as_bytes(&self.raw_header()))
+        let header = self.raw_header();
+
+        w.write_all(header.as_bytes())
     }
 }
 
 /// Packed representation of the Ethernet packet header.
-#[repr(packed)]
+#[repr(C, packed)]
+#[derive(Copy, Clone)]
 struct RawEtherPacketHeader {
     dst: [u8; 6],
     src: [u8; 6],
@@ -156,7 +153,7 @@ impl From<u16> for EtherPacketType {
 }
 
 /// Common trait for ethernet packet body implementations.
-pub trait EtherPacketBody: AsAny + Send + Serialize {}
+pub trait EtherPacketBody: Any + Send + Serialize {}
 
 impl EtherPacketBody for Box<[u8]> {}
 
@@ -193,7 +190,7 @@ impl EtherPacket {
 
     /// Parse a given ethernet packet.
     pub fn parse(data: &[u8]) -> Result<Self> {
-        let hsize = mem::size_of::<RawEtherPacketHeader>();
+        let hsize = std::mem::size_of::<RawEtherPacketHeader>();
 
         if data.len() < hsize {
             Err(PacketParseError::new(
@@ -224,7 +221,7 @@ impl EtherPacket {
     where
         B: 'static + EtherPacketBody,
     {
-        self.body.as_ref().as_any().downcast_ref()
+        <dyn Any>::downcast_ref(self.body.as_ref())
     }
 }
 

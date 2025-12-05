@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,13 +15,11 @@
 #[cfg(feature = "discovery")]
 pub mod packet;
 
-use std::fmt;
-use std::result;
-
-use std::error::Error;
-use std::fmt::{Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::str::FromStr;
+use std::{
+    fmt::{self, Display, Formatter},
+    hash::{Hash, Hasher},
+    str::FromStr,
+};
 
 /// MacAddr parse error.
 #[derive(Debug, Clone)]
@@ -41,10 +39,10 @@ impl AddrParseError {
     }
 }
 
-impl Error for AddrParseError {}
+impl std::error::Error for AddrParseError {}
 
 impl Display for AddrParseError {
-    fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.write_str(&self.msg)
     }
 }
@@ -56,13 +54,15 @@ pub struct MacAddr {
 }
 
 impl MacAddr {
+    pub const ZERO: Self = Self::zero();
+
     /// Create a new MAC address with all octets set to zero.
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         Self { bytes: [0; 6] }
     }
 
     /// Create a new MAC address.
-    pub fn new(e0: u8, e1: u8, e2: u8, e3: u8, e4: u8, e5: u8) -> Self {
+    pub const fn new(e0: u8, e1: u8, e2: u8, e3: u8, e4: u8, e5: u8) -> Self {
         Self {
             bytes: [e0, e1, e2, e3, e4, e5],
         }
@@ -103,7 +103,7 @@ impl Hash for MacAddr {
 }
 
 impl Display for MacAddr {
-    fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.write_fmt(format_args!(
             "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
             self.bytes[0],
@@ -116,10 +116,22 @@ impl Display for MacAddr {
     }
 }
 
+impl From<[u8; 6]> for MacAddr {
+    fn from(bytes: [u8; 6]) -> Self {
+        Self { bytes }
+    }
+}
+
+impl From<MacAddr> for [u8; 6] {
+    fn from(addr: MacAddr) -> Self {
+        addr.bytes
+    }
+}
+
 impl FromStr for MacAddr {
     type Err = AddrParseError;
 
-    fn from_str(s: &str) -> result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let octets = s
             .split(':')
             .map(|x| {

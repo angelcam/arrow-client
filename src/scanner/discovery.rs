@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,35 +13,35 @@
 // limitations under the License.
 
 //! Network scanner for RTSP streams.
-use std::fmt;
-use std::io;
-use std::result;
 
-use std::collections::hash_map::RandomState;
-use std::collections::{HashMap, HashSet};
-use std::error::Error;
-use std::fmt::{Display, Formatter};
-use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    sync::Arc,
+    time::Duration,
+};
 
-use futures::{Future, FutureExt};
+use futures::FutureExt;
 
-use crate::net::raw::pcap;
-
-use crate::net::http::Request as HttpRequest;
-use crate::net::http::Response as HttpResponse;
-use crate::net::raw::arp::scanner::Ipv4ArpScanner;
-use crate::net::raw::devices::EthernetDevice;
-use crate::net::raw::ether::MacAddr;
-use crate::net::raw::icmp::scanner::IcmpScanner;
-use crate::net::raw::tcp::scanner::{PortCollection, TcpPortScanner};
-use crate::net::rtsp::sdp::{FromAttribute, MediaType, RTPMap, SessionDescription};
-use crate::net::rtsp::Request as RtspRequest;
-use crate::net::rtsp::Response as RtspResponse;
-use crate::scanner::result::{ScanResult, HR_FLAG_ARP, HR_FLAG_ICMP};
-use crate::svc_table::{Service, ServiceType};
-use crate::utils::logger::{BoxLogger, Logger};
+use crate::{
+    error::Error,
+    net::{
+        http::{Request as HttpRequest, Response as HttpResponse},
+        raw::{
+            arp::scanner::Ipv4ArpScanner,
+            devices::EthernetDevice,
+            ether::MacAddr,
+            icmp::scanner::IcmpScanner,
+            tcp::scanner::{PortCollection, TcpPortScanner},
+        },
+        rtsp::{
+            Request as RtspRequest, Response as RtspResponse,
+            sdp::{FromAttribute, MediaType, RTPMap, SessionDescription},
+        },
+    },
+    scanner::result::{HostRecord, ScanResult},
+    svc_table::{Service, ServiceType},
+};
 
 /// RTSP port candidates.
 static RTSP_PORT_CANDIDATES: &[u16] = &[554, 88, 81, 555, 7447, 8554, 7070, 10554, 80, 6667];
@@ -49,52 +49,13 @@ static RTSP_PORT_CANDIDATES: &[u16] = &[554, 88, 81, 555, 7447, 8554, 7070, 1055
 /// HTTP port candidates.
 static HTTP_PORT_CANDIDATES: &[u16] = &[80, 81, 8080, 8081, 8090];
 
-/// Discovery error.
-#[derive(Debug, Clone)]
-pub struct DiscoveryError {
-    msg: String,
-}
-
-impl DiscoveryError {
-    /// Create a new error.
-    pub fn new<T>(msg: T) -> Self
-    where
-        T: ToString,
-    {
-        Self {
-            msg: msg.to_string(),
-        }
-    }
-}
-
-impl Error for DiscoveryError {}
-
-impl Display for DiscoveryError {
-    fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
-        f.write_str(&self.msg)
-    }
-}
-
-impl From<pcap::PcapError> for DiscoveryError {
-    fn from(err: pcap::PcapError) -> Self {
-        Self::new(format!("pcap error: {}", err))
-    }
-}
-
-impl From<io::Error> for DiscoveryError {
-    fn from(err: io::Error) -> Self {
-        Self::new(format!("IO error: {}", err))
-    }
-}
-
 /// Discovery result type alias.
-pub type Result<T> = result::Result<T, DiscoveryError>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// Scan all local networks for RTSP and MJPEG streams and associated HTTP
 /// services.
 pub fn scan_network(
-    logger: BoxLogger,
-    discovery_whitelist: Arc<HashSet<String, RandomState>>,
+    discovery_whitelist: Arc<Vec<String>>,
     rtsp_paths: Arc<Vec<String>>,
     mjpeg_paths: Arc<Vec<String>>,
 ) -> Result<ScanResult> {
@@ -102,9 +63,9 @@ pub fn scan_network(
         .enable_io()
         .enable_time()
         .build()
-        .map_err(|err| DiscoveryError::new(format!("Async IO error: {}", err)))?;
+        .map_err(|err| Error::from_static_msg_and_cause("Async IO error", err))?;
 
-    let context = Context::new(logger, discovery_whitelist, rtsp_paths, mjpeg_paths);
+    let context = Context::new(discovery_whitelist, rtsp_paths, mjpeg_paths);
 
     let rtsp_port_priorities = context.get_rtsp_port_priorities();
     let http_port_priorities = context.get_http_port_priorities();
@@ -146,13 +107,12 @@ pub fn scan_network(
 
 /// Internal data for the network scanner context.
 struct ContextData {
-    logger: BoxLogger,
     port_candidates: HashSet<u16>,
     rtsp_port_candidates: HashSet<u16>,
     http_port_candidates: HashSet<u16>,
     rtsp_port_priorities: HashMap<u16, usize>,
     http_port_priorities: HashMap<u16, usize>,
-    discovery_whitelist: Arc<HashSet<String>>,
+    discovery_whitelist: Arc<Vec<String>>,
     rtsp_paths: Arc<Vec<String>>,
     mjpeg_paths: Arc<Vec<String>>,
     request_timeout: Duration,
@@ -161,8 +121,7 @@ struct ContextData {
 impl ContextData {
     /// Create new context data for the network scanner context.
     fn new(
-        logger: BoxLogger,
-        discovery_whitelist: Arc<HashSet<String>>,
+        discovery_whitelist: Arc<Vec<String>>,
         rtsp_paths: Arc<Vec<String>>,
         mjpeg_paths: Arc<Vec<String>>,
     ) -> Self {
@@ -180,7 +139,6 @@ impl ContextData {
         let http_port_priorities = get_port_priorities(HTTP_PORT_CANDIDATES);
 
         Self {
-            logger,
             port_candidates,
             rtsp_port_candidates,
             http_port_candidates,
@@ -218,24 +176,17 @@ struct Context {
 impl Context {
     /// Create a new network scanner context.
     fn new(
-        logger: BoxLogger,
-        discovery_whitelist: Arc<HashSet<String>>,
+        discovery_whitelist: Arc<Vec<String>>,
         rtsp_paths: Arc<Vec<String>>,
         mjpeg_paths: Arc<Vec<String>>,
     ) -> Self {
         Self {
             data: Arc::new(ContextData::new(
-                logger,
                 discovery_whitelist,
                 rtsp_paths,
                 mjpeg_paths,
             )),
         }
-    }
-
-    /// Get logger.
-    fn get_logger(&self) -> BoxLogger {
-        self.data.logger.clone()
     }
 
     /// Get request timeout.
@@ -269,7 +220,7 @@ impl Context {
     }
 
     /// Get discovery whitelist.
-    fn get_discovery_whitelist(&self) -> Arc<HashSet<String>> {
+    fn get_discovery_whitelist(&self) -> Arc<Vec<String>> {
         self.data.discovery_whitelist.clone()
     }
 
@@ -289,23 +240,22 @@ impl Context {
 fn find_open_ports(scanner: Context) -> ScanResult {
     let discovery_whitelist = scanner.get_discovery_whitelist();
 
-    let mut logger = scanner.get_logger();
-
     let mut report = ScanResult::new();
 
     let devices = EthernetDevice::list();
 
     for dev in devices {
-        if discovery_whitelist.is_empty() || discovery_whitelist.contains(dev.name()) {
+        let name = dev.name();
+
+        let is_whitelisted = discovery_whitelist
+            .binary_search_by_key(&name, String::as_str)
+            .is_ok();
+
+        if is_whitelisted || discovery_whitelist.is_empty() {
             let res = find_open_ports_in_network(scanner.clone(), &dev);
 
             if let Err(err) = res {
-                log_warn!(
-                    &mut logger,
-                    "unable to find open ports in local network on interface {}: {}",
-                    dev.name(),
-                    err
-                );
+                warn!("unable to find open ports in local network on interface {name}: {err}");
             } else if let Ok(res) = res {
                 report.merge(res);
             }
@@ -317,28 +267,24 @@ fn find_open_ports(scanner: Context) -> ScanResult {
 
 /// Find open ports on all available hosts within a given network.
 fn find_open_ports_in_network(context: Context, device: &EthernetDevice) -> Result<ScanResult> {
-    let mut logger = context.get_logger();
-
     let mut report = ScanResult::new();
 
-    log_debug!(
-        &mut logger,
+    debug!(
         "running ARP scan in local network on interface {}",
         device.name()
     );
 
     for (mac, ip) in Ipv4ArpScanner::scan_device(device)? {
-        report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ARP);
+        report.add_host(mac, IpAddr::V4(ip), HostRecord::FLAG_ARP);
     }
 
-    log_debug!(
-        &mut logger,
+    debug!(
         "running ICMP echo scan in local network on interface {}",
         device.name()
     );
 
     for (mac, ip) in IcmpScanner::scan_device(device)? {
-        report.add_host(mac, IpAddr::V4(ip), HR_FLAG_ICMP);
+        report.add_host(mac, IpAddr::V4(ip), HostRecord::FLAG_ICMP);
     }
 
     let open_ports;
@@ -365,10 +311,7 @@ fn find_open_ports_on_hosts<I>(
 where
     I: IntoIterator<Item = (MacAddr, IpAddr)>,
 {
-    let mut logger = context.get_logger();
-
-    log_debug!(
-        &mut logger,
+    debug!(
         "running TCP port scan in local network on interface {}",
         device.name()
     );
@@ -505,11 +448,11 @@ async fn is_http_service(context: Context, addr: SocketAddr) -> bool {
 /// Get HTTP response for a given path from a given HTTP server.
 async fn get_http_response(context: Context, addr: SocketAddr, path: &str) -> Result<HttpResponse> {
     HttpRequest::get_header(&format!("http://{}{}", addr, path))
-        .map_err(|err| DiscoveryError::new(format!("HTTP client error: {}", err)))?
+        .map_err(|err| Error::from_static_msg_and_cause("HTTP client error", err))?
         .set_request_timeout(Some(context.get_request_timeout()))
         .send()
         .await
-        .map_err(|err| DiscoveryError::new(format!("HTTP client error: {}", err)))
+        .map_err(|err| Error::from_static_msg_and_cause("HTTP client error", err))
 }
 
 /// Find all RTSP services.
@@ -517,9 +460,7 @@ async fn find_rtsp_services<I>(context: Context, open_ports: I) -> Vec<(MacAddr,
 where
     I: IntoIterator<Item = (MacAddr, SocketAddr)>,
 {
-    let mut logger = context.get_logger();
-
-    log_debug!(&mut logger, "looking for RTSP services");
+    debug!("looking for RTSP services");
 
     let filtered = filter_services(context, open_ports, |context, saddr| async move {
         if context.is_rtsp_port_candidate(saddr.port()) {
@@ -537,9 +478,7 @@ async fn find_http_services<I>(context: Context, open_ports: I) -> Vec<(MacAddr,
 where
     I: IntoIterator<Item = (MacAddr, SocketAddr)>,
 {
-    let mut logger = context.get_logger();
-
-    log_debug!(&mut logger, "looking for HTTP services");
+    debug!("looking for HTTP services");
 
     let filtered = filter_services(context, open_ports, |context, saddr| async move {
         if context.is_http_port_candidate(saddr.port()) {
@@ -572,11 +511,7 @@ where
         .into_iter()
         .filter_map(
             |(mac, saddr, res)| {
-                if res {
-                    Some((mac, saddr))
-                } else {
-                    None
-                }
+                if res { Some((mac, saddr)) } else { None }
             },
         )
         .collect()
@@ -625,9 +560,7 @@ async fn find_rtsp_streams<I>(context: Context, rtsp_services: I) -> Vec<Service
 where
     I: IntoIterator<Item = (MacAddr, SocketAddr)>,
 {
-    let mut logger = context.get_logger();
-
-    log_debug!(&mut logger, "looking for RTSP streams");
+    debug!("looking for RTSP streams");
 
     let futures = rtsp_services
         .into_iter()
@@ -717,9 +650,7 @@ async fn find_mjpeg_streams<I>(context: Context, mjpeg_services: I) -> Vec<Servi
 where
     I: IntoIterator<Item = (MacAddr, SocketAddr)>,
 {
-    let mut logger = context.get_logger();
-
-    log_debug!(&mut logger, "looking for MJPEG streams");
+    debug!("looking for MJPEG streams");
 
     let futures = mjpeg_services
         .into_iter()

@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,200 +12,69 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Logger definitions.
-
-#[macro_export]
-macro_rules! log {
-    ($logger:expr, $severity:expr, $( $arg:tt )*) => {
-        $logger.log(file!(), line!(), $severity, format_args!($($arg)*))
-    };
-}
-
-#[macro_export]
-macro_rules! log_debug {
-    ($logger:expr, $( $arg:tt )*) => {
-        $logger.debug(file!(), line!(), format_args!($($arg)*))
-    };
-}
-
-#[macro_export]
-macro_rules! log_info {
-    ($logger:expr, $( $arg:tt )*) => {
-        $logger.info(file!(), line!(), format_args!($($arg)*))
-    };
-}
-
-#[macro_export]
-macro_rules! log_warn {
-    ($logger:expr, $( $arg:tt )*) => {
-        $logger.warn(file!(), line!(), format_args!($($arg)*))
-    };
-}
-
-pub mod file;
-pub mod stderr;
+mod file;
+mod stderr;
 
 #[cfg(not(target_os = "windows"))]
-pub mod syslog;
+mod syslog;
 
-use std::fmt::Arguments;
+use std::mem::MaybeUninit;
 
-/// Log message severity.
-#[allow(clippy::upper_case_acronyms)]
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-pub enum Severity {
-    DEBUG = 0,
-    INFO = 1,
-    WARN = 2,
-    ERROR = 3,
+pub use self::{file::FileLogger, stderr::StderrLogger};
+
+#[cfg(not(target_os = "windows"))]
+pub use self::syslog::Syslog;
+
+/// Formatter for log timestamps.
+struct LogTimeFormatter {
+    buf: MaybeUninit<[u8; Self::BUF_SIZE]>,
 }
 
-const DEBUG: Severity = Severity::DEBUG;
-const INFO: Severity = Severity::INFO;
-const WARN: Severity = Severity::WARN;
-const ERROR: Severity = Severity::ERROR;
+impl LogTimeFormatter {
+    const BUF_SIZE: usize = 32;
 
-/// Common trait for application loggers.
-pub trait Logger: Send {
-    /// Log a given message with a given severity.
-    fn log(&mut self, file: &str, line: u32, s: Severity, msg: Arguments);
-
-    /// Set minimum log level.
-    ///
-    /// Messages with lover level will be discarded.
-    fn set_level(&mut self, s: Severity);
-
-    /// Get minimum log level.
-    fn get_level(&self) -> Severity;
-
-    /// Log a given debug message.
-    fn debug(&mut self, file: &str, line: u32, msg: Arguments) {
-        self.log(file, line, DEBUG, msg)
-    }
-
-    /// Log a given info message.
-    fn info(&mut self, file: &str, line: u32, msg: Arguments) {
-        self.log(file, line, INFO, msg)
-    }
-
-    /// Log a given warning message.
-    fn warn(&mut self, file: &str, line: u32, msg: Arguments) {
-        self.log(file, line, WARN, msg)
-    }
-
-    /// Log a given error message.
-    fn error(&mut self, file: &str, line: u32, msg: Arguments) {
-        self.log(file, line, ERROR, msg)
-    }
-}
-
-/// Helper trait for implementing Clone to the BoxLogger.
-pub trait CloneableLogger: Logger {
-    /// Clone as trait object.
-    fn clone(&self) -> Box<dyn CloneableLogger + Send + Sync>;
-}
-
-impl<T> CloneableLogger for T
-where
-    T: 'static + Logger + Clone + Send + Sync,
-{
-    fn clone(&self) -> Box<dyn CloneableLogger + Send + Sync> {
-        Box::new(<Self as Clone>::clone(self))
-    }
-}
-
-/// Abstraction from a concrete logger type.
-pub struct BoxLogger {
-    logger: Box<dyn CloneableLogger + Send + Sync>,
-}
-
-impl BoxLogger {
-    /// Create a new boxed logger.
-    pub fn new<L: 'static + CloneableLogger + Send + Sync>(logger: L) -> Self {
+    /// Create a new log time formatter.
+    fn new() -> Self {
         Self {
-            logger: Box::new(logger),
-        }
-    }
-}
-
-impl Clone for BoxLogger {
-    fn clone(&self) -> Self {
-        let logger = self.logger.as_ref().clone();
-
-        Self { logger }
-    }
-}
-
-impl Logger for BoxLogger {
-    fn log(&mut self, file: &str, line: u32, s: Severity, msg: Arguments) {
-        self.logger.log(file, line, s, msg)
-    }
-
-    fn set_level(&mut self, s: Severity) {
-        self.logger.set_level(s);
-    }
-
-    fn get_level(&self) -> Severity {
-        self.logger.get_level()
-    }
-}
-
-/// A dummy logger that will drop everything.
-#[derive(Copy, Clone)]
-pub struct DummyLogger {
-    level: Severity,
-}
-
-impl Default for DummyLogger {
-    fn default() -> Self {
-        Self {
-            level: Severity::DEBUG,
-        }
-    }
-}
-
-impl Logger for DummyLogger {
-    fn log(&mut self, _: &str, _: u32, _: Severity, _: Arguments) {}
-
-    fn set_level(&mut self, s: Severity) {
-        self.level = s;
-    }
-
-    fn get_level(&self) -> Severity {
-        self.level
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct TestLogger {
-        last_severity: Severity,
-    }
-
-    impl Logger for TestLogger {
-        fn log(&mut self, _: &str, _: u32, s: Severity, _: Arguments) {
-            self.last_severity = s;
-        }
-
-        fn set_level(&mut self, _: Severity) {}
-        fn get_level(&self) -> Severity {
-            Severity::DEBUG
+            buf: MaybeUninit::uninit(),
         }
     }
 
-    #[test]
-    fn test_logger() {
-        let mut logger = TestLogger {
-            last_severity: Severity::DEBUG,
-        };
+    /// Format the current time as a string.
+    fn format(&mut self) -> &str {
+        let buf = self.format_as_bytes();
 
-        log_warn!(logger, "msg");
-        assert_eq!(Severity::WARN, logger.last_severity);
-        log_info!(logger, "msg");
-        assert_eq!(Severity::INFO, logger.last_severity);
-        log_debug!(logger, "msg");
-        assert_eq!(Severity::DEBUG, logger.last_severity);
+        // SAFETY: The buffer is always valid UTF-8 as it is produced by
+        //   strftime.
+        unsafe { std::str::from_utf8_unchecked(buf) }
+    }
+
+    /// Format the current time.
+    fn format_as_bytes(&mut self) -> &[u8] {
+        unsafe {
+            let mut t: libc::time_t = 0;
+
+            if libc::time(&mut t) == (-1 as libc::time_t) {
+                return &[];
+            }
+
+            let mut tm = MaybeUninit::<libc::tm>::uninit();
+
+            let res = libc::localtime_r(&t, tm.as_mut_ptr());
+
+            if res.is_null() {
+                return &[];
+            }
+
+            let fmt = b"%F %T\0";
+
+            let max = Self::BUF_SIZE as libc::size_t;
+            let buf = self.buf.as_mut_ptr() as *mut libc::c_char;
+            let fmt = fmt.as_ptr() as *const libc::c_char;
+
+            let len = libc::strftime(buf, max, fmt, tm.as_ptr());
+
+            &self.buf.assume_init_ref()[..len]
+        }
     }
 }

@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,21 +14,23 @@
 
 //! IP packet definitions.
 
-use std::io;
-use std::mem;
+use std::{
+    any::Any,
+    io::{self, Write},
+    mem,
+    net::Ipv4Addr,
+};
 
-use std::io::Write;
-use std::net::Ipv4Addr;
-
-use crate::net::raw;
-use crate::utils;
-
-use crate::net::raw::ether::packet::{EtherPacketBody, PacketParseError, Result};
-use crate::net::raw::icmp::IcmpPacket;
-use crate::net::raw::tcp::TcpPacket;
-use crate::net::raw::utils::Serialize;
-use crate::net::utils::Ipv4AddrEx;
-use crate::utils::AsAny;
+use crate::{
+    net::raw::{
+        self,
+        ether::packet::{EtherPacketBody, PacketParseError, Result},
+        icmp::IcmpPacket,
+        tcp::TcpPacket,
+        utils::Serialize,
+    },
+    utils::{self, AsBytes},
+};
 
 pub const IP_PROTO_ICMP: u8 = 0x01;
 pub const IP_PROTO_TCP: u8 = 0x06;
@@ -80,8 +82,10 @@ impl Ipv4PacketHeader {
     fn serialize(&self, body: &dyn Ipv4PacketBody, w: &mut dyn Write) -> io::Result<()> {
         let rh = RawIpv4PacketHeader::new(self, body.len(self));
 
-        w.write_all(utils::as_bytes(&rh))?;
-        w.write_all(utils::slice_as_bytes(self.options.as_ref()))?;
+        let options = self.options.as_ref();
+
+        w.write_all(rh.as_bytes())?;
+        w.write_all(options.as_bytes())?;
 
         Ok(())
     }
@@ -125,8 +129,8 @@ impl Ipv4PacketHeader {
                     foffset: flags_foffset & 0x1fff,
                     ttl: rh.ttl,
                     protocol: Ipv4PacketType::from(rh.protocol),
-                    src: Ipv4Addr::from_slice(&rh.src),
-                    dst: Ipv4Addr::from_slice(&rh.dst),
+                    src: Ipv4Addr::from(u32::from_be_bytes(rh.src)),
+                    dst: Ipv4Addr::from(u32::from_be_bytes(rh.dst)),
                     options: options.into_boxed_slice(),
                     length: u16::from_be(rh.length) as usize,
                 };
@@ -138,8 +142,9 @@ impl Ipv4PacketHeader {
 }
 
 /// Packed representation of the IPv4 packet header.
-#[repr(packed)]
+#[repr(C, packed)]
 #[allow(dead_code)]
+#[derive(Copy, Clone)]
 struct RawIpv4PacketHeader {
     vihl: u8,
     dscp_ecn: u8,
@@ -217,7 +222,7 @@ impl From<u8> for Ipv4PacketType {
 }
 
 /// Common trait for IPv4 body implementations.
-pub trait Ipv4PacketBody: AsAny + Send {
+pub trait Ipv4PacketBody: Send + Any {
     /// Serialize the packet body in-place using a given writer.
     fn serialize(&self, iph: &Ipv4PacketHeader, w: &mut dyn Write) -> io::Result<()>;
 
@@ -303,7 +308,7 @@ impl Ipv4Packet {
     where
         B: 'static + Ipv4PacketBody,
     {
-        self.body.as_ref().as_any().downcast_ref()
+        <dyn Any>::downcast_ref(self.body.as_ref())
     }
 }
 
@@ -322,8 +327,8 @@ impl EtherPacketBody for Ipv4Packet {}
 mod tests {
     use super::*;
 
-    use crate::net::raw::ether::packet::EtherPacket;
     use crate::net::raw::ether::MacAddr;
+    use crate::net::raw::ether::packet::EtherPacket;
     use crate::net::raw::tcp::*;
     use crate::net::raw::utils::Serialize;
 

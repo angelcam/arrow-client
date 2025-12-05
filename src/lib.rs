@@ -1,4 +1,4 @@
-// Copyright 2019 Angelcam, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,15 +14,8 @@
 
 //! Arrow Client definitions.
 
-#[cfg(feature = "discovery")]
 #[macro_use]
-extern crate lazy_static;
-
-#[macro_use]
-pub extern crate json;
-
-pub extern crate openssl;
-pub extern crate uuid;
+extern crate log;
 
 #[doc(hidden)]
 #[macro_use]
@@ -40,14 +33,10 @@ pub mod config;
 pub mod context;
 
 #[doc(hidden)]
-#[cfg(feature = "exports")]
-pub mod exports;
+pub mod error;
 
 #[doc(hidden)]
 pub mod net;
-
-#[doc(hidden)]
-pub mod runtime;
 
 #[doc(hidden)]
 pub mod scanner;
@@ -57,18 +46,17 @@ pub mod storage;
 #[doc(hidden)]
 pub mod svc_table;
 
-pub use client::{
-    ArrowClient, ArrowClientTask, DefaultServiceConnector, ServiceConnection, ServiceConnector,
+pub use crate::{
+    client::{
+        ArrowClient, ArrowClientTask, DefaultServiceConnector, ServiceConnection, ServiceConnector,
+    },
+    config::ClientId,
+    context::{ApplicationEventListener as ArrowClientEventListener, ConnectionState},
 };
-pub use context::ApplicationEventListener as ArrowClientEventListener;
-pub use context::ConnectionState;
 
 pub mod logger {
-    pub use crate::utils::logger::file::FileLogger;
-    pub use crate::utils::logger::stderr::StderrLogger;
+    pub use crate::utils::logger::{FileLogger, StderrLogger};
 
     #[cfg(not(target_os = "windows"))]
-    pub use crate::utils::logger::syslog::Syslog;
-
-    pub use crate::utils::logger::{BoxLogger, CloneableLogger, DummyLogger, Logger, Severity};
+    pub use crate::utils::logger::Syslog;
 }

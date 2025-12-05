@@ -1,4 +1,4 @@
-// Copyright 2017 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,21 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fmt;
+use std::{
+    fmt::{self, Display, Formatter},
+    sync::{Arc, Mutex},
+};
 
-use std::collections::HashSet;
-use std::fmt::{Display, Formatter};
-use std::sync::{Arc, Mutex};
+use tokio_native_tls::TlsConnector;
 
-use uuid::Uuid;
-
-use crate::config::Config;
-use crate::net::raw::ether::MacAddr;
-use crate::net::tls::TlsConnector;
-use crate::scanner::ScanResult;
-use crate::svc_table::{Service, SharedServiceTableRef};
-use crate::utils::logger::BoxLogger;
-use crate::utils::RuntimeError;
+use crate::{
+    config::{ClientId, ClientKey, Config},
+    net::raw::ether::MacAddr,
+    scanner::ScanResult,
+    svc_table::{Service, SharedServiceTableRef},
+};
 
 /// Arrow service connection state.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -64,7 +62,6 @@ pub trait ApplicationEventListener {
 
 /// Internal data of the application context.
 struct ApplicationContextData {
-    logger: BoxLogger,
     config: Config,
     scanning: bool,
     scan_result: ScanResult,
@@ -76,7 +73,6 @@ impl ApplicationContextData {
     /// Take a given application config and create application context data.
     fn new(config: Config) -> Self {
         Self {
-            logger: config.get_logger(),
             config,
             scanning: false,
             scan_result: ScanResult::new(),
@@ -93,11 +89,6 @@ impl ApplicationContextData {
     /// Get application config.
     fn get_config_mut(&mut self) -> &mut Config {
         &mut self.config
-    }
-
-    /// Get application logger.
-    fn get_logger(&self) -> BoxLogger {
-        self.logger.clone()
     }
 
     /// Set the state of the network scanner thread.
@@ -182,14 +173,14 @@ impl ApplicationContext {
             .to_string()
     }
 
-    /// Get Arrow Client UUID.
-    pub fn get_arrow_uuid(&self) -> Uuid {
-        self.data.lock().unwrap().get_config().get_uuid()
+    /// Get Arrow Client ID.
+    pub fn get_client_id(&self) -> ClientId {
+        self.data.lock().unwrap().get_config().get_client_id()
     }
 
-    /// Get Arrow Client password.
-    pub fn get_arrow_password(&self) -> Uuid {
-        self.data.lock().unwrap().get_config().get_password()
+    /// Get Arrow Client key.
+    pub fn get_client_key(&self) -> ClientKey {
+        self.data.lock().unwrap().get_config().get_client_key()
     }
 
     /// Get Arrow Client MAC address.
@@ -203,7 +194,7 @@ impl ApplicationContext {
     }
 
     /// Get network discovery whitelist.
-    pub fn get_discovery_whitelist(&self) -> Arc<HashSet<String>> {
+    pub fn get_discovery_whitelist(&self) -> Arc<Vec<String>> {
         self.data
             .lock()
             .unwrap()
@@ -231,22 +222,13 @@ impl ApplicationContext {
         self.data.lock().unwrap().get_config().get_mjpeg_paths()
     }
 
-    /// Get application logger.
-    pub fn get_logger(&self) -> BoxLogger {
-        self.data.lock().unwrap().get_logger()
-    }
-
     /// Get TLS connector for a given server hostname.
-    pub fn get_tls_connector(&self) -> Result<TlsConnector, RuntimeError> {
-        self.data
-            .lock()
-            .unwrap()
-            .get_config_mut()
-            .get_tls_connector()
+    pub fn get_tls_connector(&self) -> TlsConnector {
+        self.data.lock().unwrap().get_config().get_tls_connector()
     }
 
     /// Set the state of the network scanner thread.
-    pub fn set_scanning(&mut self, scanning: bool) {
+    pub fn set_scanning(&self, scanning: bool) {
         let mut data = self.data.lock().unwrap();
 
         if scanning == data.is_scanning() {
@@ -288,7 +270,7 @@ impl ApplicationContext {
     }
 
     /// Update service table. Add all given services into the table and update active services.
-    pub fn update_service_table<I>(&mut self, services: I)
+    pub fn update_service_table<I>(&self, services: I)
     where
         I: IntoIterator<Item = Service>,
     {
@@ -300,7 +282,7 @@ impl ApplicationContext {
     }
 
     /// Reset service table.
-    pub fn reset_service_table(&mut self) {
+    pub fn reset_service_table(&self) {
         self.data
             .lock()
             .unwrap()
@@ -314,7 +296,7 @@ impl ApplicationContext {
     }
 
     /// Set connection state.
-    pub fn set_connection_state(&mut self, state: ConnectionState) {
+    pub fn set_connection_state(&self, state: ConnectionState) {
         let mut data = self.data.lock().unwrap();
 
         if state == data.get_connection_state() {
@@ -342,11 +324,11 @@ impl ApplicationContext {
             .unwrap()
             .get_config()
             .get_extended_info()
-            .dump()
+            .to_string()
     }
 
     /// Add a new event listener.
-    pub fn add_event_listener<T>(&mut self, listener: T)
+    pub fn add_event_listener<T>(&self, listener: T)
     where
         T: 'static + ApplicationEventListener + Send,
     {

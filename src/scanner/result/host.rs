@@ -1,4 +1,4 @@
-// Copyright 2017 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,14 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::hash_set::Iter as HashSetIterator;
-use std::collections::HashSet;
-use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::{
+    collections::{HashSet, hash_set::Iter as HashSetIterator},
+    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
+};
 
 use crate::net::raw::ether::MacAddr;
-
-pub const HR_FLAG_ARP: u8 = 0x01;
-pub const HR_FLAG_ICMP: u8 = 0x02;
 
 /// Host record (i.e. a scan report element).
 #[derive(Clone)]
@@ -32,6 +30,9 @@ pub struct HostRecord {
 }
 
 impl HostRecord {
+    pub const FLAG_ARP: u8 = 0x01;
+    pub const FLAG_ICMP: u8 = 0x02;
+
     /// Create a new instance of host record.
     pub fn new(mac: MacAddr, ip: IpAddr, flags: u8) -> Self {
         Self {
@@ -56,12 +57,12 @@ impl HostRecord {
     }
 
     /// Get port iterator.
-    pub fn ports(&self) -> PortIterator {
+    pub fn ports(&self) -> PortIterator<'_> {
         PortIterator::new(self)
     }
 
     /// Get socket address iterator.
-    pub fn socket_addrs(&self) -> SocketAddrIterator {
+    pub fn socket_addrs(&self) -> SocketAddrIterator<'_> {
         SocketAddrIterator::new(self)
     }
 }

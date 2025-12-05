@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,98 +12,90 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Syslog definitions.
+use std::{ffi::CString, sync::Once};
 
-use std::ptr;
-
-use std::ffi::{CStr, CString};
-use std::fmt::Arguments;
-use std::os::raw::{c_char, c_int, c_void};
-use std::sync::Once;
-
-use crate::utils::logger::{Logger, Severity};
-
-const LOG_PID: c_int = 0x01;
-const LOG_CONS: c_int = 0x02;
-
-const LOG_USER: c_int = 0x08;
-
-const LOG_ERR: c_int = 3;
-const LOG_WARNING: c_int = 4;
-const LOG_INFO: c_int = 6;
-const LOG_DEBUG: c_int = 7;
+use libc::{LOG_CONS, LOG_PID, LOG_USER};
+use log::{Level, Log, Metadata, Record};
 
 static SYSLOG_INIT: Once = Once::new();
 
-#[link(name = "c")]
-extern "C" {
-    fn openlog(ident: *const c_char, option: c_int, facility: c_int) -> c_void;
-    fn syslog(priority: c_int, format: *const c_char, ...) -> c_void;
-}
-
-/// Syslog logger structure.
-#[derive(Debug, Clone)]
-pub struct Syslog {
-    level: Severity,
-}
+/// Syslog logger.
+pub struct Syslog(());
 
 impl Syslog {
-    /// Create a new syslog logger with log level set to INFO.
+    /// Create a new syslog logger.
     pub fn new() -> Self {
-        Self::default()
+        SYSLOG_INIT.call_once(|| unsafe {
+            libc::openlog(std::ptr::null(), LOG_CONS | LOG_PID, LOG_USER);
+        });
+
+        Self(())
     }
 }
 
 impl Default for Syslog {
     fn default() -> Self {
-        SYSLOG_INIT.call_once(|| unsafe {
-            openlog(ptr::null(), LOG_CONS | LOG_PID, LOG_USER);
-        });
-
-        Self {
-            level: Severity::INFO,
-        }
+        Self::new()
     }
 }
 
-impl Logger for Syslog {
-    fn log(&mut self, file: &str, line: u32, s: Severity, msg: Arguments) {
-        let msg = format!("[{}:{}] {}", file, line, msg);
-        let cstr_fmt = CStr::from_bytes_with_nul(b"%s\0").unwrap();
-        let cstr_msg = CString::new(msg.replace('\0', "\\0")).unwrap();
-        let fmt_ptr = cstr_fmt.as_ptr() as *const c_char;
-        let msg_ptr = cstr_msg.as_ptr() as *const c_char;
+impl Log for Syslog {
+    fn enabled(&self, _: &Metadata) -> bool {
+        true
+    }
 
-        if s >= self.level {
-            unsafe {
-                match s {
-                    Severity::DEBUG => syslog(LOG_DEBUG, fmt_ptr, msg_ptr),
-                    Severity::INFO => syslog(LOG_INFO, fmt_ptr, msg_ptr),
-                    Severity::WARN => syslog(LOG_WARNING, fmt_ptr, msg_ptr),
-                    Severity::ERROR => syslog(LOG_ERR, fmt_ptr, msg_ptr),
-                }
-            };
+    fn log(&self, record: &Record) {
+        let file = record.file().unwrap_or("-");
+        let line = record.line().unwrap_or(0);
+
+        let args = record.args();
+
+        let priority = match record.level() {
+            Level::Trace => libc::LOG_DEBUG,
+            Level::Debug => libc::LOG_DEBUG,
+            Level::Info => libc::LOG_INFO,
+            Level::Warn => libc::LOG_WARNING,
+            Level::Error => libc::LOG_ERR,
+        };
+
+        let msg = format!("[{file}:{line}] {args}")
+            .replace('\0', "\\0")
+            .into();
+
+        // SAFETY: We just replaced all 0 bytes.
+        let msg = unsafe { CString::from_vec_unchecked(msg) };
+
+        let fmt = b"%s\0";
+
+        let fmt_ptr = fmt.as_ptr() as *const libc::c_char;
+        let msg_ptr = msg.as_ptr() as *const libc::c_char;
+
+        unsafe {
+            libc::syslog(priority, fmt_ptr, msg_ptr);
         }
     }
 
-    fn set_level(&mut self, s: Severity) {
-        self.level = s;
-    }
-
-    fn get_level(&self) -> Severity {
-        self.level
-    }
+    fn flush(&self) {}
 }
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::*;
+    use log::{Level, Log, Record};
+
+    use super::Syslog;
 
     #[test]
     fn test_syslog_nul_character() {
-        let mut logger = Syslog::default();
-
         // Check that there is no panic on attempt to log the nul-character.
-        log_warn!(logger, "nul character: \0");
+        let record = Record::builder()
+            .args(format_args!("nul character: \0"))
+            .level(Level::Warn)
+            .file(Some("test.rs"))
+            .line(Some(42))
+            .build();
+
+        let logger = Syslog::new();
+
+        logger.log(&record);
     }
 }

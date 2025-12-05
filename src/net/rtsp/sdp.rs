@@ -1,4 +1,4 @@
-// Copyright 2016 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,16 +14,13 @@
 
 //! SDP definitions.
 
-use std::fmt;
-use std::result;
+use std::{
+    fmt::{self, Display, Formatter},
+    num::ParseIntError,
+    str::FromStr,
+};
 
-use std::error::Error;
-use std::fmt::{Display, Formatter};
-use std::str::FromStr;
-
-use crate::utils::string::reader;
-
-use crate::utils::string::reader::Reader;
+use str_reader::StringReader;
 
 /// SDP parsing error.
 #[derive(Debug, Clone)]
@@ -43,16 +40,28 @@ impl ParseError {
     }
 }
 
-impl Error for ParseError {}
+impl std::error::Error for ParseError {}
 
 impl Display for ParseError {
-    fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.write_str(&self.msg)
     }
 }
 
+impl From<str_reader::ParseError> for ParseError {
+    fn from(err: str_reader::ParseError) -> Self {
+        Self::new(err.to_string())
+    }
+}
+
+impl From<ParseIntError> for ParseError {
+    fn from(err: ParseIntError) -> Self {
+        Self::new(err.to_string())
+    }
+}
+
 /// SDP parsing result.
-pub type Result<T> = result::Result<T, ParseError>;
+pub type Result<T> = std::result::Result<T, ParseError>;
 
 /// Session Description.
 ///
@@ -126,26 +135,30 @@ pub struct MediaDescription {
 }
 
 impl FromStr for MediaDescription {
-    type Err = reader::ParseError;
+    type Err = ParseError;
 
-    fn from_str(val: &str) -> result::Result<Self, Self::Err> {
-        let mut reader = Reader::new(val.trim());
+    fn from_str(val: &str) -> std::result::Result<Self, Self::Err> {
+        let mut reader = StringReader::new(val.trim());
 
         let mtype = reader.read_word();
-        let port = reader.read_decimal_u32()?;
+
+        reader.skip_whitespace();
+
+        let port = reader.read_until(|c| !c.is_ascii_digit()).parse()?;
 
         reader.skip_whitespace();
 
         let c = reader
             .current_char()
-            .ok_or_else(|| reader::ParseError::new("empty input"))?;
+            .ok_or_else(|| ParseError::new("empty input"))?;
 
         let np = if c == '/' {
             reader.skip_char();
+            reader.skip_whitespace();
 
-            let val = reader.read_decimal_u32()?;
+            let val = reader.read_until(|c| !c.is_ascii_digit()).parse()?;
 
-            Some(val as u16)
+            Some(val)
         } else {
             None
         };
@@ -162,7 +175,7 @@ impl FromStr for MediaDescription {
 
         let res = Self {
             media_type: MediaType::from(mtype),
-            port: port as u16,
+            port,
             nb_ports: np,
             protocol: protocol.to_string(),
             formats,
@@ -213,7 +226,7 @@ impl FromStr for Attribute {
 pub trait FromAttribute: Sized {
     type Err;
 
-    fn from_attr(attr: &Attribute) -> result::Result<Self, Self::Err>;
+    fn from_attr(attr: &Attribute) -> std::result::Result<Self, Self::Err>;
 }
 
 /// Representation of the "rtpmap" attribute.
@@ -231,17 +244,19 @@ pub struct RTPMap {
 }
 
 impl FromStr for RTPMap {
-    type Err = reader::ParseError;
+    type Err = ParseError;
 
-    fn from_str(val: &str) -> result::Result<Self, Self::Err> {
-        let mut reader = Reader::new(val.trim());
+    fn from_str(val: &str) -> std::result::Result<Self, Self::Err> {
+        let mut reader = StringReader::new(val.trim());
 
-        let pt = reader.read_decimal_u32()?;
+        let pt = reader.read_until(|c| !c.is_ascii_digit()).parse()?;
+
         let enc = reader.read_until(|c| c == '/').trim().to_string();
 
         reader.match_char('/')?;
+        reader.skip_whitespace();
 
-        let cr = reader.read_decimal_u32()?;
+        let cr = reader.read_until(|c| !c.is_ascii_digit()).parse()?;
 
         reader.skip_whitespace();
 
@@ -270,7 +285,7 @@ impl FromStr for RTPMap {
 impl FromAttribute for RTPMap {
     type Err = ParseError;
 
-    fn from_attr(attr: &Attribute) -> result::Result<Self, Self::Err> {
+    fn from_attr(attr: &Attribute) -> std::result::Result<Self, Self::Err> {
         let key = attr.name.to_lowercase();
 
         if key == "rtpmap" {
@@ -433,7 +448,7 @@ impl SessionDescriptionParser {
     fn process_version(&mut self, line: &[u8]) -> Result<()> {
         let line = String::from_utf8_lossy(line);
 
-        let mut reader = Reader::new(line.as_ref());
+        let mut reader = StringReader::new(line.as_ref());
 
         reader.skip_whitespace();
         reader
@@ -445,7 +460,7 @@ impl SessionDescriptionParser {
             .map_err(|_| ParseError::new("invalid version line"))?;
 
         let val = reader
-            .read_decimal_u32()
+            .read_u32()
             .map_err(|_| ParseError::new("invalid version line"))?;
 
         self.sdp.version = val as i32;
@@ -475,7 +490,7 @@ impl SessionDescriptionParser {
     ) -> Result<()> {
         let line = String::from_utf8_lossy(line);
 
-        let mut reader = Reader::new(line.as_ref());
+        let mut reader = StringReader::new(line.as_ref());
 
         reader.skip_whitespace();
         reader
@@ -509,7 +524,7 @@ impl SessionDescriptionParser {
     fn process_media_attribute(&mut self, line: &[u8]) -> Result<()> {
         let line = String::from_utf8_lossy(line);
 
-        let mut reader = Reader::new(line.as_ref());
+        let mut reader = StringReader::new(line.as_ref());
 
         reader.skip_whitespace();
         reader

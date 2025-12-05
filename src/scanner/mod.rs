@@ -1,4 +1,4 @@
-// Copyright 2017 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,4 +17,4 @@ pub mod discovery;
 
 pub mod result;
 
-pub use self::result::{HostRecord, ScanResult, HR_FLAG_ARP, HR_FLAG_ICMP};
+pub use self::result::{HostRecord, ScanResult};

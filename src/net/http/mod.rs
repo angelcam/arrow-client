@@ -1,4 +1,4 @@
-// Copyright 2017 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,73 +14,22 @@
 
 pub mod generic;
 
-use std::fmt;
-use std::io;
-
-use std::error::Error as ErrorTrait;
-use std::fmt::{Display, Formatter, Write};
-use std::str::FromStr;
-use std::time::Duration;
+use std::{fmt::Write, io, str::FromStr, time::Duration};
 
 use bytes::BytesMut;
-
-use futures::sink::SinkExt;
-use futures::stream::StreamExt;
-
+use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
-
 use tokio_util::codec::{Decoder, Encoder};
+use ttpkit_url::Url;
 
-use crate::net::url::Url;
+use self::generic::{
+    ChunkedBodyDecoder, FixedSizeBodyDecoder, HeaderField, MessageBodyDecoder,
+    Request as GenericRequest, RequestBuilder as GenericRequestBuilder,
+    Response as GenericResponse, ResponseHeader as GenericResponseHeader,
+    ResponseHeaderDecoder as GenericResponseHeaderDecoder, SimpleBodyDecoder,
+};
 
-use self::generic::ChunkedBodyDecoder;
-use self::generic::FixedSizeBodyDecoder;
-use self::generic::HeaderField;
-use self::generic::MessageBodyDecoder;
-use self::generic::Request as GenericRequest;
-use self::generic::RequestBuilder as GenericRequestBuilder;
-use self::generic::Response as GenericResponse;
-use self::generic::ResponseHeader as GenericResponseHeader;
-use self::generic::ResponseHeaderDecoder as GenericResponseHeaderDecoder;
-use self::generic::SimpleBodyDecoder;
-
-/// HTTP codec error.
-#[derive(Debug, Clone)]
-pub struct Error {
-    msg: String,
-}
-
-impl Error {
-    /// Create a new error.
-    pub fn new<T>(msg: T) -> Self
-    where
-        T: ToString,
-    {
-        Self {
-            msg: msg.to_string(),
-        }
-    }
-}
-
-impl ErrorTrait for Error {}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        f.write_str(&self.msg)
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Self {
-        Self::new(format!("IO error: {}", err))
-    }
-}
-
-impl From<generic::Error> for Error {
-    fn from(err: generic::Error) -> Self {
-        Self::new(err)
-    }
-}
+use crate::error::Error;
 
 /// HTTP method.
 #[allow(clippy::upper_case_acronyms)]
@@ -134,7 +83,7 @@ impl FromStr for Scheme {
     fn from_str(method: &str) -> Result<Self, Error> {
         match &method.to_lowercase() as &str {
             "http" => Ok(Self::HTTP),
-            _ => Err(Error::new("invalid URL scheme")),
+            _ => Err(Error::from_static_msg("invalid URL scheme")),
         }
     }
 }
@@ -154,7 +103,7 @@ pub struct Request {
 impl Request {
     /// Create a new HTTP request.
     pub fn new(method: Method, url: &str, ignore_response_body: bool) -> Result<Self, Error> {
-        let url = Url::from_str(url).map_err(|_| Error::new("malformed URL"))?;
+        let url = Url::from_str(url).map_err(|_| Error::from_static_msg("malformed URL"))?;
 
         let scheme = Scheme::from_str(url.scheme())?;
 
@@ -243,7 +192,7 @@ impl Request {
         stream
             .next()
             .await
-            .ok_or_else(|| Error::new("server closed connection unexpectedly"))?
+            .ok_or_else(|| Error::from_static_msg("server closed connection unexpectedly"))?
     }
 
     /// Send the request and return a future response.
@@ -251,7 +200,7 @@ impl Request {
         if let Some(timeout) = self.timeout {
             tokio::time::timeout(timeout, self.send_inner())
                 .await
-                .map_err(|_| Error::new("request timeout"))?
+                .map_err(|_| Error::from_static_msg("request timeout"))?
         } else {
             self.send_inner().await
         }
@@ -272,11 +221,11 @@ impl Response {
             let version = header.version();
 
             if protocol != "HTTP" {
-                return Err(Error::new("invalid protocol"));
+                return Err(Error::from_static_msg("invalid protocol"));
             }
 
             if version != "1.0" && version != "1.1" {
-                return Err(Error::new("unsupported HTTP version"));
+                return Err(Error::from_static_msg("unsupported HTTP version"));
             }
         }
 
@@ -354,14 +303,13 @@ impl Decoder for ClientCodec {
     type Error = Error;
 
     fn decode(&mut self, data: &mut BytesMut) -> Result<Option<Response>, Error> {
-        if self.header.is_none() {
-            if let Some(header) = self.hdecoder.decode(data)? {
-                let status_code = header.status_code();
+        if self.header.is_none()
+            && let Some(header) = self.hdecoder.decode(data)?
+        {
+            let status_code = header.status_code();
 
-                let bdecoder: Box<dyn MessageBodyDecoder> = if (100..200).contains(&status_code)
-                    || status_code == 204
-                    || status_code == 304
-                {
+            let bdecoder: Box<dyn MessageBodyDecoder> =
+                if (100..200).contains(&status_code) || status_code == 204 || status_code == 304 {
                     Box::new(FixedSizeBodyDecoder::new(0, self.ignore_response_body))
                 } else if let Some(tenc) = header.get_header_field("transfer-encoding") {
                     let tenc = tenc.value().unwrap_or("").to_lowercase();
@@ -377,9 +325,9 @@ impl Decoder for ClientCodec {
                 } else if let Some(clength) = header.get_header_field("content-length") {
                     let clength = clength
                         .value()
-                        .ok_or_else(|| Error::new("missing Content-Length value"))?;
+                        .ok_or_else(|| Error::from_static_msg("missing Content-Length value"))?;
                     let clength = usize::from_str(clength)
-                        .map_err(|_| Error::new("unable to decode Content-Length"))?;
+                        .map_err(|_| Error::from_static_msg("unable to decode Content-Length"))?;
 
                     Box::new(FixedSizeBodyDecoder::new(
                         clength,
@@ -389,9 +337,8 @@ impl Decoder for ClientCodec {
                     Box::new(SimpleBodyDecoder::new(self.ignore_response_body))
                 };
 
-                self.bdecoder = Some(bdecoder);
-                self.header = Some(header);
-            }
+            self.bdecoder = Some(bdecoder);
+            self.header = Some(header);
         }
 
         if let Some(mut bdecoder) = self.bdecoder.take() {

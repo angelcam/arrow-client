@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::env;
-
-use std::ffi::{OsStr, OsString};
-use std::path::Path;
+use std::{
+    env,
+    ffi::{OsStr, OsString},
+    path::Path,
+};
 
 use cc::Build;
 
@@ -57,10 +58,10 @@ fn flag_from_var(flag_var: &str) -> Option<bool> {
 }
 
 fn dir_from_var(var: &str) -> Option<OsString> {
-    if let Some(dir) = env::var_os(var) {
-        if is_dir(&dir) {
-            return Some(dir);
-        }
+    if let Some(dir) = env::var_os(var)
+        && is_dir(&dir)
+    {
+        return Some(dir);
     }
 
     None
@@ -80,7 +81,7 @@ fn build_net_devices() {
         .include("src")
         .include("src/net/raw/devices")
         .file("src/net/raw/devices/devices-common.c")
-        .file(&format!("src/net/raw/devices/devices-{}.c", get_platform()))
+        .file(format!("src/net/raw/devices/devices-{}.c", get_platform()))
         .compile("net_devices");
 }
 
@@ -113,7 +114,7 @@ fn build_pcap_wrapper() {
         .include("src")
         .include("src/net/raw/pcap")
         .file("src/net/raw/pcap/wrapper-common.c")
-        .file(&format!("src/net/raw/pcap/wrapper-{}.c", get_platform()))
+        .file(format!("src/net/raw/pcap/wrapper-{}.c", get_platform()))
         .compile("pcap_wrapper");
 }
 

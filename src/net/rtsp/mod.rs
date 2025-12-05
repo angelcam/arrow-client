@@ -1,4 +1,4 @@
-// Copyright 2017 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,71 +14,23 @@
 
 pub mod sdp;
 
-use std::fmt;
-use std::io;
-
-use std::error::Error as ErrorTrait;
-use std::fmt::{Display, Formatter};
-use std::str::FromStr;
-use std::time::Duration;
+use std::{io, str::FromStr, time::Duration};
 
 use bytes::BytesMut;
-
-use futures::sink::SinkExt;
-use futures::stream::StreamExt;
-
+use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
-
 use tokio_util::codec::{Decoder, Encoder};
+use ttpkit_url::Url;
 
-use crate::net::http::generic;
-
-use crate::net::http::generic::FixedSizeBodyDecoder;
-use crate::net::http::generic::HeaderField;
-use crate::net::http::generic::Request as GenericRequest;
-use crate::net::http::generic::RequestBuilder as GenericRequestBuilder;
-use crate::net::http::generic::Response as GenericResponse;
-use crate::net::http::generic::ResponseHeader as GenericResponseHeader;
-use crate::net::http::generic::ResponseHeaderDecoder as GenericResponseHeaderDecoder;
-use crate::net::url::Url;
-
-/// RTSP codec error.
-#[derive(Debug, Clone)]
-pub struct Error {
-    msg: String,
-}
-
-impl Error {
-    /// Create a new error.
-    pub fn new<T>(msg: T) -> Self
-    where
-        T: ToString,
-    {
-        Self {
-            msg: msg.to_string(),
-        }
-    }
-}
-
-impl ErrorTrait for Error {}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        f.write_str(&self.msg)
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Self {
-        Self::new(format!("IO error: {}", err))
-    }
-}
-
-impl From<generic::Error> for Error {
-    fn from(err: generic::Error) -> Self {
-        Self::new(err)
-    }
-}
+use crate::{
+    error::Error,
+    net::http::generic::{
+        FixedSizeBodyDecoder, HeaderField, Request as GenericRequest,
+        RequestBuilder as GenericRequestBuilder, Response as GenericResponse,
+        ResponseHeader as GenericResponseHeader,
+        ResponseHeaderDecoder as GenericResponseHeaderDecoder,
+    },
+};
 
 /// RTSP method.
 #[allow(non_camel_case_types)]
@@ -139,7 +91,7 @@ impl FromStr for Scheme {
     fn from_str(method: &str) -> Result<Self, Error> {
         match &method.to_lowercase() as &str {
             "rtsp" => Ok(Self::RTSP),
-            _ => Err(Error::new("invalid URL scheme")),
+            _ => Err(Error::from_static_msg("invalid URL scheme")),
         }
     }
 }
@@ -159,7 +111,7 @@ pub struct Request {
 impl Request {
     /// Create a new RTSP request.
     pub fn new(method: Method, url: &str, ignore_response_body: bool) -> Result<Self, Error> {
-        let url = Url::from_str(url).map_err(|_| Error::new("malformed URL"))?;
+        let url = Url::from_str(url).map_err(|_| Error::from_static_msg("malformed URL"))?;
 
         let scheme = Scheme::from_str(url.scheme())?;
 
@@ -244,7 +196,7 @@ impl Request {
         stream
             .next()
             .await
-            .ok_or_else(|| Error::new("server closed connection unexpectedly"))?
+            .ok_or_else(|| Error::from_static_msg("server closed connection unexpectedly"))?
     }
 
     /// Send the request and return a future response.
@@ -252,7 +204,7 @@ impl Request {
         if let Some(timeout) = self.timeout {
             tokio::time::timeout(timeout, self.send_inner())
                 .await
-                .map_err(|_| Error::new("request timeout"))?
+                .map_err(|_| Error::from_static_msg("request timeout"))?
         } else {
             self.send_inner().await
         }
@@ -273,11 +225,11 @@ impl Response {
             let version = header.version();
 
             if protocol != "RTSP" {
-                return Err(Error::new("invalid protocol"));
+                return Err(Error::from_static_msg("invalid protocol"));
             }
 
             if version != "1.0" {
-                return Err(Error::new("unsupported RTSP version"));
+                return Err(Error::from_static_msg("unsupported RTSP version"));
             }
         }
 
@@ -344,23 +296,23 @@ impl Decoder for ClientCodec {
     type Error = Error;
 
     fn decode(&mut self, data: &mut BytesMut) -> Result<Option<Response>, Error> {
-        if self.header.is_none() {
-            if let Some(header) = self.hdecoder.decode(data)? {
-                let bdecoder = if let Some(clength) = header.get_header_field("content-length") {
-                    let clength = clength
-                        .value()
-                        .ok_or_else(|| Error::new("missing Content-Length value"))?;
-                    let clength = usize::from_str(clength)
-                        .map_err(|_| Error::new("unable to decode Content-Length"))?;
+        if self.header.is_none()
+            && let Some(header) = self.hdecoder.decode(data)?
+        {
+            let bdecoder = if let Some(clength) = header.get_header_field("content-length") {
+                let clength = clength
+                    .value()
+                    .ok_or_else(|| Error::from_static_msg("missing Content-Length value"))?;
+                let clength = usize::from_str(clength)
+                    .map_err(|_| Error::from_static_msg("unable to decode Content-Length"))?;
 
-                    FixedSizeBodyDecoder::new(clength, self.ignore_response_body)
-                } else {
-                    FixedSizeBodyDecoder::new(0, self.ignore_response_body)
-                };
+                FixedSizeBodyDecoder::new(clength, self.ignore_response_body)
+            } else {
+                FixedSizeBodyDecoder::new(0, self.ignore_response_body)
+            };
 
-                self.bdecoder = Some(bdecoder);
-                self.header = Some(header);
-            }
+            self.bdecoder = Some(bdecoder);
+            self.header = Some(header);
         }
 
         if let Some(mut bdecoder) = self.bdecoder.take() {

@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,34 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::error::Error;
-use std::fmt::Debug;
+mod runtime;
 
-use arrow_client::runtime;
-
-use arrow_client::client::ArrowClient;
-use arrow_client::config::Config;
-
-use arrow_client::config::usage;
-
-/// Unwrap a given result (if possible) or print the error message and exit
-/// the process printing application usage.
-fn result_or_usage<T, E>(res: Result<T, E>) -> T
-where
-    E: Error + Debug,
-{
-    match res {
-        Ok(res) => res,
-        Err(err) => {
-            println!("ERROR: {}\n", err);
-            usage(1);
-        }
-    }
-}
+use arrow_client::{client::ArrowClient, config::Config};
 
 /// Arrow Client main function.
 fn main() {
-    let config = result_or_usage(Config::from_args(std::env::args()));
+    let config = match Config::from_args() {
+        Ok(config) => config,
+        Err(err) => {
+            println!("ERROR: {}\n", err);
+
+            arrow_client::config::usage(1);
+        }
+    };
 
     let (client, task) = ArrowClient::new(config);
 

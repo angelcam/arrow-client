@@ -1,4 +1,4 @@
-// Copyright 2017 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,15 +14,15 @@
 
 pub mod host;
 
-use std::collections::hash_map::Iter as HashMapIterator;
-use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::{
+    collections::{HashMap, hash_map::Iter as HashMapIterator},
+    net::{IpAddr, SocketAddr},
+};
 
-use crate::net::raw::ether::MacAddr;
-use crate::svc_table::{Service, ServiceIdentifier};
-
-pub use self::host::HR_FLAG_ARP;
-pub use self::host::HR_FLAG_ICMP;
+use crate::{
+    net::raw::ether::MacAddr,
+    svc_table::{Service, ServiceIdentifier},
+};
 
 pub use self::host::HostRecord;
 
@@ -72,17 +72,17 @@ impl ScanResult {
     }
 
     /// Get host records.
-    pub fn hosts(&self) -> HostRecordIterator {
+    pub fn hosts(&self) -> HostRecordIterator<'_> {
         HostRecordIterator::new(self)
     }
 
     /// Get socket addresses.
-    pub fn socket_addrs(&self) -> SocketAddrIterator {
+    pub fn socket_addrs(&self) -> SocketAddrIterator<'_> {
         SocketAddrIterator::new(self)
     }
 
     /// Get services.
-    pub fn services(&self) -> ServiceIterator {
+    pub fn services(&self) -> ServiceIterator<'_> {
         ServiceIterator::new(self)
     }
 

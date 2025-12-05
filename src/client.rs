@@ -1,4 +1,4 @@
-// Copyright 2019 Angelcam, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,27 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::process;
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+    time::{Duration, Instant},
+};
 
-use std::pin::Pin;
-use std::time::{Duration, Instant};
+use futures::future::{AbortHandle, FutureExt};
 
-use futures::future::{AbortHandle, Future, FutureExt};
-use futures::task::{Context, Poll};
-
-use uuid::Uuid;
-
-use crate::cmd_handler;
-use crate::net::arrow;
-
-use crate::cmd_handler::{Command, CommandChannel};
-use crate::config::Config;
-use crate::context::{ApplicationContext, ConnectionState};
-use crate::net::arrow::{ArrowError, ErrorKind};
-use crate::net::raw::ether::MacAddr;
-use crate::svc_table::Service;
-use crate::utils::logger::{BoxLogger, Logger};
-use crate::ArrowClientEventListener;
+use crate::{
+    ArrowClientEventListener,
+    cmd_handler::{self, Command, CommandChannel},
+    config::{ClientId, Config},
+    context::{ApplicationContext, ConnectionState},
+    net::{
+        arrow::{self, ArrowError, ErrorKind},
+        raw::ether::MacAddr,
+    },
+    svc_table::Service,
+};
 
 pub use crate::net::arrow::{DefaultServiceConnector, ServiceConnection, ServiceConnector};
 
@@ -47,7 +45,6 @@ struct ArrowMainTask<C> {
     app_context: ApplicationContext,
     cmd_channel: CommandChannel,
     svc_connector: C,
-    logger: BoxLogger,
     default_addr: String,
     current_addr: String,
     last_attempt: Instant,
@@ -57,12 +54,11 @@ struct ArrowMainTask<C> {
 
 impl<C> ArrowMainTask<C>
 where
-    C: ServiceConnector + Clone + Unpin + 'static,
-    C::Connection: Send + Unpin,
+    C: ServiceConnector + Clone + Send + Sync + 'static,
+    C::Connection: Send,
 {
     /// Create a new task.
     async fn start(app_context: ApplicationContext, cmd_channel: CommandChannel, svc_connector: C) {
-        let logger = app_context.get_logger();
         let addr = app_context.get_arrow_service_address();
         let diagnostic_mode = app_context.get_diagnostic_mode();
 
@@ -74,7 +70,6 @@ where
             app_context,
             cmd_channel,
             svc_connector,
-            logger,
             default_addr: addr.clone(),
             current_addr: addr,
             last_attempt: now,
@@ -91,11 +86,7 @@ where
 
     /// Connect to the Arrow service.
     async fn connect(&mut self) -> Result<String, ArrowError> {
-        log_info!(
-            &mut self.logger,
-            "connecting to remote Arrow Service {}",
-            self.current_addr
-        );
+        info!("connecting to remote Arrow Service {}", self.current_addr);
 
         self.last_attempt = Instant::now();
 
@@ -120,15 +111,14 @@ where
             self.current_addr = addr;
         } else if let Err(err) = res {
             let cstate = if err.kind() == ErrorKind::Unauthorized {
-                log_info!(
-                    &mut self.logger,
+                info!(
                     "connection rejected by the remote service {}; is the client paired?",
                     self.current_addr
                 );
 
                 ConnectionState::Unauthorized
             } else {
-                log_warn!(&mut self.logger, "{}", err);
+                warn!("{err}");
 
                 ConnectionState::Disconnected
             };
@@ -139,7 +129,7 @@ where
 
             self.current_addr.clone_from(&self.default_addr);
 
-            let fut = wait_for_retry(&mut self.logger, retry);
+            let fut = wait_for_retry(retry);
 
             fut.await;
         } else {
@@ -218,11 +208,10 @@ fn process_connection_error(
 }
 
 /// Process a given connection retry object.
-async fn wait_for_retry(logger: &mut dyn Logger, connection_retry: ConnectionRetry) {
+async fn wait_for_retry(connection_retry: ConnectionRetry) {
     match connection_retry {
         ConnectionRetry::Timeout(t) if t > Duration::from_millis(500) => {
-            log_info!(
-                logger,
+            info!(
                 "retrying in {}.{:03} seconds",
                 t.as_secs(),
                 t.subsec_millis()
@@ -234,8 +223,8 @@ async fn wait_for_retry(logger: &mut dyn Logger, connection_retry: ConnectionRet
         }
         ConnectionRetry::Timeout(_) => (),
         ConnectionRetry::Suspend(reason) => {
-            log_info!(logger, "{}", reason.to_string());
-            log_info!(logger, "suspending the connection thread");
+            info!("{}", reason.to_string());
+            info!("suspending the connection thread");
 
             let halt = futures::future::pending::<()>();
 
@@ -249,10 +238,10 @@ async fn wait_for_retry(logger: &mut dyn Logger, connection_retry: ConnectionRet
 /// otherwise exit with exit code 1.
 fn diagnose_connection_result(connection_result: &Result<String, ArrowError>) -> ! {
     match connection_result {
-        Ok(_) => process::exit(0),
+        Ok(_) => std::process::exit(0),
         Err(err) => match err.kind() {
-            ErrorKind::Unauthorized => process::exit(0),
-            _ => process::exit(1),
+            ErrorKind::Unauthorized => std::process::exit(0),
+            _ => std::process::exit(1),
         },
     }
 }
@@ -296,8 +285,8 @@ impl ArrowClient {
     /// * `svc_connector` - custom service connector
     pub fn new_with_connector<C>(config: Config, svc_connector: C) -> (ArrowClient, ArrowClientTask)
     where
-        C: ServiceConnector + Clone + Unpin + 'static,
-        C::Connection: Send + Unpin,
+        C: ServiceConnector + Clone + Send + Sync + 'static,
+        C::Connection: Send,
     {
         let context = ApplicationContext::new(config);
 
@@ -328,12 +317,9 @@ impl ArrowClient {
             tokio::spawn(cmd_handler);
             tokio::spawn(periodic_network_scan.map(|_| ()));
 
-            let mut logger = ctx.get_logger();
-
-            log_info!(
-                &mut logger,
+            info!(
                 "Arrow Client started (uuid: {}, mac: {})",
-                ctx.get_arrow_uuid(),
+                ctx.get_client_id(),
                 ctx.get_arrow_mac_address()
             );
 
@@ -356,9 +342,9 @@ impl ArrowClient {
         (arrow_client, arrow_client_task)
     }
 
-    /// Get Arrow client UUID.
-    pub fn get_arrow_uuid(&self) -> Uuid {
-        self.application_context.get_arrow_uuid()
+    /// Get Arrow client ID.
+    pub fn get_client_id(&self) -> ClientId {
+        self.application_context.get_client_id()
     }
 
     /// Get Arrow client MAC address.

@@ -1,4 +1,4 @@
-// Copyright 2017 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,59 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fmt;
-use std::io;
-use std::mem;
-
-use std::collections::HashMap;
-use std::error::Error as ErrorTrait;
-use std::fmt::{Display, Formatter};
-use std::str::FromStr;
-use std::string::FromUtf8Error;
+use std::{
+    collections::HashMap,
+    fmt::{self, Display, Formatter},
+    str::FromStr,
+};
 
 use bytes::{Buf, BytesMut};
-
+use str_reader::StringReader;
 use tokio_util::codec::Decoder;
 
-use crate::utils::string::reader::Reader as StringReader;
-
-/// Codec error.
-#[derive(Debug, Clone)]
-pub struct Error {
-    msg: String,
-}
-
-impl Error {
-    /// Create a new error.
-    pub fn new<T>(msg: T) -> Self
-    where
-        T: ToString,
-    {
-        Self {
-            msg: msg.to_string(),
-        }
-    }
-}
-
-impl ErrorTrait for Error {}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        f.write_str(&self.msg)
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Self {
-        Self::new(format!("IO error: {}", err))
-    }
-}
-
-impl From<FromUtf8Error> for Error {
-    fn from(err: FromUtf8Error) -> Self {
-        Self::new(format!("UTF-8 error: {}", err))
-    }
-}
+use crate::error::Error;
 
 /// HTTP-like Header field.
 #[derive(Clone)]
@@ -201,7 +159,7 @@ impl HeaderFields {
     pub fn set(&mut self, field: HeaderField) {
         let current_length = self.fields.len();
 
-        let fields = mem::replace(&mut self.fields, Vec::with_capacity(current_length));
+        let fields = std::mem::replace(&mut self.fields, Vec::with_capacity(current_length));
 
         let name = field.lowercase_name().to_string();
 
@@ -458,14 +416,14 @@ impl FromStr for ResponseHeader {
 
         reader
             .match_char('/')
-            .map_err(|_| Error::new("invalid response header"))?;
+            .map_err(|_| Error::from_static_msg("invalid response header"))?;
 
         let version = reader.read_word();
         let status_code = reader.read_word();
         let status_line = reader.as_str();
 
-        let status_code =
-            u16::from_str(status_code).map_err(|_| Error::new("invalid response header"))?;
+        let status_code = u16::from_str(status_code)
+            .map_err(|_| Error::from_static_msg("invalid response header"))?;
 
         let status_line = status_line.trim();
 
@@ -538,11 +496,7 @@ impl Decoder for LineDecoder {
         let separator_length = self.separator.len();
         let old_buffer_length = self.buffer.len();
 
-        let search_start = if old_buffer_length > separator_length {
-            old_buffer_length - separator_length
-        } else {
-            0
-        };
+        let search_start = old_buffer_length.saturating_sub(separator_length);
 
         // number of bytes to be appended
         let append = if (old_buffer_length + data.len()) > self.max_length {
@@ -569,7 +523,8 @@ impl Decoder for LineDecoder {
             if &self.buffer[index..line_length] == self.separator.as_ref() {
                 let line = self.buffer[..index].to_vec();
 
-                let line = String::from_utf8(line)?;
+                let line = String::from_utf8(line)
+                    .map_err(|_| Error::from_static_msg("input line is not UTF-8 encoded"))?;
 
                 if line_length > old_buffer_length {
                     data.advance(line_length - old_buffer_length);
@@ -585,7 +540,7 @@ impl Decoder for LineDecoder {
 
         // no separator was found and the buffer is already full
         if new_buffer_length >= self.max_length {
-            return Err(Error::new("input line is too long"));
+            return Err(Error::from_static_msg("input line is too long"));
         }
 
         Ok(None)
@@ -633,12 +588,12 @@ impl Decoder for ResponseHeaderDecoder {
             self.lines += 1;
 
             if self.lines > self.max_lines {
-                return Err(Error::new("maximum number of lines exceeded"));
+                return Err(Error::from_static_msg("maximum number of lines exceeded"));
             }
 
             if let Some(mut header) = self.header.take() {
                 // check if the current header field should be processed
-                let commit_header_field = line.chars().next().map_or(true, |c| !c.is_whitespace());
+                let commit_header_field = line.chars().next().is_none_or(|c| !c.is_whitespace());
 
                 if commit_header_field && !self.field.is_empty() {
                     header.header_fields.add(self.field.parse()?);
@@ -723,7 +678,7 @@ impl Decoder for SimpleBodyDecoder {
     fn decode_eof(&mut self, data: &mut BytesMut) -> Result<Option<MessageBody>, Error> {
         Decoder::decode(self, data)?;
 
-        let body = mem::take(&mut self.body);
+        let body = std::mem::take(&mut self.body);
 
         Ok(Some(body.into_boxed_slice()))
     }
@@ -770,10 +725,10 @@ impl Decoder for FixedSizeBodyDecoder {
 
         let data = data.split_to(take);
 
-        if let Some(ref mut body) = self.body {
-            if !self.ignore {
-                body.extend_from_slice(data.as_ref());
-            }
+        if let Some(ref mut body) = self.body
+            && !self.ignore
+        {
+            body.extend_from_slice(data.as_ref());
         }
 
         if self.expected > 0 {
@@ -781,7 +736,7 @@ impl Decoder for FixedSizeBodyDecoder {
         } else if let Some(body) = self.body.take() {
             Ok(Some(body.into_boxed_slice()))
         } else {
-            Err(Error::new("no more data is expected"))
+            Err(Error::from_static_msg("no more data is expected"))
         }
     }
 
@@ -793,7 +748,7 @@ impl Decoder for FixedSizeBodyDecoder {
         } else if let Some(body) = self.body.take() {
             Ok(Some(body.into_boxed_slice()))
         } else {
-            Err(Error::new("no more data is expected"))
+            Err(Error::from_static_msg("no more data is expected"))
         }
     }
 }
@@ -836,7 +791,9 @@ impl ChunkedBodyDecoder {
             ChunkedDecoderState::ChunkBody => self.decode_chunk_body(data),
             ChunkedDecoderState::ChunkBodyDelimiter => self.decode_chunk_body_delimiter(data),
             ChunkedDecoderState::TrailerPart => self.decode_trailer_part(data),
-            ChunkedDecoderState::Completed => Err(Error::new("no more data is expected")),
+            ChunkedDecoderState::Completed => {
+                Err(Error::from_static_msg("no more data is expected"))
+            }
         }
     }
 
@@ -847,8 +804,8 @@ impl ChunkedBodyDecoder {
 
             let size = reader.read_until(|c| c == ';');
 
-            let size =
-                usize::from_str_radix(size, 16).map_err(|_| Error::new("invalid chunk size"))?;
+            let size = usize::from_str_radix(size, 16)
+                .map_err(|_| Error::from_static_msg("invalid chunk size"))?;
 
             self.expected = size;
 
@@ -906,7 +863,7 @@ impl ChunkedBodyDecoder {
                 self.state = ChunkedDecoderState::Completed;
 
                 // take the body without allocation
-                let body = mem::take(&mut self.body);
+                let body = std::mem::take(&mut self.body);
 
                 return Ok(Some(body.into_boxed_slice()));
             }
@@ -938,12 +895,12 @@ impl Decoder for ChunkedBodyDecoder {
         if res.is_some() {
             Ok(res)
         } else if self.state == ChunkedDecoderState::Completed {
-            Err(Error::new("no more data is expected"))
+            Err(Error::from_static_msg("no more data is expected"))
         } else {
             self.state = ChunkedDecoderState::Completed;
 
             // take the body without allocation
-            let body = mem::take(&mut self.body);
+            let body = std::mem::take(&mut self.body);
 
             Ok(Some(body.into_boxed_slice()))
         }

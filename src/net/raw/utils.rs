@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,11 +14,10 @@
 
 //! Common functions used throughout the `net::raw::*` modules.
 
-use std::io;
-use std::mem;
-use std::slice;
-
-use std::io::Write;
+use std::{
+    io::{self, Write},
+    mem, slice,
+};
 
 /// Common trait for serializable objects.
 pub trait Serialize {
@@ -55,13 +54,14 @@ pub unsafe fn sum_raw_be(data: *const u8, size: usize) -> u32 {
     let count = size >> 1;
 
     for idx in 0..count {
-        let ptr = data.add(idx << 1) as *const u16;
-        let val = u16::from_be(ptr.read_unaligned());
+        let val = unsafe { std::ptr::read_unaligned(data.add(idx << 1) as *const u16) };
+
+        let val = u16::from_be(val);
 
         sum = sum.wrapping_add(val as u32);
     }
 
-    let slice = slice::from_raw_parts(data, size);
+    let slice = unsafe { slice::from_raw_parts(data, size) };
 
     if (size & 0x01) != 0 {
         sum.wrapping_add((slice[size - 1] as u32) << 8)

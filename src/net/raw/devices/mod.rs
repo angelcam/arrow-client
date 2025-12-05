@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,29 +14,27 @@
 
 //! Ethernet device definitions.
 
-use std::slice;
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    os::raw::{c_char, c_void},
+};
 
-use std::net::{IpAddr, Ipv4Addr};
-use std::os::raw::{c_char, c_void};
-
-use crate::utils;
-
-use crate::net::raw::ether::MacAddr;
+use crate::{net::raw::ether::MacAddr, utils};
 
 #[allow(non_camel_case_types)]
 type net_device = *mut c_void;
 
 #[link(name = "net_devices")]
-extern "C" {
-    fn net_find_devices() -> net_device;
-    fn net_free_device_list(dev: net_device) -> c_void;
-    fn net_get_name(dev: net_device) -> *const c_char;
-    fn net_get_ipv4_address(dev: net_device) -> *const c_char;
-    fn net_get_ipv4_netmask(dev: net_device) -> *const c_char;
-    fn net_get_mac_address(dev: net_device) -> *const c_char;
-    fn net_get_next_device(dev: net_device) -> net_device;
-    fn net_get_mac_addr_size() -> usize;
-    fn net_get_ipv4_addr_size() -> usize;
+unsafe extern "C" {
+    unsafe fn net_find_devices() -> net_device;
+    unsafe fn net_free_device_list(dev: net_device) -> c_void;
+    unsafe fn net_get_name(dev: net_device) -> *const c_char;
+    unsafe fn net_get_ipv4_address(dev: net_device) -> *const c_char;
+    unsafe fn net_get_ipv4_netmask(dev: net_device) -> *const c_char;
+    unsafe fn net_get_mac_address(dev: net_device) -> *const c_char;
+    unsafe fn net_get_next_device(dev: net_device) -> net_device;
+    unsafe fn net_get_mac_addr_size() -> usize;
+    unsafe fn net_get_ipv4_addr_size() -> usize;
 }
 
 /// Network interface.
@@ -71,11 +69,13 @@ impl EthernetDevice {
 
     /// Create a new network interface instance from its raw counterpart.
     unsafe fn new(dev: net_device) -> Self {
-        Self {
-            name: get_name(dev),
-            mac_addr: get_mac_addr(dev),
-            ip_addr: get_ipv4_addr(dev),
-            netmask: get_ipv4_mask(dev),
+        unsafe {
+            Self {
+                name: get_name(dev),
+                mac_addr: get_mac_addr(dev),
+                ip_addr: get_ipv4_addr(dev),
+                netmask: get_ipv4_mask(dev),
+            }
         }
     }
 
@@ -106,33 +106,39 @@ impl EthernetDevice {
 
 /// Get device name.
 unsafe fn get_name(dev: net_device) -> String {
-    utils::cstr_to_string(net_get_name(dev) as *const _)
+    unsafe { utils::cstr_to_string(net_get_name(dev) as *const _) }
 }
 
 /// Get device MAC address.
 unsafe fn get_mac_addr(dev: net_device) -> MacAddr {
-    let addr = net_get_mac_address(dev) as *const c_void;
-    let bytes = ptr_to_bytes(addr, net_get_mac_addr_size());
+    unsafe {
+        let addr = net_get_mac_address(dev) as *const c_void;
+        let bytes = ptr_to_bytes(addr, net_get_mac_addr_size());
 
-    MacAddr::new(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
+        MacAddr::new(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
+    }
 }
 
 /// Get device IPv4 address.
 unsafe fn get_ipv4_addr(dev: net_device) -> Ipv4Addr {
-    let addr = net_get_ipv4_address(dev) as *const c_void;
-    let bytes = ptr_to_bytes(addr, net_get_ipv4_addr_size());
+    unsafe {
+        let addr = net_get_ipv4_address(dev) as *const c_void;
+        let bytes = ptr_to_bytes(addr, net_get_ipv4_addr_size());
 
-    Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])
+        Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])
+    }
 }
 
 /// Get device IPv4 mask.
 unsafe fn get_ipv4_mask(dev: net_device) -> Ipv4Addr {
-    let addr = net_get_ipv4_netmask(dev) as *const c_void;
-    let bytes = ptr_to_bytes(addr, net_get_ipv4_addr_size());
+    unsafe {
+        let addr = net_get_ipv4_netmask(dev) as *const c_void;
+        let bytes = ptr_to_bytes(addr, net_get_ipv4_addr_size());
 
-    Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])
+        Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])
+    }
 }
 
 unsafe fn ptr_to_bytes<'a>(ptr: *const c_void, len: usize) -> &'a [u8] {
-    slice::from_raw_parts(ptr as *const u8, len)
+    unsafe { std::slice::from_raw_parts(ptr as *const u8, len) }
 }

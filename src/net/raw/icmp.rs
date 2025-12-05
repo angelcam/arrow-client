@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,16 +14,19 @@
 
 //! ICMP packet definitions.
 
-use std::io;
-use std::mem;
+use std::{
+    io::{self, Write},
+    mem,
+};
 
-use std::io::Write;
-
-use crate::net::raw;
-use crate::utils;
-
-use crate::net::raw::ether::packet::{PacketParseError, Result};
-use crate::net::raw::ip::{Ipv4PacketBody, Ipv4PacketHeader};
+use crate::{
+    net::raw::{
+        self,
+        ether::packet::{PacketParseError, Result},
+        ip::{Ipv4PacketBody, Ipv4PacketHeader},
+    },
+    utils::AsBytes,
+};
 
 const ICMP_TYPE_ECHO_REPLY: u8 = 0x00;
 const ICMP_TYPE_ECHO: u8 = 0x08;
@@ -146,7 +149,7 @@ impl Ipv4PacketBody for IcmpPacket {
 
         let payload = self.body.as_ref();
 
-        w.write_all(utils::as_bytes(&raw_header))?;
+        w.write_all(raw_header.as_bytes())?;
         w.write_all(payload)?;
 
         Ok(())
@@ -160,8 +163,9 @@ impl Ipv4PacketBody for IcmpPacket {
 }
 
 /// Raw ICMP packet header.
-#[repr(packed)]
+#[repr(C, packed)]
 #[allow(dead_code)]
+#[derive(Copy, Clone)]
 struct RawIcmpPacketHeader {
     icmp_type: u8,
     code: u8,
@@ -205,13 +209,11 @@ pub mod scanner {
     use crate::net::raw::pcap;
 
     use crate::net::raw::devices::EthernetDevice;
-    use crate::net::raw::ether::packet::EtherPacket;
     use crate::net::raw::ether::MacAddr;
+    use crate::net::raw::ether::packet::EtherPacket;
     use crate::net::raw::ip::Ipv4Packet;
     use crate::net::raw::pcap::Scanner;
     use crate::net::raw::utils::Serialize;
-
-    use crate::net::utils::Ipv4AddrEx;
 
     /// ICMP scanner.
     pub struct IcmpScanner {
@@ -229,8 +231,8 @@ pub mod scanner {
 
         /// Create a new scanner instance.
         fn new(device: &EthernetDevice) -> Self {
-            let mask = device.netmask.as_u32();
-            let addr = device.ip_addr.as_u32();
+            let mask = u32::from(device.netmask);
+            let addr = u32::from(device.ip_addr);
             let network = addr & mask;
 
             Self {
@@ -246,8 +248,8 @@ pub mod scanner {
             let bcast = MacAddr::new(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
             let hsrc = self.device.mac_addr;
             let psrc = self.device.ip_addr;
-            let mask = self.device.netmask.as_u32();
-            let addr = self.device.ip_addr.as_u32();
+            let mask = u32::from(self.device.netmask);
+            let addr = u32::from(self.device.ip_addr);
 
             let end = addr | !mask;
 
@@ -303,7 +305,7 @@ pub mod scanner {
                     let sha = eh.src;
                     let spa = iph.src;
 
-                    let nwa = spa.as_u32() & self.mask;
+                    let nwa = u32::from(spa) & self.mask;
 
                     if nwa == self.network {
                         hosts.push((sha, spa));

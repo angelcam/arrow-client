@@ -1,4 +1,4 @@
-// Copyright 2015 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,16 +14,19 @@
 
 //! TCP packet definitions.
 
-use std::io;
-use std::mem;
+use std::{
+    io::{self, Write},
+    mem,
+};
 
-use std::io::Write;
-
-use crate::net::raw;
-use crate::utils;
-
-use crate::net::raw::ether::packet::{PacketParseError, Result};
-use crate::net::raw::ip::{Ipv4PacketBody, Ipv4PacketHeader};
+use crate::{
+    net::raw::{
+        self,
+        ether::packet::{PacketParseError, Result},
+        ip::{Ipv4PacketBody, Ipv4PacketHeader},
+    },
+    utils::AsBytes,
+};
 
 pub const TCP_FLAG_NS: u16 = 1 << 8;
 pub const TCP_FLAG_CWR: u16 = 1 << 7;
@@ -92,7 +95,7 @@ impl TcpPacket {
                 ))
             } else {
                 let options = unsafe {
-                    utils::vec_from_raw_parts_unaligned(
+                    crate::utils::vec_from_raw_parts_unaligned(
                         ptr.add(offset_1) as *const u32,
                         options_len,
                     )
@@ -122,8 +125,10 @@ impl Ipv4PacketBody for TcpPacket {
     fn serialize(&self, iph: &Ipv4PacketHeader, w: &mut dyn Write) -> io::Result<()> {
         let rh = RawTcpPacketHeader::new(iph, self);
 
-        w.write_all(utils::as_bytes(&rh))?;
-        w.write_all(utils::slice_as_bytes(&self.options))?;
+        let options = self.options.as_ref();
+
+        w.write_all(rh.as_bytes())?;
+        w.write_all(options.as_bytes())?;
         w.write_all(&self.data)?;
 
         Ok(())
@@ -138,7 +143,8 @@ impl Ipv4PacketBody for TcpPacket {
 }
 
 /// Packed representation of the TCP packet header.
-#[repr(packed)]
+#[repr(C, packed)]
+#[derive(Copy, Clone)]
 struct RawTcpPacketHeader {
     sport: u16,
     dport: u16,
@@ -182,7 +188,7 @@ impl RawTcpPacketHeader {
 }
 
 /// Pseudo IPv4 packet header for TCP checksum computation.
-#[repr(packed)]
+#[repr(C, packed)]
 #[allow(dead_code)]
 struct PseudoIpv4PacketHeader {
     src: [u8; 4],
@@ -219,8 +225,8 @@ pub mod scanner {
     use crate::net::raw::pcap;
 
     use crate::net::raw::devices::EthernetDevice;
-    use crate::net::raw::ether::packet::EtherPacket;
     use crate::net::raw::ether::MacAddr;
+    use crate::net::raw::ether::packet::EtherPacket;
     use crate::net::raw::ip::Ipv4Packet;
     use crate::net::raw::pcap::Scanner;
     use crate::net::raw::utils::Serialize;
@@ -317,12 +323,12 @@ pub mod scanner {
         type Item = u16;
 
         fn next(&mut self) -> Option<u16> {
-            if self.port >= self.last {
-                if let Some(r) = self.iter.next() {
-                    let r = r.to_range();
-                    self.port = r.start;
-                    self.last = r.end;
-                }
+            if self.port >= self.last
+                && let Some(r) = self.iter.next()
+            {
+                let r = r.to_range();
+                self.port = r.start;
+                self.last = r.end;
             }
 
             if self.port < self.last {
@@ -373,9 +379,9 @@ pub mod scanner {
             endpoints: &PortCollection,
         ) -> pcap::Result<Vec<Service>> {
             let sport = 61234;
-            let mut gen = TcpPortScannerPacketGenerator::new(&self.device, hosts, sport, endpoints);
+            let mut g = TcpPortScannerPacketGenerator::new(&self.device, hosts, sport, endpoints);
 
-            let mut generator = move || gen.next().map(Bytes::copy_from_slice);
+            let mut generator = move || g.next().map(Bytes::copy_from_slice);
 
             let filter = format!(
                 "tcp and dst host {} and dst port {} and \
@@ -478,8 +484,8 @@ mod tests {
 
     use super::scanner::PortCollection;
 
-    use crate::net::raw::ether::packet::EtherPacket;
     use crate::net::raw::ether::MacAddr;
+    use crate::net::raw::ether::packet::EtherPacket;
     use crate::net::raw::ip::*;
     use crate::net::raw::utils::Serialize;
 

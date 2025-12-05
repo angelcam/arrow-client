@@ -1,4 +1,4 @@
-// Copyright 2017 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,23 +14,23 @@
 
 pub mod service;
 
-use std::fmt;
+use std::{
+    collections::HashMap,
+    fmt::{self, Display, Formatter},
+    hash::{Hash, Hasher},
+    net::{Ipv4Addr, SocketAddr},
+    sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::{Arc, Mutex};
-
-use json::JsonValue;
+use serde_lite::{Deserialize, Intermediate, Serialize};
 
 use crate::net::raw::ether::MacAddr;
-use crate::utils::json::{FromJson, ParseError, ToJson};
 
 pub use self::service::{
-    Service, ServiceIdentifier, ServiceType, SVC_TYPE_CONTROL_PROTOCOL, SVC_TYPE_HTTP,
-    SVC_TYPE_LOCKED_MJPEG, SVC_TYPE_LOCKED_RTSP, SVC_TYPE_MJPEG, SVC_TYPE_RTSP, SVC_TYPE_TCP,
-    SVC_TYPE_UNKNOWN_RTSP, SVC_TYPE_UNSUPPORTED_RTSP,
+    SVC_TYPE_CONTROL_PROTOCOL, SVC_TYPE_HTTP, SVC_TYPE_LOCKED_MJPEG, SVC_TYPE_LOCKED_RTSP,
+    SVC_TYPE_MJPEG, SVC_TYPE_RTSP, SVC_TYPE_TCP, SVC_TYPE_UNKNOWN_RTSP, SVC_TYPE_UNSUPPORTED_RTSP,
+    Service, ServiceIdentifier, ServiceType,
 };
 
 const ACTIVE_THRESHOLD: i64 = 1200;
@@ -71,7 +71,11 @@ fn stable_hash<T: Hash>(val: &T) -> u64 {
 
 /// Get current UNIX timestamp in UTC.
 fn get_utc_timestamp() -> i64 {
-    time::now_utc().to_timespec().sec
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .map_err(|err| err.duration())
+        .unwrap_or_else(|d| -(d.as_secs() as i64))
 }
 
 /// Common trait for service table implementations.
@@ -162,114 +166,6 @@ impl ServiceTableElement {
     /// Get service for this element.
     fn to_service(&self) -> Service {
         self.service.clone()
-    }
-}
-
-impl ToJson for ServiceTableElement {
-    fn to_json(&self) -> JsonValue {
-        let default_mac = MacAddr::zero();
-        let default_address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
-
-        let svc_type = self.service.service_type();
-
-        let mac = self.service.mac().unwrap_or(default_mac);
-        let address = self.service.address().unwrap_or(default_address);
-        let path = self.service.path().unwrap_or("");
-
-        object! {
-            "id" => self.id,
-            "svc_type" => svc_type.code(),
-            "mac" => format!("{}", mac),
-            "address" => format!("{}", address),
-            "path" => path,
-            "static_svc" => self.static_service,
-            "last_seen" => self.last_seen,
-            "active" => self.active
-        }
-    }
-}
-
-impl FromJson for ServiceTableElement {
-    fn from_json(value: JsonValue) -> Result<Self, ParseError> {
-        let service = if let JsonValue::Object(svc) = value {
-            svc
-        } else {
-            return Err(ParseError::new("JSON object expected"));
-        };
-
-        let svc_type = service
-            .get("svc_type")
-            .and_then(|v| v.as_u16())
-            .ok_or_else(|| ParseError::new("missing field \"svc_type\""))?;
-        let mac = service
-            .get("mac")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ParseError::new("missing field \"mac\""))?;
-        let address = service
-            .get("address")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ParseError::new("missing field \"address\""))?;
-        let path = service
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ParseError::new("missing field \"path\""))?;
-
-        let epath = String::new();
-
-        let opath = if path.is_empty() {
-            None
-        } else {
-            Some(path.to_string())
-        };
-
-        let mac = mac
-            .parse()
-            .map_err(|_| ParseError::new("unable to parse MAC address"));
-        let address = address
-            .parse()
-            .map_err(|_| ParseError::new("unable to parse socket address"));
-
-        let svc = match svc_type {
-            SVC_TYPE_CONTROL_PROTOCOL => Ok(Service::control()),
-            SVC_TYPE_RTSP => Ok(Service::rtsp(mac?, address?, opath.unwrap_or(epath))),
-            SVC_TYPE_LOCKED_RTSP => Ok(Service::locked_rtsp(mac?, address?, opath)),
-            SVC_TYPE_UNKNOWN_RTSP => Ok(Service::unknown_rtsp(mac?, address?)),
-            SVC_TYPE_UNSUPPORTED_RTSP => Ok(Service::unsupported_rtsp(
-                mac?,
-                address?,
-                opath.unwrap_or(epath),
-            )),
-            SVC_TYPE_HTTP => Ok(Service::http(mac?, address?)),
-            SVC_TYPE_MJPEG => Ok(Service::mjpeg(mac?, address?, opath.unwrap_or(epath))),
-            SVC_TYPE_LOCKED_MJPEG => Ok(Service::locked_mjpeg(mac?, address?, opath)),
-            SVC_TYPE_TCP => Ok(Service::tcp(mac?, address?)),
-            _ => Err(ParseError::new("unknown service type")),
-        };
-
-        let id = service.get("id").and_then(|v| v.as_u16()).unwrap_or(0);
-        let static_svc = service
-            .get("static_svc")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let last_seen = service
-            .get("last_seen")
-            .and_then(|v| v.as_i64())
-            .unwrap_or_else(get_utc_timestamp);
-        let active = service
-            .get("active")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-
-        let elem = Self {
-            id,
-            service: svc?,
-            static_service: static_svc,
-            last_seen,
-            active,
-            enabled: false,
-        };
-
-        Ok(elem)
     }
 }
 
@@ -445,60 +341,48 @@ impl ServiceTableData {
     }
 }
 
-impl ToJson for ServiceTableData {
-    fn to_json(&self) -> JsonValue {
-        let services = self
-            .service_map
-            .values()
-            .filter(|elem| !elem.service.is_control())
-            .map(|elem| elem.to_json())
-            .collect::<Vec<_>>();
+impl Deserialize for ServiceTableData {
+    fn deserialize(val: &Intermediate) -> Result<Self, serde_lite::Error> {
+        let data = ServiceTableDataSerializer::deserialize(val)?;
 
-        object! {
-            "services" => services
-        }
-    }
-}
-
-impl FromJson for ServiceTableData {
-    fn from_json(value: JsonValue) -> Result<Self, ParseError> {
         let mut res = Self::new();
 
-        let mut table = if let JsonValue::Object(t) = value {
-            t
-        } else {
-            return Err(ParseError::new("JSON object expected"));
-        };
-
-        let tmp = table
-            .remove("services")
-            .ok_or_else(|| ParseError::new("missing field \"services\""))?;
-
-        let services = if let JsonValue::Array(svcs) = tmp {
-            svcs.into_iter()
-        } else {
-            return Err(ParseError::new("JSON array expected"));
-        };
-
-        for (index, service) in services.enumerate() {
-            let use_array_index = !service.has_key("id");
-
-            let mut elem = ServiceTableElement::from_json(service)?;
-
-            if use_array_index {
-                elem.id = (index + 1) as u16;
-            }
-
-            res.add_element(elem);
-        }
+        data.services
+            .into_iter()
+            .enumerate()
+            .for_each(|(index, svc)| {
+                res.add_element(svc.into_service_table_element(index));
+            });
 
         Ok(res)
     }
 }
 
+impl Serialize for ServiceTableData {
+    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
+        let services = self
+            .service_map
+            .values()
+            .filter(|elem| !elem.service.is_control())
+            .map(ServiceTableElementSerializer::from)
+            .collect::<Vec<_>>();
+
+        let serializer = ServiceTableDataSerializer { services };
+
+        serializer.serialize()
+    }
+}
+
 impl Display for ServiceTableData {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}", self.to_json())
+        let s = self
+            .serialize()
+            .ok()
+            .map(|val| serde_json::to_string(&val))
+            .and_then(Result::ok)
+            .expect("unable to serialize service table");
+
+        f.write_str(&s)
     }
 }
 
@@ -620,21 +504,21 @@ impl Display for SharedServiceTable {
     }
 }
 
-impl ToJson for SharedServiceTable {
-    fn to_json(&self) -> JsonValue {
-        self.data.lock().unwrap().to_json()
-    }
-}
-
-impl FromJson for SharedServiceTable {
-    fn from_json(value: JsonValue) -> Result<Self, ParseError> {
-        let data = ServiceTableData::from_json(value)?;
+impl Deserialize for SharedServiceTable {
+    fn deserialize(val: &Intermediate) -> Result<Self, serde_lite::Error> {
+        let data = ServiceTableData::deserialize(val)?;
 
         let res = Self {
             data: Arc::new(Mutex::new(data)),
         };
 
         Ok(res)
+    }
+}
+
+impl Serialize for SharedServiceTable {
+    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
+        self.data.lock().unwrap().serialize()
     }
 }
 
@@ -680,9 +564,9 @@ impl ServiceTable for SharedServiceTableRef {
     }
 }
 
-impl ToJson for SharedServiceTableRef {
-    fn to_json(&self) -> JsonValue {
-        self.data.lock().unwrap().to_json()
+impl Serialize for SharedServiceTableRef {
+    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
+        self.data.lock().unwrap().serialize()
     }
 }
 
@@ -692,14 +576,233 @@ impl Display for SharedServiceTableRef {
     }
 }
 
+/// Helper type for serializing/deserializing service table data.
+#[derive(Deserialize, Serialize)]
+struct ServiceTableDataSerializer {
+    services: Vec<ServiceTableElementSerializer>,
+}
+
+/// Helper type for serializing/deserializing service table elements.
+#[derive(Deserialize, Serialize)]
+struct ServiceTableElementSerializer {
+    #[serde(default)]
+    id: Option<u16>,
+
+    svc_type: ServiceTypeSerializer,
+    mac: MacAddrSerializer,
+    address: SocketAddrSerializer,
+    path: String,
+
+    #[serde(default)]
+    static_svc: Option<bool>,
+
+    #[serde(default)]
+    last_seen: Option<i64>,
+
+    #[serde(default)]
+    active: Option<bool>,
+}
+
+impl ServiceTableElementSerializer {
+    /// Create the corresponding `ServiceTableElement`.
+    fn into_service_table_element(self, index: usize) -> ServiceTableElement {
+        let mac = self.mac.into();
+        let address = self.address.into();
+
+        let epath = String::new();
+
+        let opath = if self.path.is_empty() {
+            None
+        } else {
+            Some(self.path)
+        };
+
+        let service = match ServiceType::from(self.svc_type) {
+            ServiceType::ControlProtocol => Service::control(),
+            ServiceType::RTSP => Service::rtsp(mac, address, opath.unwrap_or(epath)),
+            ServiceType::LockedRTSP => Service::locked_rtsp(mac, address, opath),
+            ServiceType::UnknownRTSP => Service::unknown_rtsp(mac, address),
+            ServiceType::UnsupportedRTSP => {
+                Service::unsupported_rtsp(mac, address, opath.unwrap_or(epath))
+            }
+            ServiceType::HTTP => Service::http(mac, address),
+            ServiceType::MJPEG => Service::mjpeg(mac, address, opath.unwrap_or(epath)),
+            ServiceType::LockedMJPEG => Service::locked_mjpeg(mac, address, opath),
+            ServiceType::TCP => Service::tcp(mac, address),
+        };
+
+        ServiceTableElement {
+            id: self.id.unwrap_or((index + 1) as u16),
+            service,
+            static_service: self.static_svc.unwrap_or(false),
+            last_seen: self.last_seen.unwrap_or_else(get_utc_timestamp),
+            active: self.active.unwrap_or(true),
+            enabled: false,
+        }
+    }
+}
+
+impl From<&ServiceTableElement> for ServiceTableElementSerializer {
+    fn from(elem: &ServiceTableElement) -> Self {
+        let svc_type = elem.service.service_type();
+
+        let mac = elem.service.mac().unwrap_or(MacAddr::ZERO).into();
+
+        let address = elem
+            .service
+            .address()
+            .unwrap_or_else(|| SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)))
+            .into();
+
+        let path = elem.service.path().unwrap_or("").into();
+
+        Self {
+            id: Some(elem.id),
+            svc_type: svc_type.into(),
+            mac,
+            address,
+            path,
+            static_svc: Some(elem.static_service),
+            last_seen: Some(elem.last_seen),
+            active: Some(elem.active),
+        }
+    }
+}
+
+/// Helper type for serializing/deserializing service types.
+struct ServiceTypeSerializer {
+    inner: ServiceType,
+}
+
+impl Serialize for ServiceTypeSerializer {
+    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
+        Ok(Intermediate::from(self.inner.code()))
+    }
+}
+
+impl Deserialize for ServiceTypeSerializer {
+    fn deserialize(value: &Intermediate) -> Result<Self, serde_lite::Error> {
+        let inner = value
+            .as_number()
+            .map(u16::try_from)
+            .and_then(Result::ok)
+            .and_then(|code| {
+                let res = match code {
+                    SVC_TYPE_CONTROL_PROTOCOL => ServiceType::ControlProtocol,
+                    SVC_TYPE_RTSP => ServiceType::RTSP,
+                    SVC_TYPE_LOCKED_RTSP => ServiceType::LockedRTSP,
+                    SVC_TYPE_UNKNOWN_RTSP => ServiceType::UnknownRTSP,
+                    SVC_TYPE_UNSUPPORTED_RTSP => ServiceType::UnsupportedRTSP,
+                    SVC_TYPE_HTTP => ServiceType::HTTP,
+                    SVC_TYPE_MJPEG => ServiceType::MJPEG,
+                    SVC_TYPE_LOCKED_MJPEG => ServiceType::LockedMJPEG,
+                    SVC_TYPE_TCP => ServiceType::TCP,
+                    _ => return None,
+                };
+
+                Some(res)
+            })
+            .ok_or_else(|| serde_lite::Error::invalid_value("service type code"))?;
+
+        let res = Self { inner };
+
+        Ok(res)
+    }
+}
+
+impl From<ServiceType> for ServiceTypeSerializer {
+    fn from(svc_type: ServiceType) -> Self {
+        Self { inner: svc_type }
+    }
+}
+
+impl From<ServiceTypeSerializer> for ServiceType {
+    fn from(serializer: ServiceTypeSerializer) -> Self {
+        serializer.inner
+    }
+}
+
+/// Helper type for serializing/deserializing socket addresses.
+struct SocketAddrSerializer {
+    addr: SocketAddr,
+}
+
+impl Deserialize for SocketAddrSerializer {
+    fn deserialize(value: &Intermediate) -> Result<Self, serde_lite::Error> {
+        let addr = value
+            .as_str()
+            .map(|s| s.parse())
+            .and_then(Result::ok)
+            .ok_or_else(|| serde_lite::Error::invalid_value("socket address"))?;
+
+        let res = Self { addr };
+
+        Ok(res)
+    }
+}
+
+impl Serialize for SocketAddrSerializer {
+    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
+        Ok(Intermediate::from(self.addr.to_string()))
+    }
+}
+
+impl From<SocketAddr> for SocketAddrSerializer {
+    fn from(addr: SocketAddr) -> Self {
+        Self { addr }
+    }
+}
+
+impl From<SocketAddrSerializer> for SocketAddr {
+    fn from(serializer: SocketAddrSerializer) -> Self {
+        serializer.addr
+    }
+}
+
+/// Helper type for serializing/deserializing MAC addresses.
+struct MacAddrSerializer {
+    addr: MacAddr,
+}
+
+impl Deserialize for MacAddrSerializer {
+    fn deserialize(value: &Intermediate) -> Result<Self, serde_lite::Error> {
+        let addr = value
+            .as_str()
+            .map(|s| s.parse())
+            .and_then(Result::ok)
+            .ok_or_else(|| serde_lite::Error::invalid_value("MAC address"))?;
+
+        let res = Self { addr };
+
+        Ok(res)
+    }
+}
+
+impl Serialize for MacAddrSerializer {
+    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
+        Ok(Intermediate::from(self.addr.to_string()))
+    }
+}
+
+impl From<MacAddr> for MacAddrSerializer {
+    fn from(addr: MacAddr) -> Self {
+        Self { addr }
+    }
+}
+
+impl From<MacAddrSerializer> for MacAddr {
+    fn from(serializer: MacAddrSerializer) -> Self {
+        serializer.addr
+    }
+}
+
 #[cfg(test)]
 #[test]
 fn test_visible_services_iterator() {
     let mut table = ServiceTableData::new();
 
     let mac = MacAddr::zero();
-    let ip = Ipv4Addr::new(0, 0, 0, 0);
-    let addr = SocketAddr::V4(SocketAddrV4::new(ip, 0));
+    let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
 
     let svc_1 = Service::rtsp(mac, addr, "/1".to_string());
     let svc_2 = Service::rtsp(mac, addr, "/2".to_string());
@@ -723,56 +826,58 @@ fn test_visible_services_iterator() {
 #[cfg(test)]
 #[test]
 fn test_deserialization_and_initialization() {
-    let json = object! {
-        "services" => array![
-            object!{
-                "svc_type" => 1,
-                "mac" => "00:00:00:00:00:00",
-                "address" => "0.0.0.0:0",
-                "path" => "/1",
-                "static_svc" => true,
-                "last_seen" => 123,
-                "active" => true
+    use serde_lite::intermediate;
+
+    let intermediate = intermediate!({
+        "services": [
+            {
+                "svc_type": 1,
+                "mac": "00:00:00:00:00:00",
+                "address": "0.0.0.0:0",
+                "path": "/1",
+                "static_svc": true,
+                "last_seen": 123,
+                "active": true
             },
-            object!{
-                "svc_type" => 1,
-                "mac" => "00:00:00:00:00:00",
-                "address" => "0.0.0.0:0",
-                "path" => "/2",
-                "static_svc" => true,
-                "last_seen" => 123,
-                "active" => true
+            {
+                "svc_type": 1,
+                "mac": "00:00:00:00:00:00",
+                "address": "0.0.0.0:0",
+                "path": "/2",
+                "static_svc": true,
+                "last_seen": 123,
+                "active": true
             },
-            object!{
-                "svc_type" => 1,
-                "mac" => "00:00:00:00:00:00",
-                "address" => "0.0.0.0:0",
-                "path" => "/3",
-                "static_svc" => false,
-                "last_seen" => 123,
-                "active" => true
+            {
+                "svc_type": 1,
+                "mac": "00:00:00:00:00:00",
+                "address": "0.0.0.0:0",
+                "path": "/3",
+                "static_svc": false,
+                "last_seen": 123,
+                "active": true
             },
-            object!{
-                "id" => 10000,
-                "svc_type" => 1,
-                "mac" => "00:00:00:00:00:00",
-                "address" => "0.0.0.0:0",
-                "path" => "/4",
-                "static_svc" => false,
-                "last_seen" => 123,
-                "active" => true
+            {
+                "id": 10000,
+                "svc_type": 1,
+                "mac": "00:00:00:00:00:00",
+                "address": "0.0.0.0:0",
+                "path": "/4",
+                "static_svc": false,
+                "last_seen": 123,
+                "active": true
             }
         ]
-    };
+    });
 
-    let mut table = SharedServiceTable::from_json(json).expect("expected valid service table JSON");
+    let mut table =
+        SharedServiceTable::deserialize(&intermediate).expect("expected valid service table JSON");
 
     assert_eq!(table.service_table_version(), 0);
     assert_eq!(table.visible_set_version(), 0);
 
     let mac = MacAddr::zero();
-    let ip = Ipv4Addr::new(0, 0, 0, 0);
-    let addr = SocketAddr::V4(SocketAddrV4::new(ip, 0));
+    let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
 
     let svc_1 = Service::rtsp(mac, addr, "/1".to_string());
     let svc_2 = Service::rtsp(mac, addr, "/2".to_string());

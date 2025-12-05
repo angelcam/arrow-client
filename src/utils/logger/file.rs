@@ -1,4 +1,4 @@
-// Copyright 2016 click2stream, Inc.
+// Copyright 2025 Angelcam, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,22 +12,109 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! file logger definitions.
+use std::{
+    fmt::Write as _,
+    fs::{File, OpenOptions},
+    io::{self, Write},
+    path::PathBuf,
+    sync::Mutex,
+};
 
-use std::fs;
-use std::io;
+use log::{Level, Log, Metadata, Record};
 
-use std::fmt::Arguments;
-use std::fs::{File, OpenOptions};
-use std::io::Write;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use crate::utils::logger::LogTimeFormatter;
 
-use crate::utils::logger::{Logger, Severity};
+/// File logger.
+pub struct FileLogger {
+    inner: Mutex<InternalFileLogger>,
+}
+
+impl FileLogger {
+    /// Create a new file logger with a given file size limit and given number
+    /// of backup files (rotations).
+    pub fn new<P>(path: P, limit: usize, rotations: usize) -> io::Result<Self>
+    where
+        P: Into<PathBuf>,
+    {
+        let path = path.into();
+
+        let inner = InternalFileLogger::new(path, limit, rotations)?;
+
+        let res = Self {
+            inner: Mutex::new(inner),
+        };
+
+        Ok(res)
+    }
+}
+
+impl Log for FileLogger {
+    fn enabled(&self, _: &Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, record: &Record) {
+        let _ = self.inner.lock().unwrap().log(record);
+    }
+
+    fn flush(&self) {
+        let _ = self.inner.lock().unwrap().flush();
+    }
+}
 
 /// Internal logger implementation.
 struct InternalFileLogger {
-    level: Severity,
+    file: LogFile,
+    buffer: String,
+}
+
+impl InternalFileLogger {
+    /// Create a new internal file logger.
+    fn new(path: PathBuf, limit: usize, rotations: usize) -> io::Result<Self> {
+        let file = LogFile::new(path, limit, rotations)?;
+
+        let res = Self {
+            file,
+            buffer: String::new(),
+        };
+
+        Ok(res)
+    }
+
+    /// Log a given record.
+    fn log(&mut self, record: &Record) -> io::Result<()> {
+        let file = record.file().unwrap_or("-");
+        let line = record.line().unwrap_or(0);
+
+        let args = record.args();
+
+        let level = match record.level() {
+            Level::Trace => "TRACE",
+            Level::Debug => "DEBUG",
+            Level::Info => "INFO",
+            Level::Warn => "WARNING",
+            Level::Error => "ERROR",
+        };
+
+        let mut time_formatter = LogTimeFormatter::new();
+
+        let t = time_formatter.format();
+
+        self.buffer.clear();
+
+        let _ = writeln!(self.buffer, "{t} {level:<7} [{file}:{line}] {args}");
+
+        self.file.write(self.buffer.as_bytes())
+    }
+
+    /// Flush the logger.
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+
+/// Log file with rotation support.
+struct LogFile {
     path: PathBuf,
     file: File,
     written: usize,
@@ -35,15 +122,33 @@ struct InternalFileLogger {
     rotations: usize,
 }
 
-impl InternalFileLogger {
-    /// Write a given line into the underlaying file and rotate as necessary.
-    fn write_line(&mut self, line: &str) -> io::Result<()> {
-        self.write(line.as_bytes())
+impl LogFile {
+    /// Create a new log file.
+    fn new(path: PathBuf, limit: usize, rotations: usize) -> io::Result<Self> {
+        let written = match path.metadata() {
+            Ok(metadata) => metadata.len(),
+            Err(_) => 0,
+        };
+
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+
+        let res = Self {
+            path,
+            file,
+            written: written as usize,
+            limit,
+            rotations,
+        };
+
+        Ok(res)
     }
 
-    /// Write given data into the underlaying file and rotate as necessary.
+    /// Write given data into the underlying file and rotate as necessary.
     fn write(&mut self, data: &[u8]) -> io::Result<()> {
         if (self.written + data.len()) > self.limit {
+            eprintln!("rotating log file...");
+
+            self.flush()?;
             self.rotate()?;
         }
 
@@ -51,34 +156,30 @@ impl InternalFileLogger {
 
         self.written += data.len();
 
+        eprintln!("written bytes: {}", self.written);
+
+        Ok(())
+    }
+
+    /// Flush the log file.
+    fn flush(&mut self) -> io::Result<()> {
         self.file.flush()
     }
 
     /// Rotate the log files.
     fn rotate(&mut self) -> io::Result<()> {
+        let base_path = self.path.display();
+
         for i in 0..self.rotations - 1 {
-            let mut from = self.path.as_os_str().to_os_string();
-            let mut to = self.path.as_os_str().to_os_string();
-
-            from.push(format!(".{}", self.rotations - i - 1));
-            to.push(format!(".{}", self.rotations - i));
-
-            let from = PathBuf::from(from);
-            let to = PathBuf::from(to);
+            let from = PathBuf::from(format!("{}.{}", base_path, self.rotations - i - 1));
 
             if from.exists() {
-                fs::rename(&from, &to)?;
+                std::fs::rename(from, format!("{}.{}", base_path, self.rotations - i))?;
             }
         }
 
         if self.rotations > 0 {
-            let mut to = self.path.as_os_str().to_os_string();
-
-            to.push(".1");
-
-            let to = PathBuf::from(to);
-
-            fs::rename(&self.path, to)?;
+            std::fs::rename(&self.path, format!("{base_path}.1"))?;
         }
 
         self.file = File::create(&self.path)?;
@@ -89,104 +190,26 @@ impl InternalFileLogger {
     }
 }
 
-impl Logger for InternalFileLogger {
-    fn log(&mut self, file: &str, line: u32, s: Severity, msg: Arguments) {
-        let t = time::strftime("%F %T", &time::now()).unwrap();
-
-        let severity = match s {
-            Severity::DEBUG => "DEBUG",
-            Severity::INFO => "INFO",
-            Severity::WARN => "WARNING",
-            Severity::ERROR => "ERROR",
-        };
-
-        if s >= self.level {
-            self.write_line(&format!(
-                "{} {:<7} [{}:{}] {}\n",
-                t, severity, file, line, msg
-            ))
-            .unwrap();
-        }
-    }
-
-    fn set_level(&mut self, s: Severity) {
-        self.level = s;
-    }
-
-    fn get_level(&self) -> Severity {
-        self.level
-    }
-}
-
-/// File logger.
-#[derive(Clone)]
-pub struct FileLogger {
-    shared: Arc<Mutex<InternalFileLogger>>,
-}
-
-impl FileLogger {
-    /// Create a new file logger with a given file size limit, given number of backup files
-    /// (rotations) and with log level set to INFO.
-    pub fn new<P>(path: P, limit: usize, rotations: usize) -> io::Result<Self>
-    where
-        PathBuf: From<P>,
-    {
-        let path = PathBuf::from(path);
-
-        let written = match path.metadata() {
-            Ok(metadata) => metadata.len(),
-            Err(_) => 0,
-        };
-
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
-
-        let logger = InternalFileLogger {
-            level: Severity::INFO,
-            path,
-            file,
-            written: written as usize,
-            limit,
-            rotations,
-        };
-
-        let logger = Self {
-            shared: Arc::new(Mutex::new(logger)),
-        };
-
-        Ok(logger)
-    }
-}
-
-impl Logger for FileLogger {
-    fn log(&mut self, file: &str, line: u32, s: Severity, msg: Arguments) {
-        self.shared.lock().unwrap().log(file, line, s, msg)
-    }
-
-    fn set_level(&mut self, s: Severity) {
-        self.shared.lock().unwrap().set_level(s)
-    }
-
-    fn get_level(&self) -> Severity {
-        self.shared.lock().unwrap().get_level()
-    }
-}
-
 #[cfg(test)]
 mod test {
-    use super::*;
-
-    use std::ffi::OsStr;
-    use std::fs;
     use std::path::Path;
 
-    use crate::utils::logger::Logger;
+    use log::{Level, Log, Record};
 
-    fn file_exists<P: AsRef<OsStr> + ?Sized>(file: &P) -> bool {
-        Path::new(file).exists()
+    use super::FileLogger;
+
+    fn file_exists<P>(file: P) -> bool
+    where
+        P: AsRef<Path>,
+    {
+        file.as_ref().exists()
     }
 
-    fn remove_file<P: AsRef<Path>>(file: P) {
-        fs::remove_file(file).ok();
+    fn remove_file<P>(file: P)
+    where
+        P: AsRef<Path>,
+    {
+        let _ = std::fs::remove_file(file);
     }
 
     fn remove_files() {
@@ -202,41 +225,53 @@ mod test {
     fn test_file_logger() {
         remove_files();
 
-        let mut logger = FileLogger::new("testlog", 100, 5).unwrap();
+        let record = Record::builder()
+            .args(format_args!("foo"))
+            .level(Level::Warn)
+            .file(Some("test.rs"))
+            .line(Some(42))
+            .build();
 
-        log_debug!(logger, "foo");
+        let logger = FileLogger::new("testlog", 100, 5).unwrap();
 
-        log_info!(logger, "foo");
+        logger.log(&record);
+        logger.log(&record);
 
         assert!(file_exists("testlog"));
         assert!(!file_exists("testlog.1"));
 
-        log_warn!(logger, "foo");
+        logger.log(&record);
+        logger.log(&record);
 
         assert!(file_exists("testlog.1"));
         assert!(!file_exists("testlog.2"));
 
-        log_warn!(logger, "foo");
+        logger.log(&record);
+        logger.log(&record);
 
         assert!(file_exists("testlog.2"));
         assert!(!file_exists("testlog.3"));
 
-        log_warn!(logger, "foo");
+        logger.log(&record);
+        logger.log(&record);
 
         assert!(file_exists("testlog.3"));
         assert!(!file_exists("testlog.4"));
 
-        log_warn!(logger, "foo");
+        logger.log(&record);
+        logger.log(&record);
 
         assert!(file_exists("testlog.4"));
         assert!(!file_exists("testlog.5"));
 
-        log_warn!(logger, "foo");
+        logger.log(&record);
+        logger.log(&record);
 
         assert!(file_exists("testlog.5"));
         assert!(!file_exists("testlog.6"));
 
-        log_warn!(logger, "foo");
+        logger.log(&record);
+        logger.log(&record);
 
         assert!(file_exists("testlog.5"));
         assert!(!file_exists("testlog.6"));
