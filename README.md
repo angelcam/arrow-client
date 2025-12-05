@@ -2,9 +2,6 @@
 
 ![](https://github.com/angelcam/arrow-client/workflows/tests/badge.svg)
 
-[![Build Status](https://travis-ci.org/angelcam/arrow-client.svg?branch=master)](https://travis-ci.org/angelcam/arrow-client)
-
-
 Arrow Client is an application used to simplify the process of connecting IP
 cameras to the Angelcam cloud. The Arrow Client is intended to be shipped
 together with IP camera firmwares or as a standalone application for various
@@ -46,20 +43,15 @@ arr-rs.angelcam.com:8900
 ```
 
 We use custom root CA certificates. You can find the certificates in this
-repository (files `root-g1.pem` and `root-g2.pem`). Currently, there are two
-root certificates. The older certificate expires on 2025-03-02, the other
-certificate is valid until 2044-04-18. We recommend starting the application
-with both certificates to ensure uninterrupted service after we switch our
-servers to the new certificate.
+repository (the `root-g2.pem` file).
 
 Here is an example of starting the Arrow Client with one fixed RTSP service and
 with network scanning enabled:
 
 ```bash
 arrow-client arr-rs.angelcam.com:8900 -d \
-    -c root-g1.pem \
     -c root-g2.pem \
-    -r "rtsp://localhost:8554/stream.sdp?prof=baseline&res=low"
+    -R "rtsp://localhost:8554/stream.sdp?prof=baseline&res=low"
 ```
 
 Note that the application requires root privileges for direct access to local
