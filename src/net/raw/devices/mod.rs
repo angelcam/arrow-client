@@ -102,6 +102,18 @@ impl EthernetDevice {
     pub fn mask(&self) -> IpAddr {
         self.netmask.into()
     }
+
+    /// Check if a given IP address belongs to this network.
+    pub fn contains_ip_addr(&self, addr: IpAddr) -> bool {
+        let IpAddr::V4(addr) = addr else {
+            return false;
+        };
+
+        let netmask = u32::from(self.netmask);
+        let network = u32::from(self.ip_addr) & netmask;
+
+        network == (u32::from(addr) & netmask)
+    }
 }
 
 /// Get device name.

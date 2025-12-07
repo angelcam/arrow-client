@@ -16,7 +16,6 @@ use std::{
     fmt::{self, Display, Write},
     io,
     iter::FromIterator,
-    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
     process,
     sync::Arc,
@@ -33,8 +32,11 @@ use crate::{
     context::ConnectionState,
     error::Error,
     storage::{DefaultStorage, Storage},
-    svc_table::{SharedServiceTable, SharedServiceTableRef},
-    utils::logger::{FileLogger, StderrLogger},
+    svc_table::{LockedServiceTable, ServiceSource, ServiceTable, ServiceTableHandle},
+    utils::{
+        get_fake_mac,
+        logger::{FileLogger, StderrLogger},
+    },
 };
 
 #[cfg(not(target_os = "windows"))]
@@ -88,9 +90,8 @@ pub struct ConfigBuilder {
     services: Vec<Service>,
     flash_friendly: bool,
     diagnostic_mode: bool,
-    gateway_mode: bool,
-    discovery: bool,
-    discovery_whitelist: Vec<String>,
+    gateway_interfaces: Vec<String>,
+    discovery_interfaces: Vec<String>,
     device_category: Option<String>,
     device_type: Option<String>,
     device_vendor: Option<String>,
@@ -104,17 +105,18 @@ impl ConfigBuilder {
             services: Vec::new(),
             flash_friendly: false,
             diagnostic_mode: false,
-            gateway_mode: true,
-            discovery: false,
-            discovery_whitelist: Vec::new(),
+            gateway_interfaces: Vec::new(),
+            discovery_interfaces: Vec::new(),
             device_category: None,
             device_type: None,
             device_vendor: None,
         }
     }
 
-    /// Set MAC address. (The MAC address can be used as a client identifier in the pairing
-    /// process).
+    /// Set MAC address.
+    ///
+    /// The MAC address can be used as a client identifier in the pairing
+    /// process.
     pub fn mac_address(&mut self, mac_addr: Option<MacAddr>) -> &mut Self {
         self.arrow_mac = mac_addr;
         self
@@ -156,25 +158,28 @@ impl ConfigBuilder {
         self
     }
 
-    /// Set gateway mode.
-    pub fn gateway_mode(&mut self, enabled: bool) -> &mut Self {
-        self.gateway_mode = enabled;
-        self
-    }
-
-    /// Enable/disable automatic service discovery.
-    pub fn discovery(&mut self, enabled: bool) -> &mut Self {
-        self.discovery = enabled;
-        self
-    }
-
-    /// Set a given discovery whitelist (i.e. a set of network interfaces which
-    /// can be used for automatic service discovery).
-    pub fn discovery_whitelist<I>(&mut self, whitelist: I) -> &mut Self
+    /// Enable the gateway mode on given network interfaces.
+    ///
+    /// Services belonging to all local networks associated with the interfaces
+    /// will be accessible to the Arrow Client. Note that even if no gateway
+    /// interfaces are set, the client can still access services provided via
+    /// the `services` method.
+    pub fn gateway_interfaces<I>(&mut self, interfaces: I) -> &mut Self
     where
         I: IntoIterator<Item = String>,
     {
-        self.discovery_whitelist = Vec::from_iter(whitelist);
+        self.gateway_interfaces = Vec::from_iter(interfaces);
+        self
+    }
+
+    /// Enable automatic service discovery on given network interfaces.
+    ///
+    /// This also enables the gateway mode for these interfaces.
+    pub fn discovery_interfaces<I>(&mut self, interfaces: I) -> &mut Self
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.discovery_interfaces = Vec::from_iter(interfaces);
         self
     }
 
@@ -237,8 +242,13 @@ impl ConfigBuilder {
             .inspect_err(|err| warn!("unable to load MJPEG paths ({err})"))
             .unwrap_or_default();
 
-        self.discovery_whitelist.sort_unstable();
-        self.discovery_whitelist.dedup();
+        self.gateway_interfaces
+            .extend(self.discovery_interfaces.clone());
+        self.gateway_interfaces.sort_unstable();
+        self.gateway_interfaces.dedup();
+
+        self.discovery_interfaces.sort_unstable();
+        self.discovery_interfaces.dedup();
 
         let mut config = Config {
             version: config.version,
@@ -247,9 +257,8 @@ impl ConfigBuilder {
             arrow_mac: mac,
             arrow_svc_addr: arrow_service_address.to_string(),
             diagnostic_mode: self.diagnostic_mode,
-            gateway_mode: self.gateway_mode,
-            discovery: self.discovery,
-            discovery_whitelist: Arc::new(self.discovery_whitelist),
+            gateway_interfaces: Arc::new(self.gateway_interfaces),
+            discovery_interfaces: Arc::new(self.discovery_interfaces),
             rtsp_paths: Arc::new(rtsp_paths),
             mjpeg_paths: Arc::new(mjpeg_paths),
             default_svc_table: config.svc_table.clone(),
@@ -262,10 +271,17 @@ impl ConfigBuilder {
             device_vendor: self.device_vendor,
         };
 
-        for svc in self.services {
-            config.svc_table.add_static(svc.clone());
-            config.default_svc_table.add_static(svc);
+        {
+            let mut svc_table = config.svc_table.lock();
+            let mut default_svc_table = config.default_svc_table.lock();
+
+            for svc in self.services {
+                svc_table.add(svc.clone(), ServiceSource::Static);
+                default_svc_table.add(svc, ServiceSource::Static);
+            }
         }
+
+        config.update_service_availability();
 
         config.save().map_err(Error::from_other)?;
 
@@ -286,7 +302,7 @@ pub struct PersistentConfig {
     uuid: UuidSerializer,
     passwd: UuidSerializer,
     version: usize,
-    svc_table: SharedServiceTable,
+    svc_table: ServiceTable,
 }
 
 impl PersistentConfig {
@@ -308,7 +324,7 @@ impl PersistentConfig {
             uuid: self.uuid,
             passwd: self.passwd,
             version: 0,
-            svc_table: SharedServiceTable::new(),
+            svc_table: ServiceTable::new(),
         }
     }
 }
@@ -319,7 +335,7 @@ impl Default for PersistentConfig {
             uuid: UuidSerializer::from(Uuid::new_v4()),
             passwd: UuidSerializer::from(Uuid::new_v4()),
             version: 0,
-            svc_table: SharedServiceTable::new(),
+            svc_table: ServiceTable::new(),
         }
     }
 }
@@ -332,13 +348,12 @@ pub struct Config {
     arrow_mac: MacAddr,
     arrow_svc_addr: String,
     diagnostic_mode: bool,
-    gateway_mode: bool,
-    discovery: bool,
-    discovery_whitelist: Arc<Vec<String>>,
+    gateway_interfaces: Arc<Vec<String>>,
+    discovery_interfaces: Arc<Vec<String>>,
     rtsp_paths: Arc<Vec<String>>,
     mjpeg_paths: Arc<Vec<String>>,
-    svc_table: SharedServiceTable,
-    default_svc_table: SharedServiceTable,
+    svc_table: ServiceTable,
+    default_svc_table: ServiceTable,
     storage: Box<dyn Storage + Send>,
     tls_connector: TlsConnector,
     flash_friendly: bool,
@@ -385,16 +400,10 @@ impl Config {
         self.arrow_mac
     }
 
-    /// Get network discovery settings.
-    #[doc(hidden)]
-    pub fn get_discovery(&self) -> bool {
-        self.discovery
-    }
-
     /// Get network discovery whitelist.
     #[doc(hidden)]
-    pub fn get_discovery_whitelist(&self) -> Arc<Vec<String>> {
-        self.discovery_whitelist.clone()
+    pub fn get_discovery_interfaces(&self) -> Arc<Vec<String>> {
+        self.discovery_interfaces.clone()
     }
 
     /// Check if the application is in the diagnostic mode.
@@ -406,7 +415,7 @@ impl Config {
     /// Check if the client can be used as a gateway.
     #[doc(hidden)]
     pub fn get_gateway_mode(&self) -> bool {
-        self.gateway_mode
+        !self.gateway_interfaces.is_empty()
     }
 
     /// Get RTSP paths for the network scanner.
@@ -429,8 +438,8 @@ impl Config {
 
     /// Get read-only reference to the shared service table.
     #[doc(hidden)]
-    pub fn get_service_table(&self) -> SharedServiceTableRef {
-        self.svc_table.get_ref()
+    pub fn get_service_table(&self) -> ServiceTableHandle {
+        self.svc_table.handle()
     }
 
     /// Reset the service table.
@@ -445,35 +454,34 @@ impl Config {
         }
     }
 
-    /// Update service table. Add all given services into the table and update active services.
+    /// Add a new service to the service table.
     #[doc(hidden)]
-    pub fn update_service_table<I>(&mut self, services: I)
+    pub fn add_service(&mut self, service: Service, source: ServiceSource) -> u16 {
+        self.update_service_table_internal(|svc_table| svc_table.add(service, source))
+    }
+
+    /// Update service table.
+    ///
+    /// Add all given services into the table and update visible and available
+    /// services.
+    #[doc(hidden)]
+    pub fn update_service_table<I>(&mut self, services: I, source: ServiceSource)
     where
         I: IntoIterator<Item = Service>,
     {
-        let old_st_version = self.svc_table.service_table_version();
-        let old_vs_version = self.svc_table.visible_set_version();
+        self.update_service_table_internal(|svc_table| {
+            for svc in services {
+                svc_table.add(svc, source);
+            }
+        });
+    }
 
-        for svc in services {
-            self.svc_table.add(svc);
-        }
-
-        self.svc_table.update_active_services();
-
-        let new_st_version = self.svc_table.service_table_version();
-        let new_vs_version = self.svc_table.visible_set_version();
-
-        if old_st_version == new_st_version
-            && (self.flash_friendly || old_vs_version == new_vs_version)
-        {
-            return;
-        }
-
-        self.version += 1;
-
-        if let Err(err) = self.save() {
-            warn!("{err}");
-        }
+    /// Update service availability based on the current network state.
+    #[doc(hidden)]
+    pub fn update_service_availability(&self) {
+        self.svc_table
+            .lock()
+            .update_service_availability(&self.get_whitelisted_network_interfaces());
     }
 
     /// Update connection state.
@@ -515,6 +523,56 @@ impl Config {
             svc_table: self.svc_table.clone(),
         }
     }
+
+    /// Update service table.
+    fn update_service_table_internal<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&mut LockedServiceTable) -> R,
+    {
+        let interface_whitelist = self.get_whitelisted_network_interfaces();
+
+        let (res, save) = {
+            let mut svc_table = self.svc_table.lock();
+
+            let old_st_version = svc_table.service_table_version();
+            let old_vs_version = svc_table.visible_set_version();
+
+            let res = f(&mut svc_table);
+
+            svc_table.update_service_availability(&interface_whitelist);
+            svc_table.update_service_visibility(crate::utils::get_utc_timestamp());
+
+            let new_st_version = svc_table.service_table_version();
+            let new_vs_version = svc_table.visible_set_version();
+
+            let save = old_st_version != new_st_version
+                || (!self.flash_friendly && old_vs_version != new_vs_version);
+
+            (res, save)
+        };
+
+        if save {
+            self.version += 1;
+
+            if let Err(err) = self.save() {
+                warn!("{err}");
+            }
+        }
+
+        res
+    }
+
+    /// Get whitelisted network interfaces.
+    fn get_whitelisted_network_interfaces(&self) -> Vec<NetworkInterface> {
+        NetworkInterface::list()
+            .into_iter()
+            .filter(|iface| {
+                self.gateway_interfaces
+                    .binary_search_by_key(&iface.name(), String::as_str)
+                    .is_ok()
+            })
+            .collect::<Vec<_>>()
+    }
 }
 
 /// Arrow Client configuration parser.
@@ -525,24 +583,25 @@ struct ConfigParser {
     #[argh(positional)]
     arrow_service: String,
 
-    /// ethernet interface used for client identification (the first configured
-    /// network interface is used by default)
-    #[argh(option, short = 'i')]
-    default_interface: Option<String>,
-
     /// path to a CA certificate for Arrow Service identity verification; in
     /// case the path is a directory, it's scanned recursively for all files
     /// with the following extensions: *.der, *.cer, *.crr, *.pem
     #[argh(option, short = 'c')]
     ca_certificate: Vec<PathBuf>,
 
-    /// automatic service discovery
-    #[cfg(feature = "discovery")]
-    #[argh(switch, short = 'd')]
-    discovery: bool,
+    /// ethernet interface used for client identification (the first configured
+    /// network interface is used by default)
+    #[argh(option, short = 'i')]
+    default_interface: Option<String>,
 
-    /// limit automatic service discovery only to a given network interface
-    /// (implies -d; can be used multiple times)
+    /// enable the gateway mode on a given network interface (services
+    /// belonging to all local networks associated with the interface will be
+    /// accessible to the Arrow Client)
+    #[argh(option, short = 'G')]
+    gateway_interface: Vec<String>,
+
+    /// enable automatic service discovery on a given network interface (this
+    /// also enables the gateway mode on the interface)
     #[cfg(feature = "discovery")]
     #[argh(option, short = 'D')]
     discovery_interface: Vec<String>,
@@ -598,11 +657,6 @@ struct ConfigParser {
     /// considered as a success)
     #[argh(switch)]
     diagnostic_mode: bool,
-
-    /// disable the gateway mode (i.e. the client won't be able to connect to
-    /// any external services except those available via localhost)
-    #[argh(switch)]
-    no_gateway_mode: bool,
 
     /// send log messages into stderr instead of syslog
     #[argh(switch)]
@@ -697,13 +751,11 @@ impl ConfigParser {
             .mac_address(arrow_mac)
             .services(services)
             .diagnostic_mode(self.diagnostic_mode)
-            .gateway_mode(!self.no_gateway_mode)
-            .flash_friendly(self.flash_friendly);
+            .flash_friendly(self.flash_friendly)
+            .gateway_interfaces(self.gateway_interface);
 
         #[cfg(feature = "discovery")]
-        config_builder
-            .discovery(self.discovery || !self.discovery_interface.is_empty())
-            .discovery_whitelist(self.discovery_interface);
+        config_builder.discovery_interfaces(self.discovery_interface);
 
         if let Some(c) = self.device_category {
             config_builder.device_category(c);
@@ -775,7 +827,7 @@ impl ConfigParser {
                 Error::from_msg(format!("unable to resolve socket address: {addr}"))
             })?;
 
-            let mac = get_fake_mac(0xffff, &addr);
+            let mac = get_fake_mac(0xffff, addr.ip());
 
             services.push(Service::http(mac, addr));
         }
@@ -785,7 +837,7 @@ impl ConfigParser {
                 Error::from_msg(format!("unable to resolve socket address: {addr}"))
             })?;
 
-            let mac = get_fake_mac(0xffff, &addr);
+            let mac = get_fake_mac(0xffff, addr.ip());
 
             services.push(Service::tcp(mac, addr));
         }
@@ -817,41 +869,6 @@ fn get_mac(iface: &str) -> Result<MacAddr, Error> {
         .ok_or_else(|| Error::from_msg(format!("there is no such ethernet device: {iface}")))
 }
 
-/// Generate a fake MAC address from a given prefix and socket address.
-///
-/// Note: It is used in case we do not know the device MAC address (e.g. for
-/// services passed as command line arguments).
-fn get_fake_mac(prefix: u16, addr: &SocketAddr) -> MacAddr {
-    match addr {
-        SocketAddr::V4(addr) => get_fake_mac_from_ipv4(prefix, addr),
-        SocketAddr::V6(addr) => get_fake_mac_from_ipv6(prefix, addr),
-    }
-}
-
-fn get_fake_mac_from_ipv4(prefix: u16, addr: &SocketAddrV4) -> MacAddr {
-    let a = ((prefix >> 8) & 0xff) as u8;
-    let b = (prefix & 0xff) as u8;
-
-    let addr = addr.ip();
-    let octets = addr.octets();
-
-    MacAddr::new(a, b, octets[0], octets[1], octets[2], octets[3])
-}
-
-fn get_fake_mac_from_ipv6(prefix: u16, addr: &SocketAddrV6) -> MacAddr {
-    let addr = addr.ip();
-    let segments = addr.segments();
-
-    let e0 = ((prefix >> 8) & 0xff) as u8;
-    let e1 = (prefix & 0xff) as u8;
-    let e2 = ((segments[6] >> 8) & 0xff) as u8;
-    let e3 = (segments[6] & 0xff) as u8;
-    let e4 = ((segments[7] >> 8) & 0xff) as u8;
-    let e5 = (segments[7] & 0xff) as u8;
-
-    MacAddr::new(e0, e1, e2, e3, e4, e5)
-}
-
 /// Parse a given RTSP URL and return an RTSP service, a LockedRTSP service or an error.
 fn parse_rtsp_url(url: &str) -> Result<Service, Error> {
     let url = url
@@ -873,7 +890,7 @@ fn parse_rtsp_url(url: &str) -> Result<Service, Error> {
         ))
     })?;
 
-    let mac = get_fake_mac(0xffff, &socket_addr);
+    let mac = get_fake_mac(0xffff, socket_addr.ip());
 
     let mut path = url.path().to_string();
 
@@ -909,7 +926,7 @@ fn parse_mjpeg_url(url: &str) -> Result<Service, Error> {
         ))
     })?;
 
-    let mac = get_fake_mac(0xffff, &socket_addr);
+    let mac = get_fake_mac(0xffff, socket_addr.ip());
 
     let mut path = url.path().to_string();
 

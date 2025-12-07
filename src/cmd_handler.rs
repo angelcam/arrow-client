@@ -27,7 +27,7 @@ use futures::{
 use crate::context::ApplicationContext;
 
 #[cfg(feature = "discovery")]
-use crate::scanner::discovery;
+use crate::{scanner::discovery, svc_table::ServiceSource};
 
 /// Network scan period.
 const NETWORK_SCAN_PERIOD: Duration = Duration::from_secs(300);
@@ -128,7 +128,9 @@ impl CommandHandlerContext {
     #[cfg(feature = "discovery")]
     /// Trigger a network scan.
     fn scan_network(&mut self) {
-        if !self.app_context.get_discovery() || self.scanner.is_some() {
+        let interfaces = self.app_context.get_discovery_interfaces();
+
+        if interfaces.is_empty() || self.scanner.is_some() {
             return;
         }
 
@@ -210,7 +212,7 @@ pub fn new(app_context: ApplicationContext) -> (CommandChannel, CommandHandler) 
 #[cfg(feature = "discovery")]
 /// Run device discovery and update the service table.
 fn network_scanner_thread(mut app_context: ApplicationContext) {
-    let discovery_whitelist = app_context.get_discovery_whitelist();
+    let discovery_whitelist = app_context.get_discovery_interfaces();
     let rtsp_paths = app_context.get_rtsp_paths();
     let mjpeg_paths = app_context.get_mjpeg_paths();
 
@@ -226,7 +228,7 @@ fn network_scanner_thread(mut app_context: ApplicationContext) {
 
         let count = services.len();
 
-        app_context.update_service_table(services);
+        app_context.update_service_table(services, ServiceSource::Discovery);
         app_context.set_scan_result(result);
 
         info!(

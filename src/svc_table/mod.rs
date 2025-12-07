@@ -12,20 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod hash;
+mod serializer;
+
 pub mod service;
 
 use std::{
     collections::HashMap,
     fmt::{self, Display, Formatter},
-    hash::{Hash, Hasher},
-    net::{Ipv4Addr, SocketAddr},
-    sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use serde_lite::{Deserialize, Intermediate, Serialize};
 
-use crate::net::raw::ether::MacAddr;
+use crate::{net::raw::devices::EthernetDevice, utils::get_utc_timestamp};
+
+use self::serializer::ServiceTableSerializer;
 
 pub use self::service::{
     SVC_TYPE_CONTROL_PROTOCOL, SVC_TYPE_HTTP, SVC_TYPE_LOCKED_MJPEG, SVC_TYPE_LOCKED_RTSP,
@@ -35,137 +37,206 @@ pub use self::service::{
 
 const ACTIVE_THRESHOLD: i64 = 1200;
 
-/// Stable implementation of the Hasher trait.
-struct StableHasher {
-    data: Vec<u8>,
+/// Service source.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ServiceSource {
+    /// Service added via command line.
+    Static,
+
+    /// Service added via the JSON-RPC API.
+    Custom,
+
+    /// Service discovered via network scanning.
+    Discovery,
 }
 
-impl StableHasher {
-    /// Create a new instance of StableHasher with a given capacity of the
-    /// internal data buffer.
-    fn new(capacity: usize) -> StableHasher {
-        StableHasher {
-            data: Vec::with_capacity(capacity),
-        }
-    }
+/// Service table implementation that can be shared across multiple threads.
+pub struct ServiceTable {
+    data: Arc<Mutex<ServiceTableData>>,
 }
 
-impl Hasher for StableHasher {
-    fn finish(&self) -> u64 {
-        farmhash::fingerprint64(&self.data)
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        self.data.extend_from_slice(bytes)
-    }
-}
-
-/// Compute an u64 hash for a given hashable object using a stable hasher.
-fn stable_hash<T: Hash>(val: &T) -> u64 {
-    let mut hasher = StableHasher::new(512);
-
-    val.hash(&mut hasher);
-
-    hasher.finish()
-}
-
-/// Get current UNIX timestamp in UTC.
-fn get_utc_timestamp() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .map_err(|err| err.duration())
-        .unwrap_or_else(|d| -(d.as_secs() as i64))
-}
-
-/// Common trait for service table implementations.
-pub trait ServiceTable {
-    /// Get service with a given ID.
-    fn get(&self, id: u16) -> Option<Service>;
-
-    /// Get service ID for a given ServiceIdentifier.
-    fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16>;
-
-    /// Convert this service table into a trait object.
-    fn boxed(self) -> BoxServiceTable;
-}
-
-/// Type alias for boxed service table.
-pub type BoxServiceTable = Box<dyn ServiceTable + Send + Sync>;
-
-impl ServiceTable for Box<dyn ServiceTable + Send + Sync> {
-    fn get(&self, id: u16) -> Option<Service> {
-        self.as_ref().get(id)
-    }
-
-    fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16> {
-        self.as_ref().get_id(identifier)
-    }
-
-    fn boxed(self) -> BoxServiceTable {
-        self
-    }
-}
-
-/// Service table element.
-#[derive(Clone)]
-struct ServiceTableElement {
-    /// Service ID.
-    id: u16,
-    /// Service.
-    service: Service,
-    /// Flag indicating a manually added service.
-    static_service: bool,
-    /// Flag indicating static service visibility.
-    enabled: bool,
-    /// UNIX timestamp (in UTC) of the last discovery event.
-    last_seen: i64,
-    /// Active flag.
-    active: bool,
-}
-
-impl ServiceTableElement {
-    /// Create a new Control Protocol service table element.
-    fn control() -> Self {
-        Self::new(0, Service::control(), true, true)
-    }
-
-    /// Create a new service table element.
-    fn new(id: u16, svc: Service, static_svc: bool, enabled: bool) -> Self {
+impl Default for ServiceTable {
+    fn default() -> Self {
         Self {
-            id,
-            service: svc,
-            static_service: static_svc,
-            enabled,
-            last_seen: get_utc_timestamp(),
-            active: true,
+            data: Arc::new(Mutex::new(ServiceTableData::new())),
+        }
+    }
+}
+
+impl ServiceTable {
+    /// Create a new shared service table.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Lock the service table for exclusive access.
+    pub fn lock(&self) -> LockedServiceTable<'_> {
+        LockedServiceTable {
+            inner: self.data.lock().unwrap(),
         }
     }
 
-    /// Check if the element should be visible.
-    fn is_visible(&self) -> bool {
-        if self.static_service {
-            self.enabled
-        } else {
-            self.active
+    /// Get a read-only handle for this table.
+    ///
+    /// Use this method instead of `clone` when you need a reference to the
+    /// same underlying data. The `clone` method creates a copy of the internal
+    /// data.
+    pub fn handle(&self) -> ServiceTableHandle {
+        ServiceTableHandle {
+            data: self.data.clone(),
         }
     }
+}
 
-    /// Update the internal service, the enabled flag and the last_seen timestamp.
-    fn update(&mut self, svc: Service, enabled: bool) {
-        self.service = svc;
-        self.enabled = enabled;
-        self.last_seen = get_utc_timestamp();
+impl Clone for ServiceTable {
+    fn clone(&self) -> Self {
+        let cloned = self.data.lock().unwrap().clone();
+
+        Self {
+            data: Arc::new(Mutex::new(cloned)),
+        }
+    }
+}
+
+impl Display for ServiceTable {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        self.data.lock().unwrap().fmt(f)
+    }
+}
+
+impl Deserialize for ServiceTable {
+    fn deserialize(val: &Intermediate) -> Result<Self, serde_lite::Error> {
+        let data = ServiceTableData::deserialize(val)?;
+
+        let res = Self {
+            data: Arc::new(Mutex::new(data)),
+        };
+
+        Ok(res)
+    }
+}
+
+impl Serialize for ServiceTable {
+    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
+        self.data.lock().unwrap().serialize()
+    }
+}
+
+/// Locked service table instance.
+pub struct LockedServiceTable<'a> {
+    inner: MutexGuard<'a, ServiceTableData>,
+}
+
+impl<'a> LockedServiceTable<'a> {
+    /// Get version of the service table.
+    ///
+    /// The version is updated whenever a new service is added or an existing
+    /// service is changed (e.g. its IP address).
+    pub fn service_table_version(&self) -> u32 {
+        self.inner.service_table_version()
     }
 
-    /// Update the active flag and return true if visibility was changed.
-    fn update_active_flag(&mut self, timestamp: i64) {
-        self.active = (self.last_seen + ACTIVE_THRESHOLD) >= timestamp;
+    /// Get version of the set of visible services.
+    ///
+    /// The version is updated whenever service visibility changes.
+    pub fn visible_set_version(&self) -> u32 {
+        self.inner.visible_set_version()
     }
 
-    /// Get service for this element.
-    fn to_service(&self) -> Service {
-        self.service.clone()
+    /// Add a given service into the table and return its ID.
+    pub fn add(&mut self, svc: Service, source: ServiceSource) -> u16 {
+        self.inner.update(svc, source)
+    }
+
+    /// Update service availability.
+    pub fn update_service_availability(&mut self, local_networks: &[EthernetDevice]) {
+        self.inner.update_service_availability(local_networks);
+    }
+
+    /// Update service visibility.
+    pub fn update_service_visibility(&mut self, now: i64) {
+        self.inner.update_service_visibility(now);
+    }
+}
+
+/// Read-only handle to the service table.
+#[derive(Clone)]
+pub struct ServiceTableHandle {
+    data: Arc<Mutex<ServiceTableData>>,
+}
+
+impl ServiceTableHandle {
+    /// Get version of the service table.
+    ///
+    /// The version is updated whenever a new service is added or an existing
+    /// service is changed (e.g. its IP address).
+    pub fn service_table_version(&self) -> u32 {
+        self.data.lock().unwrap().service_table_version()
+    }
+
+    /// Get version of the set of visible services.
+    ///
+    /// The version is updated whenever service visibility changes.
+    pub fn visible_set_version(&self) -> u32 {
+        self.data.lock().unwrap().visible_set_version()
+    }
+
+    /// Get visible services.
+    pub fn visible(&self) -> ServiceTableIterator {
+        self.data.lock().unwrap().visible()
+    }
+
+    /// Get service with a given ID.
+    pub fn get(&self, id: u16) -> Option<Service> {
+        self.data.lock().unwrap().get(id)
+    }
+
+    /// Get ID of a given service.
+    pub fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16> {
+        self.data.lock().unwrap().get_id(identifier)
+    }
+}
+
+impl Serialize for ServiceTableHandle {
+    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
+        self.data.lock().unwrap().serialize()
+    }
+}
+
+impl Display for ServiceTableHandle {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        self.data.lock().unwrap().fmt(f)
+    }
+}
+
+/// Service table iterator.
+pub struct ServiceTableIterator {
+    elements: std::vec::IntoIter<(u16, Service)>,
+}
+
+impl ServiceTableIterator {
+    /// Create a new service table iterator.
+    #[allow(clippy::needless_collect)]
+    fn new<'a, I>(elements: I) -> Self
+    where
+        I: IntoIterator<Item = &'a ServiceTableElement>,
+    {
+        let elements = elements
+            .into_iter()
+            .map(|elem| (elem.id, elem.to_service()))
+            .collect::<Vec<_>>();
+
+        Self {
+            elements: elements.into_iter(),
+        }
+    }
+}
+
+impl Iterator for ServiceTableIterator {
+    type Item = (u16, Service);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.elements.next()
     }
 }
 
@@ -213,10 +284,10 @@ impl ServiceTableData {
         self.visible_set_version
     }
 
-    /// Get visible service for a given ID.
+    /// Get available service for a given ID.
     fn get(&self, id: u16) -> Option<Service> {
         if let Some(elem) = self.service_map.get(&id) {
-            if elem.is_visible() || elem.service.is_control() {
+            if elem.is_available() || elem.service.is_control() {
                 Some(elem.to_service())
             } else {
                 None
@@ -226,13 +297,13 @@ impl ServiceTableData {
         }
     }
 
-    /// Get service ID for a given ServiceIdentifier or None if there is no such service or
-    /// the given service is invisible.
+    /// Get service ID for a given ServiceIdentifier or None if there is no
+    /// such service or the given service is not available.
     fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16> {
         if let Some(id) = self.identifier_map.get(identifier) {
             let elem = self.service_map.get(id).expect("broken service table");
 
-            if elem.is_visible() || elem.service.is_control() {
+            if elem.is_available() || elem.service.is_control() {
                 Some(*id)
             } else {
                 None
@@ -253,13 +324,13 @@ impl ServiceTableData {
     }
 
     /// Insert a new element into the table and return its ID.
-    fn add_service(&mut self, svc: Service, static_svc: bool, enabled: bool) -> u16 {
+    fn add_service(&mut self, svc: Service, source: ServiceSource, visible: bool) -> u16 {
         let key = svc.to_service_identifier();
-        let id = stable_hash(&key) as u16;
+        let id = hash::stable_hash(&key) as u16;
 
         assert!(!self.identifier_map.contains_key(&key));
 
-        let elem = ServiceTableElement::new(id, svc, static_svc, enabled);
+        let elem = ServiceTableElement::new(id, svc, source, visible, true);
 
         if elem.is_visible() {
             self.visible_set_version = self.visible_set_version.wrapping_add(1);
@@ -293,13 +364,19 @@ impl ServiceTableData {
     }
 
     /// Update a given table element and return its ID.
-    fn update_element(&mut self, id: u16, svc: Service, enabled: bool) -> u16 {
+    fn update_element(&mut self, id: u16, svc: Service, source: ServiceSource) -> u16 {
+        // We don't update the control service. It's just a placeholder.
+        if id == 0 {
+            return id;
+        }
+
         let elem = self.service_map.get_mut(&id).expect("broken service table");
 
         let svc_change = elem.service != svc;
+
         let old_visible = elem.is_visible();
 
-        elem.update(svc, enabled);
+        elem.update(svc, source);
 
         let new_visible = elem.is_visible();
 
@@ -315,25 +392,38 @@ impl ServiceTableData {
     }
 
     /// Update service table with a given service and return ID of the service.
-    fn update(&mut self, svc: Service, static_svc: bool, enabled: bool) -> u16 {
+    fn update(&mut self, svc: Service, source: ServiceSource) -> u16 {
         let key = svc.to_service_identifier();
 
         let id = self.identifier_map.get(&key).copied();
 
         if let Some(id) = id {
-            self.update_element(id, svc, enabled)
+            self.update_element(id, svc, source)
         } else {
-            self.add_service(svc, static_svc, enabled)
+            self.add_service(svc, source, true)
         }
     }
 
-    /// Update active flags of all services.
-    fn update_active_services(&mut self) {
-        let timestamp = get_utc_timestamp();
-
+    /// Update service availability.
+    fn update_service_availability(&mut self, local_networks: &[EthernetDevice]) {
         for elem in self.service_map.values_mut() {
             let visible = elem.is_visible();
-            elem.update_active_flag(timestamp);
+
+            elem.update_availability(local_networks);
+
+            if visible != elem.is_visible() {
+                self.visible_set_version = self.visible_set_version.wrapping_add(1);
+            }
+        }
+    }
+
+    /// Update service visibility.
+    fn update_service_visibility(&mut self, now: i64) {
+        for elem in self.service_map.values_mut() {
+            let visible = elem.is_visible();
+
+            elem.update_visibility(now);
+
             if visible != elem.is_visible() {
                 self.visible_set_version = self.visible_set_version.wrapping_add(1);
             }
@@ -343,16 +433,9 @@ impl ServiceTableData {
 
 impl Deserialize for ServiceTableData {
     fn deserialize(val: &Intermediate) -> Result<Self, serde_lite::Error> {
-        let data = ServiceTableDataSerializer::deserialize(val)?;
+        let serializer = ServiceTableSerializer::deserialize(val)?;
 
-        let mut res = Self::new();
-
-        data.services
-            .into_iter()
-            .enumerate()
-            .for_each(|(index, svc)| {
-                res.add_element(svc.into_service_table_element(index));
-            });
+        let res = serializer.into();
 
         Ok(res)
     }
@@ -363,11 +446,9 @@ impl Serialize for ServiceTableData {
         let services = self
             .service_map
             .values()
-            .filter(|elem| !elem.service.is_control())
-            .map(ServiceTableElementSerializer::from)
-            .collect::<Vec<_>>();
+            .filter(|elem| !elem.service.is_control());
 
-        let serializer = ServiceTableDataSerializer { services };
+        let serializer = ServiceTableSerializer::new(services);
 
         serializer.serialize()
     }
@@ -386,635 +467,423 @@ impl Display for ServiceTableData {
     }
 }
 
-/// Service table iterator.
-pub struct ServiceTableIterator {
-    elements: std::vec::IntoIter<(u16, Service)>,
+/// Service table element.
+///
+/// Note that each service could have been added via multiple sources. We need
+/// to track them all to properly manage service visibility and availability.
+/// The `static_service` flag is non-persistent. It indicates if the service
+/// was added via command line. The remaining flags are persistent and sticky
+/// (i.e. once set to true, they remain true). The `static_service` flag is
+/// sticky only for the lifetime of the process.
+#[derive(Debug, Clone)]
+struct ServiceTableElement {
+    /// Service ID.
+    id: u16,
+
+    /// Service.
+    service: Service,
+
+    /// Non-persistent flag indicating that the service was added via command
+    /// line.
+    static_service: bool,
+
+    /// Flag indicating that the service was discovered via network scanning.
+    discovered_service: bool,
+
+    /// Flag indicating that the service was added via the JSON-RPC API.
+    custom_service: bool,
+
+    /// UNIX timestamp (in UTC) of the last discovery event.
+    last_seen: i64,
+
+    /// Visibility flag.
+    visible: bool,
+
+    /// Availability flag.
+    ///
+    /// Custom services and services discovered via network scanning are
+    /// available only if they belong to one of the whitelisted networks.
+    /// Static services are available only when present as a command line
+    /// argument.
+    available: bool,
 }
 
-impl ServiceTableIterator {
-    /// Create a new service table iterator.
-    #[allow(clippy::needless_collect)]
-    fn new<'a, I>(elements: I) -> Self
-    where
-        I: IntoIterator<Item = &'a ServiceTableElement>,
-    {
-        let elements = elements
-            .into_iter()
-            .map(|elem| (elem.id, elem.to_service()))
-            .collect::<Vec<_>>();
-
+impl ServiceTableElement {
+    /// Create a new Control Protocol service table element.
+    fn control() -> Self {
         Self {
-            elements: elements.into_iter(),
+            id: 0,
+            service: Service::control(),
+            last_seen: get_utc_timestamp(),
+            static_service: false,
+            discovered_service: false,
+            custom_service: false,
+            visible: false,
+            available: false,
         }
     }
-}
 
-impl Iterator for ServiceTableIterator {
-    type Item = (u16, Service);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.elements.next()
-    }
-}
-
-/// Service table implementation that can be shared across multiple threads.
-pub struct SharedServiceTable {
-    data: Arc<Mutex<ServiceTableData>>,
-}
-
-impl Default for SharedServiceTable {
-    fn default() -> Self {
+    /// Create a new service table element.
+    fn new(
+        id: u16,
+        service: Service,
+        source: ServiceSource,
+        visible: bool,
+        available: bool,
+    ) -> Self {
         Self {
-            data: Arc::new(Mutex::new(ServiceTableData::new())),
-        }
-    }
-}
-
-impl SharedServiceTable {
-    /// Create a new shared service table.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Get version of the service table.
-    ///
-    /// The version is updated whenever a new service is added or an existing
-    /// service is changed (e.g. its IP address).
-    pub fn service_table_version(&self) -> u32 {
-        self.data.lock().unwrap().service_table_version()
-    }
-
-    /// Get version of the set of visible services.
-    ///
-    /// The version is updated whenever service visibility changes.
-    pub fn visible_set_version(&self) -> u32 {
-        self.data.lock().unwrap().visible_set_version()
-    }
-
-    /// Add a given service into the table and return its ID.
-    pub fn add(&mut self, svc: Service) -> u16 {
-        self.data.lock().unwrap().update(svc, false, true)
-    }
-
-    /// Add a given static service into the table and return its ID.
-    pub fn add_static(&mut self, svc: Service) -> u16 {
-        self.data.lock().unwrap().update(svc, true, true)
-    }
-
-    /// Update active flags of all services.
-    pub fn update_active_services(&mut self) {
-        self.data.lock().unwrap().update_active_services()
-    }
-
-    /// Get read-only reference to this table.
-    pub fn get_ref(&self) -> SharedServiceTableRef {
-        SharedServiceTableRef {
-            data: self.data.clone(),
-        }
-    }
-}
-
-impl Clone for SharedServiceTable {
-    fn clone(&self) -> Self {
-        let cloned = self.data.lock().unwrap().clone();
-
-        Self {
-            data: Arc::new(Mutex::new(cloned)),
-        }
-    }
-}
-
-impl ServiceTable for SharedServiceTable {
-    fn get(&self, id: u16) -> Option<Service> {
-        self.data.lock().unwrap().get(id)
-    }
-
-    fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16> {
-        self.data.lock().unwrap().get_id(identifier)
-    }
-
-    fn boxed(self) -> BoxServiceTable {
-        Box::new(self)
-    }
-}
-
-impl Display for SharedServiceTable {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        self.data.lock().unwrap().fmt(f)
-    }
-}
-
-impl Deserialize for SharedServiceTable {
-    fn deserialize(val: &Intermediate) -> Result<Self, serde_lite::Error> {
-        let data = ServiceTableData::deserialize(val)?;
-
-        let res = Self {
-            data: Arc::new(Mutex::new(data)),
-        };
-
-        Ok(res)
-    }
-}
-
-impl Serialize for SharedServiceTable {
-    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
-        self.data.lock().unwrap().serialize()
-    }
-}
-
-/// Service table implementation that can be shared across multiple threads.
-#[derive(Clone)]
-pub struct SharedServiceTableRef {
-    data: Arc<Mutex<ServiceTableData>>,
-}
-
-impl SharedServiceTableRef {
-    /// Get version of the service table.
-    ///
-    /// The version is updated whenever a new service is added or an existing
-    /// service is changed (e.g. its IP address).
-    pub fn service_table_version(&self) -> u32 {
-        self.data.lock().unwrap().service_table_version()
-    }
-
-    /// Get version of the set of visible services.
-    ///
-    /// The version is updated whenever service visibility changes.
-    pub fn visible_set_version(&self) -> u32 {
-        self.data.lock().unwrap().visible_set_version()
-    }
-
-    /// Get visible services.
-    pub fn visible(&self) -> ServiceTableIterator {
-        self.data.lock().unwrap().visible()
-    }
-}
-
-impl ServiceTable for SharedServiceTableRef {
-    fn get(&self, id: u16) -> Option<Service> {
-        self.data.lock().unwrap().get(id)
-    }
-
-    fn get_id(&self, identifier: &ServiceIdentifier) -> Option<u16> {
-        self.data.lock().unwrap().get_id(identifier)
-    }
-
-    fn boxed(self) -> BoxServiceTable {
-        Box::new(self)
-    }
-}
-
-impl Serialize for SharedServiceTableRef {
-    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
-        self.data.lock().unwrap().serialize()
-    }
-}
-
-impl Display for SharedServiceTableRef {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        self.data.lock().unwrap().fmt(f)
-    }
-}
-
-/// Helper type for serializing/deserializing service table data.
-#[derive(Deserialize, Serialize)]
-struct ServiceTableDataSerializer {
-    services: Vec<ServiceTableElementSerializer>,
-}
-
-/// Helper type for serializing/deserializing service table elements.
-#[derive(Deserialize, Serialize)]
-struct ServiceTableElementSerializer {
-    #[serde(default)]
-    id: Option<u16>,
-
-    svc_type: ServiceTypeSerializer,
-    mac: MacAddrSerializer,
-    address: SocketAddrSerializer,
-    path: String,
-
-    #[serde(default)]
-    static_svc: Option<bool>,
-
-    #[serde(default)]
-    last_seen: Option<i64>,
-
-    #[serde(default)]
-    active: Option<bool>,
-}
-
-impl ServiceTableElementSerializer {
-    /// Create the corresponding `ServiceTableElement`.
-    fn into_service_table_element(self, index: usize) -> ServiceTableElement {
-        let mac = self.mac.into();
-        let address = self.address.into();
-
-        let epath = String::new();
-
-        let opath = if self.path.is_empty() {
-            None
-        } else {
-            Some(self.path)
-        };
-
-        let service = match ServiceType::from(self.svc_type) {
-            ServiceType::ControlProtocol => Service::control(),
-            ServiceType::RTSP => Service::rtsp(mac, address, opath.unwrap_or(epath)),
-            ServiceType::LockedRTSP => Service::locked_rtsp(mac, address, opath),
-            ServiceType::UnknownRTSP => Service::unknown_rtsp(mac, address),
-            ServiceType::UnsupportedRTSP => {
-                Service::unsupported_rtsp(mac, address, opath.unwrap_or(epath))
-            }
-            ServiceType::HTTP => Service::http(mac, address),
-            ServiceType::MJPEG => Service::mjpeg(mac, address, opath.unwrap_or(epath)),
-            ServiceType::LockedMJPEG => Service::locked_mjpeg(mac, address, opath),
-            ServiceType::TCP => Service::tcp(mac, address),
-        };
-
-        ServiceTableElement {
-            id: self.id.unwrap_or((index + 1) as u16),
+            id,
             service,
-            static_service: self.static_svc.unwrap_or(false),
-            last_seen: self.last_seen.unwrap_or_else(get_utc_timestamp),
-            active: self.active.unwrap_or(true),
-            enabled: false,
+            last_seen: get_utc_timestamp(),
+            static_service: source == ServiceSource::Static,
+            discovered_service: source == ServiceSource::Discovery,
+            custom_service: source == ServiceSource::Custom,
+            visible,
+            available,
         }
     }
-}
 
-impl From<&ServiceTableElement> for ServiceTableElementSerializer {
-    fn from(elem: &ServiceTableElement) -> Self {
-        let svc_type = elem.service.service_type();
+    /// Check if the service should be visible.
+    ///
+    /// Services that are not visible should not be returned in the visible
+    /// set. A service that is not available is also not visible.
+    fn is_visible(&self) -> bool {
+        self.visible
+    }
 
-        let mac = elem.service.mac().unwrap_or(MacAddr::ZERO).into();
+    /// Check if the service is available.
+    ///
+    /// Services that are not available must not be used for new connections.
+    fn is_available(&self) -> bool {
+        self.available
+    }
 
-        let address = elem
-            .service
-            .address()
-            .unwrap_or_else(|| SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)))
-            .into();
+    /// Update the internal service, the service source and the last_seen
+    /// timestamp.
+    fn update(&mut self, svc: Service, source: ServiceSource) {
+        self.service = svc;
+        self.last_seen = get_utc_timestamp();
+        self.visible = true;
+        self.available = true;
 
-        let path = elem.service.path().unwrap_or("").into();
-
-        Self {
-            id: Some(elem.id),
-            svc_type: svc_type.into(),
-            mac,
-            address,
-            path,
-            static_svc: Some(elem.static_service),
-            last_seen: Some(elem.last_seen),
-            active: Some(elem.active),
+        // the static and custom service flags are sticky
+        match source {
+            ServiceSource::Static => self.static_service = true,
+            ServiceSource::Discovery => self.discovered_service = true,
+            ServiceSource::Custom => self.custom_service = true,
         }
     }
-}
 
-/// Helper type for serializing/deserializing service types.
-struct ServiceTypeSerializer {
-    inner: ServiceType,
-}
+    /// Update service availability.
+    fn update_availability(&mut self, local_networks: &[EthernetDevice]) {
+        // Static services are always available. The remaining services are
+        // available only if they belong to one of the accessible local
+        // networks.
+        self.available = if self.static_service {
+            true
+        } else if let Some(ip) = self.service.ip_address() {
+            local_networks.iter().any(|dev| dev.contains_ip_addr(ip))
+        } else {
+            false
+        };
 
-impl Serialize for ServiceTypeSerializer {
-    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
-        Ok(Intermediate::from(self.inner.code()))
+        // If the service is not available, it cannot be visible.
+        if !self.available {
+            self.visible = false;
+        }
     }
-}
 
-impl Deserialize for ServiceTypeSerializer {
-    fn deserialize(value: &Intermediate) -> Result<Self, serde_lite::Error> {
-        let inner = value
-            .as_number()
-            .map(u16::try_from)
-            .and_then(Result::ok)
-            .and_then(|code| {
-                let res = match code {
-                    SVC_TYPE_CONTROL_PROTOCOL => ServiceType::ControlProtocol,
-                    SVC_TYPE_RTSP => ServiceType::RTSP,
-                    SVC_TYPE_LOCKED_RTSP => ServiceType::LockedRTSP,
-                    SVC_TYPE_UNKNOWN_RTSP => ServiceType::UnknownRTSP,
-                    SVC_TYPE_UNSUPPORTED_RTSP => ServiceType::UnsupportedRTSP,
-                    SVC_TYPE_HTTP => ServiceType::HTTP,
-                    SVC_TYPE_MJPEG => ServiceType::MJPEG,
-                    SVC_TYPE_LOCKED_MJPEG => ServiceType::LockedMJPEG,
-                    SVC_TYPE_TCP => ServiceType::TCP,
-                    _ => return None,
-                };
-
-                Some(res)
-            })
-            .ok_or_else(|| serde_lite::Error::invalid_value("service type code"))?;
-
-        let res = Self { inner };
-
-        Ok(res)
+    /// Update service visibility.
+    fn update_visibility(&mut self, now: i64) {
+        // Static services are always visible. Custom services are visible
+        // only if they are available. Discovered services are visible only if
+        // they are available and were seen recently.
+        self.visible = if self.static_service {
+            true
+        } else if self.custom_service {
+            self.available
+        } else if self.discovered_service {
+            self.available && ((self.last_seen + ACTIVE_THRESHOLD) >= now)
+        } else {
+            false
+        };
     }
-}
 
-impl From<ServiceType> for ServiceTypeSerializer {
-    fn from(svc_type: ServiceType) -> Self {
-        Self { inner: svc_type }
-    }
-}
-
-impl From<ServiceTypeSerializer> for ServiceType {
-    fn from(serializer: ServiceTypeSerializer) -> Self {
-        serializer.inner
-    }
-}
-
-/// Helper type for serializing/deserializing socket addresses.
-struct SocketAddrSerializer {
-    addr: SocketAddr,
-}
-
-impl Deserialize for SocketAddrSerializer {
-    fn deserialize(value: &Intermediate) -> Result<Self, serde_lite::Error> {
-        let addr = value
-            .as_str()
-            .map(|s| s.parse())
-            .and_then(Result::ok)
-            .ok_or_else(|| serde_lite::Error::invalid_value("socket address"))?;
-
-        let res = Self { addr };
-
-        Ok(res)
-    }
-}
-
-impl Serialize for SocketAddrSerializer {
-    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
-        Ok(Intermediate::from(self.addr.to_string()))
-    }
-}
-
-impl From<SocketAddr> for SocketAddrSerializer {
-    fn from(addr: SocketAddr) -> Self {
-        Self { addr }
-    }
-}
-
-impl From<SocketAddrSerializer> for SocketAddr {
-    fn from(serializer: SocketAddrSerializer) -> Self {
-        serializer.addr
-    }
-}
-
-/// Helper type for serializing/deserializing MAC addresses.
-struct MacAddrSerializer {
-    addr: MacAddr,
-}
-
-impl Deserialize for MacAddrSerializer {
-    fn deserialize(value: &Intermediate) -> Result<Self, serde_lite::Error> {
-        let addr = value
-            .as_str()
-            .map(|s| s.parse())
-            .and_then(Result::ok)
-            .ok_or_else(|| serde_lite::Error::invalid_value("MAC address"))?;
-
-        let res = Self { addr };
-
-        Ok(res)
-    }
-}
-
-impl Serialize for MacAddrSerializer {
-    fn serialize(&self) -> Result<Intermediate, serde_lite::Error> {
-        Ok(Intermediate::from(self.addr.to_string()))
-    }
-}
-
-impl From<MacAddr> for MacAddrSerializer {
-    fn from(addr: MacAddr) -> Self {
-        Self { addr }
-    }
-}
-
-impl From<MacAddrSerializer> for MacAddr {
-    fn from(serializer: MacAddrSerializer) -> Self {
-        serializer.addr
+    /// Get service for this element.
+    fn to_service(&self) -> Service {
+        self.service.clone()
     }
 }
 
 #[cfg(test)]
-#[test]
-fn test_visible_services_iterator() {
-    let mut table = ServiceTableData::new();
+mod tests {
+    use std::net::{Ipv4Addr, SocketAddr};
 
-    let mac = MacAddr::zero();
-    let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
+    use serde_lite::Deserialize;
 
-    let svc_1 = Service::rtsp(mac, addr, "/1".to_string());
-    let svc_2 = Service::rtsp(mac, addr, "/2".to_string());
-    let svc_3 = Service::rtsp(mac, addr, "/3".to_string());
+    use crate::{
+        net::raw::{devices::EthernetDevice, ether::MacAddr},
+        utils::get_utc_timestamp,
+    };
 
-    table.update(svc_1.clone(), true, true);
-    table.update(svc_2, true, false);
-    table.update(svc_3.clone(), true, true);
+    use super::{Service, ServiceSource, ServiceTable, ServiceTableData};
 
-    let mut visible = table.visible().collect::<Vec<_>>();
+    fn create_fake_ethernet_device(name: &str, network: Ipv4Addr) -> EthernetDevice {
+        EthernetDevice {
+            name: name.to_string(),
+            mac_addr: MacAddr::ZERO,
+            ip_addr: network,
+            netmask: Ipv4Addr::new(255, 255, 255, 0),
+        }
+    }
 
-    visible.sort_by_key(|&(id, _)| id);
+    #[test]
+    fn test_visible_services_iterator() {
+        let mut table = ServiceTableData::new();
 
-    let mut expected = vec![(93, svc_3), (640, svc_1)];
+        let mac = MacAddr::zero();
+        let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
 
-    expected.sort_by_key(|&(id, _)| id);
+        let svc_1 = Service::rtsp(mac, addr, "/1".to_string());
+        let svc_2 = Service::rtsp(mac, addr, "/2".to_string());
+        let svc_3 = Service::rtsp(mac, addr, "/3".to_string());
 
-    assert_eq!(visible, expected);
-}
+        table.add_service(svc_1.clone(), ServiceSource::Discovery, true);
+        table.add_service(svc_2, ServiceSource::Discovery, false);
+        table.add_service(svc_3.clone(), ServiceSource::Discovery, true);
 
-#[cfg(test)]
-#[test]
-fn test_deserialization_and_initialization() {
-    use serde_lite::intermediate;
+        let mut visible = table.visible().collect::<Vec<_>>();
 
-    let intermediate = intermediate!({
-        "services": [
-            {
-                "svc_type": 1,
-                "mac": "00:00:00:00:00:00",
-                "address": "0.0.0.0:0",
-                "path": "/1",
-                "static_svc": true,
-                "last_seen": 123,
-                "active": true
-            },
-            {
-                "svc_type": 1,
-                "mac": "00:00:00:00:00:00",
-                "address": "0.0.0.0:0",
-                "path": "/2",
-                "static_svc": true,
-                "last_seen": 123,
-                "active": true
-            },
-            {
-                "svc_type": 1,
-                "mac": "00:00:00:00:00:00",
-                "address": "0.0.0.0:0",
-                "path": "/3",
-                "static_svc": false,
-                "last_seen": 123,
-                "active": true
-            },
-            {
-                "id": 10000,
-                "svc_type": 1,
-                "mac": "00:00:00:00:00:00",
-                "address": "0.0.0.0:0",
-                "path": "/4",
-                "static_svc": false,
-                "last_seen": 123,
-                "active": true
-            }
-        ]
-    });
+        visible.sort_by_key(|&(id, _)| id);
 
-    let mut table =
-        SharedServiceTable::deserialize(&intermediate).expect("expected valid service table JSON");
+        let mut expected = vec![(93, svc_3), (640, svc_1)];
 
-    assert_eq!(table.service_table_version(), 0);
-    assert_eq!(table.visible_set_version(), 0);
+        expected.sort_by_key(|&(id, _)| id);
 
-    let mac = MacAddr::zero();
-    let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
+        assert_eq!(visible, expected);
+    }
 
-    let svc_1 = Service::rtsp(mac, addr, "/1".to_string());
-    let svc_2 = Service::rtsp(mac, addr, "/2".to_string());
-    let svc_3 = Service::rtsp(mac, addr, "/3".to_string());
-    let svc_4 = Service::rtsp(mac, addr, "/4".to_string());
-    let svc_5 = Service::rtsp(mac, addr, "/5".to_string());
+    #[test]
+    fn test_deserialization_and_initialization() {
+        use serde_lite::intermediate;
 
-    let mut visible = table.get_ref().visible().collect::<Vec<_>>();
+        let intermediate = intermediate!({
+            "services": [
+                {
+                    "svc_type": 1,
+                    "mac": "00:00:00:00:00:00",
+                    "address": "0.0.0.0:0",
+                    "path": "/1",
+                    "static_svc": true,
+                    "last_seen": 123,
+                    "active": true
+                },
+                {
+                    "svc_type": 1,
+                    "mac": "00:00:00:00:00:00",
+                    "address": "0.0.0.0:0",
+                    "path": "/2",
+                    "static_svc": true,
+                    "last_seen": 123,
+                    "active": true
+                },
+                {
+                    "svc_type": 1,
+                    "mac": "00:00:00:00:00:00",
+                    "address": "0.0.0.0:0",
+                    "path": "/3",
+                    "static_svc": false,
+                    "last_seen": 123,
+                    "active": true
+                },
+                {
+                    "id": 10000,
+                    "svc_type": 1,
+                    "mac": "00:00:00:00:00:00",
+                    "address": "0.0.0.0:0",
+                    "path": "/4",
+                    "static_svc": false,
+                    "last_seen": 123,
+                    "active": true
+                }
+            ]
+        });
 
-    visible.sort_by_key(|&(id, _)| id);
+        let table =
+            ServiceTable::deserialize(&intermediate).expect("expected valid service table JSON");
 
-    assert_eq!(visible, vec![(3, svc_3.clone()), (10000, svc_4.clone()),]);
+        let mut table = table.lock();
 
-    // add the first static service
-    table.add_static(svc_1.clone());
+        assert_eq!(table.service_table_version(), 0);
+        assert_eq!(table.visible_set_version(), 0);
 
-    let mut visible = table.get_ref().visible().collect::<Vec<_>>();
+        let mac = MacAddr::zero();
+        let addr_1 = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
+        let addr_2 = SocketAddr::from((Ipv4Addr::new(192, 168, 0, 10), 0));
 
-    visible.sort_by_key(|&(id, _)| id);
+        let svc_1 = Service::rtsp(mac, addr_1, "/1".to_string());
+        let svc_2 = Service::rtsp(mac, addr_1, "/2".to_string());
+        let svc_3 = Service::rtsp(mac, addr_1, "/3".to_string());
+        let svc_4 = Service::rtsp(mac, addr_1, "/4".to_string());
+        let svc_5 = Service::rtsp(mac, addr_1, "/5".to_string());
+        let svc_6 = Service::rtsp(mac, addr_2, "/6".to_string());
 
-    assert_eq!(
-        visible,
-        vec![
-            (1, svc_1.clone()),
-            (3, svc_3.clone()),
-            (10000, svc_4.clone()),
-        ]
-    );
+        let mut visible = table.inner.visible().collect::<Vec<_>>();
 
-    assert_eq!(table.service_table_version(), 0);
-    assert_eq!(table.visible_set_version(), 1);
+        visible.sort_by_key(|&(id, _)| id);
 
-    // add the first static service again
-    table.add_static(svc_1.clone());
+        assert_eq!(visible, vec![(3, svc_3.clone()), (10000, svc_4.clone()),]);
 
-    let mut visible = table.get_ref().visible().collect::<Vec<_>>();
+        // add the first static service
+        table.add(svc_1.clone(), ServiceSource::Static);
 
-    visible.sort_by_key(|&(id, _)| id);
+        let mut visible = table.inner.visible().collect::<Vec<_>>();
 
-    assert_eq!(
-        visible,
-        vec![
-            (1, svc_1.clone()),
-            (3, svc_3.clone()),
-            (10000, svc_4.clone()),
-        ]
-    );
+        visible.sort_by_key(|&(id, _)| id);
 
-    assert_eq!(table.service_table_version(), 0);
-    assert_eq!(table.visible_set_version(), 1);
+        assert_eq!(
+            visible,
+            vec![
+                (1, svc_1.clone()),
+                (3, svc_3.clone()),
+                (10000, svc_4.clone()),
+            ]
+        );
 
-    // add the second static service
-    table.add_static(svc_2.clone());
+        assert_eq!(table.service_table_version(), 0);
+        assert_eq!(table.visible_set_version(), 1);
 
-    let mut visible = table.get_ref().visible().collect::<Vec<_>>();
+        // add the first static service again
+        table.add(svc_1.clone(), ServiceSource::Static);
 
-    visible.sort_by_key(|&(id, _)| id);
+        let mut visible = table.inner.visible().collect::<Vec<_>>();
 
-    assert_eq!(
-        visible,
-        vec![
-            (1, svc_1.clone()),
-            (2, svc_2.clone()),
-            (3, svc_3.clone()),
-            (10000, svc_4.clone()),
-        ]
-    );
+        visible.sort_by_key(|&(id, _)| id);
 
-    assert_eq!(table.service_table_version(), 0);
-    assert_eq!(table.visible_set_version(), 2);
+        assert_eq!(
+            visible,
+            vec![
+                (1, svc_1.clone()),
+                (3, svc_3.clone()),
+                (10000, svc_4.clone()),
+            ]
+        );
 
-    // add a new service
-    table.add(svc_5.clone());
+        assert_eq!(table.service_table_version(), 0);
+        assert_eq!(table.visible_set_version(), 1);
 
-    let mut visible = table.get_ref().visible().collect::<Vec<_>>();
+        // add the second static service
+        table.add(svc_2.clone(), ServiceSource::Static);
 
-    visible.sort_by_key(|&(id, _)| id);
+        let mut visible = table.inner.visible().collect::<Vec<_>>();
 
-    assert_eq!(
-        visible,
-        vec![
-            (1, svc_1.clone()),
-            (2, svc_2.clone()),
-            (3, svc_3.clone()),
-            (10000, svc_4.clone()),
-            (11717, svc_5.clone()),
-        ]
-    );
+        visible.sort_by_key(|&(id, _)| id);
 
-    assert_eq!(table.service_table_version(), 1);
-    assert_eq!(table.visible_set_version(), 3);
+        assert_eq!(
+            visible,
+            vec![
+                (1, svc_1.clone()),
+                (2, svc_2.clone()),
+                (3, svc_3.clone()),
+                (10000, svc_4.clone()),
+            ]
+        );
 
-    // some additional consistency checks
-    let mut internal = table.data.lock().unwrap();
+        assert_eq!(table.service_table_version(), 0);
+        assert_eq!(table.visible_set_version(), 2);
 
-    let control = Service::control();
-    let key = control.to_service_identifier();
+        // add a new service
+        table.add(svc_5.clone(), ServiceSource::Discovery);
+        table.add(svc_6.clone(), ServiceSource::Discovery);
 
-    assert_eq!(internal.get(0), Some(control.clone()));
-    assert_eq!(internal.get_id(&key), Some(0));
-    assert_eq!(internal.service_map.len(), 6);
-    assert_eq!(internal.identifier_map.len(), 6);
+        let mut visible = table.inner.visible().collect::<Vec<_>>();
 
-    internal.update(control.clone(), true, true);
+        visible.sort_by_key(|&(id, _)| id);
 
-    assert_eq!(internal.get(0), Some(control));
-    assert_eq!(internal.get_id(&key), Some(0));
-    assert_eq!(internal.service_map.len(), 6);
-    assert_eq!(internal.identifier_map.len(), 6);
+        assert_eq!(
+            visible,
+            vec![
+                (1, svc_1.clone()),
+                (2, svc_2.clone()),
+                (3, svc_3.clone()),
+                (10000, svc_4.clone()),
+                (11717, svc_5.clone()),
+                (63236, svc_6.clone()),
+            ]
+        );
 
-    let mut visible = internal.visible().collect::<Vec<_>>();
+        assert_eq!(table.service_table_version(), 2);
+        assert_eq!(table.visible_set_version(), 4);
 
-    visible.sort_by_key(|&(id, _)| id);
+        // some additional consistency checks
+        let internal = &mut table.inner;
 
-    assert_eq!(
-        visible,
-        vec![
-            (1, svc_1.clone()),
-            (2, svc_2.clone()),
-            (3, svc_3),
-            (10000, svc_4),
-            (11717, svc_5.clone()),
-        ]
-    );
+        let control = Service::control();
+        let key = control.to_service_identifier();
 
-    assert_eq!(internal.service_table_version(), 1);
-    assert_eq!(internal.visible_set_version(), 3);
+        assert_eq!(internal.get(0), Some(control.clone()));
+        assert_eq!(internal.get_id(&key), Some(0));
+        assert_eq!(internal.service_map.len(), 7);
+        assert_eq!(internal.identifier_map.len(), 7);
 
-    // update the list of active services
-    internal.update_active_services();
+        internal.update(control.clone(), ServiceSource::Static);
 
-    let mut visible = internal.visible().collect::<Vec<_>>();
+        assert_eq!(internal.get(0), Some(control));
+        assert_eq!(internal.get_id(&key), Some(0));
+        assert_eq!(internal.service_map.len(), 7);
+        assert_eq!(internal.identifier_map.len(), 7);
 
-    visible.sort_by_key(|&(id, _)| id);
+        let mut visible = internal.visible().collect::<Vec<_>>();
 
-    assert_eq!(visible, vec![(1, svc_1), (2, svc_2), (11717, svc_5),]);
+        visible.sort_by_key(|&(id, _)| id);
 
-    assert_eq!(internal.service_table_version(), 1);
-    assert_eq!(internal.visible_set_version(), 5);
+        assert_eq!(
+            visible,
+            vec![
+                (1, svc_1.clone()),
+                (2, svc_2.clone()),
+                (3, svc_3),
+                (10000, svc_4),
+                (11717, svc_5.clone()),
+                (63236, svc_6.clone()),
+            ]
+        );
+
+        assert_eq!(internal.service_table_version(), 2);
+        assert_eq!(internal.visible_set_version(), 4);
+
+        // update visible services
+        internal.update_service_visibility(get_utc_timestamp());
+
+        let mut visible = internal.visible().collect::<Vec<_>>();
+
+        visible.sort_by_key(|&(id, _)| id);
+
+        assert_eq!(
+            visible,
+            vec![
+                (1, svc_1.clone()),
+                (2, svc_2.clone()),
+                (11717, svc_5.clone()),
+                (63236, svc_6.clone()),
+            ]
+        );
+
+        assert_eq!(internal.service_table_version(), 2);
+        assert_eq!(internal.visible_set_version(), 6);
+
+        let interface = create_fake_ethernet_device("eth0", Ipv4Addr::new(192, 168, 0, 1));
+
+        // update available services
+        internal.update_service_availability(&[interface]);
+
+        let mut visible = internal.visible().collect::<Vec<_>>();
+
+        visible.sort_by_key(|&(id, _)| id);
+
+        assert_eq!(visible, vec![(1, svc_1), (2, svc_2), (63236, svc_6),]);
+
+        assert_eq!(internal.service_table_version(), 2);
+        assert_eq!(internal.visible_set_version(), 7);
+    }
 }

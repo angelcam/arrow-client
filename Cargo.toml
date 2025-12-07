@@ -9,8 +9,8 @@ edition = "2024"
 
 [features]
 default = []
-discovery = ["dep:str-reader", "dep:tokio-util"]
 threads = ["tokio/rt-multi-thread"]
+discovery = ["threads", "dep:str-reader", "dep:tokio-util"]
 all = ["discovery", "threads"]
 
 [lib]

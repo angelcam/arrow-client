@@ -23,7 +23,7 @@ use crate::{
     config::{ClientId, ClientKey, Config},
     net::raw::ether::MacAddr,
     scanner::ScanResult,
-    svc_table::{Service, SharedServiceTableRef},
+    svc_table::{Service, ServiceSource, ServiceTableHandle},
 };
 
 /// Arrow service connection state.
@@ -188,18 +188,13 @@ impl ApplicationContext {
         self.data.lock().unwrap().get_config().get_mac_address()
     }
 
-    /// Get network discovery settings.
-    pub fn get_discovery(&self) -> bool {
-        self.data.lock().unwrap().get_config().get_discovery()
-    }
-
     /// Get network discovery whitelist.
-    pub fn get_discovery_whitelist(&self) -> Arc<Vec<String>> {
+    pub fn get_discovery_interfaces(&self) -> Arc<Vec<String>> {
         self.data
             .lock()
             .unwrap()
             .get_config()
-            .get_discovery_whitelist()
+            .get_discovery_interfaces()
     }
 
     /// Check if the application is in the diagnostic mode.
@@ -265,12 +260,21 @@ impl ApplicationContext {
     }
 
     /// Get read-only reference to the service table.
-    pub fn get_service_table(&self) -> SharedServiceTableRef {
+    pub fn get_service_table(&self) -> ServiceTableHandle {
         self.data.lock().unwrap().get_config().get_service_table()
     }
 
+    /// Add a new service to the service table.
+    pub fn add_service(&self, service: Service, source: ServiceSource) -> u16 {
+        self.data
+            .lock()
+            .unwrap()
+            .get_config_mut()
+            .add_service(service, source)
+    }
+
     /// Update service table. Add all given services into the table and update active services.
-    pub fn update_service_table<I>(&self, services: I)
+    pub fn update_service_table<I>(&self, services: I, source: ServiceSource)
     where
         I: IntoIterator<Item = Service>,
     {
@@ -278,7 +282,7 @@ impl ApplicationContext {
             .lock()
             .unwrap()
             .get_config_mut()
-            .update_service_table(services)
+            .update_service_table(services, source)
     }
 
     /// Reset service table.

@@ -37,7 +37,7 @@ use crate::{
         arrow::utils::{StreamedIO, TlsConnectorExt},
         raw::ether::MacAddr,
     },
-    svc_table::{ServiceTable, ServiceType, SharedServiceTableRef},
+    svc_table::{ServiceTableHandle, ServiceType},
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(60);
@@ -93,7 +93,7 @@ impl ServiceConnector for DefaultServiceConnector {
 pub struct SessionManager<C> {
     tls_connector: TlsConnector,
     context: Arc<Mutex<SessionManagerContext>>,
-    svc_table: SharedServiceTableRef,
+    svc_table: ServiceTableHandle,
     svc_connector: C,
     gateway_mode: bool,
 }
@@ -102,7 +102,7 @@ impl<C> SessionManager<C> {
     /// Create a new session manager.
     pub fn new(
         tls_connector: TlsConnector,
-        svc_table: SharedServiceTableRef,
+        svc_table: ServiceTableHandle,
         svc_connector: C,
         gateway_mode: bool,
     ) -> Self {
