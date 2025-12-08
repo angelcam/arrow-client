@@ -90,8 +90,8 @@ where
 
         match method {
             "connect" => self.inner.connect(params).await,
-            "add_service" => self.inner.add_service(params),
-            "reset_service_table" => self.inner.reset_service_table(),
+            "add_service" => self.inner.add_service(params).await,
+            "reset_service_table" => self.inner.reset_service_table().await,
             "scan_network" => self.inner.scan_network(),
             "get_status" => self.inner.get_status(),
             "get_last_scan_report" => self.inner.get_last_scan_report(),
@@ -133,11 +133,7 @@ where
 
 impl<C> InternalRpcService<C> {
     /// Process a given `add_service` request.
-    fn add_service(&self, params: JsonRpcParams) -> Result<JsonRpcValue, JsonRpcError> {
-        if !self.app_context.get_gateway_mode() {
-            return Err(JsonRpcError::new(403, "The device is not a gateway"));
-        }
-
+    async fn add_service(&self, params: JsonRpcParams) -> Result<JsonRpcValue, JsonRpcError> {
         let service = params
             .decode()
             .ok()
@@ -145,7 +141,19 @@ impl<C> InternalRpcService<C> {
             .and_then(Result::ok)
             .ok_or_else(|| JsonRpcError::new(-32602, "Invalid params"))?;
 
-        let service_id = self.app_context.add_service(service, ServiceSource::Custom);
+        if !self.app_context.get_gateway_mode() {
+            return Err(JsonRpcError::new(403, "The device is not a gateway"));
+        } else if !self.app_context.is_available(&service).await {
+            return Err(JsonRpcError::new(
+                403,
+                "The target network is not available",
+            ));
+        }
+
+        let service_id = self
+            .app_context
+            .add_service(service, ServiceSource::Custom)
+            .await;
 
         let response = AddServiceResponse { service_id };
 
@@ -157,8 +165,8 @@ impl<C> InternalRpcService<C> {
     }
 
     /// Process a given `reset_service_table` request.
-    fn reset_service_table(&self) -> Result<JsonRpcValue, JsonRpcError> {
-        self.app_context.reset_service_table();
+    async fn reset_service_table(&self) -> Result<JsonRpcValue, JsonRpcError> {
+        self.app_context.reset_service_table().await;
 
         Ok(JsonRpcValue::None)
     }

@@ -16,7 +16,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
@@ -54,37 +54,29 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Scan all local networks for RTSP and MJPEG streams and associated HTTP
 /// services.
-pub fn scan_network(
+pub async fn scan_network(
     discovery_whitelist: Arc<Vec<String>>,
     rtsp_paths: Arc<Vec<String>>,
     mjpeg_paths: Arc<Vec<String>>,
 ) -> Result<ScanResult> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-        .map_err(|err| Error::from_static_msg_and_cause("Async IO error", err))?;
-
     let context = Context::new(discovery_whitelist, rtsp_paths, mjpeg_paths);
 
     let rtsp_port_priorities = context.get_rtsp_port_priorities();
     let http_port_priorities = context.get_http_port_priorities();
 
-    let mut report = find_open_ports(context.clone());
+    let mut report = find_open_ports(context.clone()).await?;
 
-    let rtsp_services =
-        runtime.block_on(find_rtsp_services(context.clone(), report.socket_addrs()));
+    let rtsp_services = find_rtsp_services(context.clone(), report.socket_addrs()).await;
 
     let rtsp_services = filter_duplicit_services(rtsp_services, rtsp_port_priorities);
 
-    let rtsp_streams = runtime.block_on(find_rtsp_streams(context.clone(), rtsp_services.clone()));
+    let rtsp_streams = find_rtsp_streams(context.clone(), rtsp_services.clone()).await;
 
-    let http_services =
-        runtime.block_on(find_http_services(context.clone(), report.socket_addrs()));
+    let http_services = find_http_services(context.clone(), report.socket_addrs()).await;
 
     let http_services = filter_duplicit_services(http_services, http_port_priorities);
 
-    let mjpeg_streams = runtime.block_on(find_mjpeg_streams(context, http_services.clone()));
+    let mjpeg_streams = find_mjpeg_streams(context, http_services.clone()).await;
 
     for svc in rtsp_streams {
         report.add_service(svc);
@@ -237,32 +229,38 @@ impl Context {
 
 /// Find open ports on all available hosts within all local networks
 /// accessible directly from this host.
-fn find_open_ports(scanner: Context) -> ScanResult {
+async fn find_open_ports(scanner: Context) -> Result<ScanResult> {
     let discovery_whitelist = scanner.get_discovery_whitelist();
 
-    let mut report = ScanResult::new();
+    let devices = EthernetDevice::list().await;
 
-    let devices = EthernetDevice::list();
+    let blocking = tokio::task::spawn_blocking(move || {
+        let mut report = ScanResult::new();
 
-    for dev in devices {
-        let name = dev.name();
+        for dev in devices {
+            let name = dev.name();
 
-        let is_whitelisted = discovery_whitelist
-            .binary_search_by_key(&name, String::as_str)
-            .is_ok();
+            let is_whitelisted = discovery_whitelist
+                .binary_search_by_key(&name, String::as_str)
+                .is_ok();
 
-        if is_whitelisted || discovery_whitelist.is_empty() {
-            let res = find_open_ports_in_network(scanner.clone(), &dev);
+            if is_whitelisted || discovery_whitelist.is_empty() {
+                let res = find_open_ports_in_network(scanner.clone(), &dev);
 
-            if let Err(err) = res {
-                warn!("unable to find open ports in local network on interface {name}: {err}");
-            } else if let Ok(res) = res {
-                report.merge(res);
+                if let Err(err) = res {
+                    warn!("unable to find open ports in local network on interface {name}: {err}");
+                } else if let Ok(res) = res {
+                    report.merge(res);
+                }
             }
         }
-    }
 
-    report
+        report
+    });
+
+    blocking
+        .await
+        .map_err(|_| Error::from_static_msg("network scanner thread failed"))
 }
 
 /// Find open ports on all available hosts within a given network.
@@ -327,7 +325,7 @@ where
 
     let res = TcpPortScanner::scan_ipv4_hosts(device, hosts, &ports)?
         .into_iter()
-        .map(|(mac, ip, p)| (mac, SocketAddr::V4(SocketAddrV4::new(ip, p))))
+        .map(|(mac, ip, port)| (mac, SocketAddr::from((ip, port))))
         .collect::<Vec<_>>();
 
     Ok(res)
@@ -549,8 +547,8 @@ where
     svc_map
         .into_iter()
         .map(|(_, (mac, ip, port))| match ip {
-            IpAddr::V4(ip) => (mac, SocketAddr::V4(SocketAddrV4::new(ip, port))),
-            IpAddr::V6(ip) => (mac, SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0))),
+            IpAddr::V4(ip) => (mac, SocketAddr::from((ip, port))),
+            IpAddr::V6(ip) => (mac, SocketAddr::from((ip, port))),
         })
         .collect::<_>()
 }
@@ -711,8 +709,8 @@ fn test_service_filtering() {
 
     let mut services = Vec::new();
 
-    services.push((mac, SocketAddr::V4(SocketAddrV4::new(ip, 80))));
-    services.push((mac, SocketAddr::V4(SocketAddrV4::new(ip, 554))));
+    services.push((mac, SocketAddr::from((ip, 80))));
+    services.push((mac, SocketAddr::from((ip, 554))));
 
     let port_priorities = get_port_priorities(&ports);
 

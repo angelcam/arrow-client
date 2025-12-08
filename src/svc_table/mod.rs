@@ -69,6 +69,15 @@ impl ServiceTable {
         Self::default()
     }
 
+    /// Reset the service table to a given default state.
+    pub fn reset(&self, default: &ServiceTable) {
+        let mut this = self.data.lock().unwrap();
+
+        let default = default.data.lock().unwrap();
+
+        *this = default.clone();
+    }
+
     /// Lock the service table for exclusive access.
     pub fn lock(&self) -> LockedServiceTable<'_> {
         LockedServiceTable {

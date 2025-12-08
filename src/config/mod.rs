@@ -12,35 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod parser;
+mod utils;
+
 use std::{
-    fmt::{self, Display, Write},
+    fmt::{self, Display},
     io,
     iter::FromIterator,
     path::{Path, PathBuf},
-    process,
-    sync::Arc,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use argh::FromArgs;
-use log::{LevelFilter, Log};
 use serde_lite::{Deserialize, Intermediate, Serialize};
 use tokio_native_tls::TlsConnector;
-use ttpkit_url::Url;
 use uuid::Uuid;
 
 use crate::{
     context::ConnectionState,
     error::Error,
-    storage::{DefaultStorage, Storage},
+    storage::Storage,
     svc_table::{LockedServiceTable, ServiceSource, ServiceTable, ServiceTableHandle},
-    utils::{
-        get_fake_mac,
-        logger::{FileLogger, StderrLogger},
-    },
 };
 
-#[cfg(not(target_os = "windows"))]
-use crate::utils::logger::Syslog;
+use self::{parser::ConfigParser, utils::NetworkInterfacesCache};
 
 pub use crate::{
     net::raw::{
@@ -211,52 +210,72 @@ impl ConfigBuilder {
     }
 
     /// Build the configuration.
-    pub fn build<S, T>(mut self, mut storage: S, arrow_service_address: T) -> Result<Config, Error>
+    pub async fn build<S, T>(
+        mut self,
+        mut storage: S,
+        arrow_service_address: T,
+    ) -> Result<Config, Error>
     where
-        S: 'static + Storage + Send,
+        S: Storage + Send + Sync + 'static,
         T: ToString,
     {
-        let config = storage.load_configuration().map_err(|err| {
+        let config = storage.load_configuration().await.map_err(|err| {
             Error::from_static_msg_and_cause("unable to load client configuration", err)
         })?;
+
+        let network_interfaces = NetworkInterfacesCache::new();
+
+        let interfaces = network_interfaces.get_interfaces().await;
 
         let mac = self
             .arrow_mac
             .map(Ok)
-            .unwrap_or_else(get_first_mac)
+            .unwrap_or_else(|| get_first_mac(&interfaces))
             .map_err(|_| {
                 Error::from_static_msg("unable to get any network interface MAC address")
             })?;
 
-        let tls_connector = create_tls_connector(&mut storage).map_err(|err| {
+        let tls_connector = create_tls_connector(&mut storage).await.map_err(|err| {
             Error::from_static_msg_and_cause("unable to create TLS connector: {}", err)
         })?;
 
-        let rtsp_paths = storage
-            .load_rtsp_paths()
-            .inspect_err(|err| warn!("unable to load RTSP paths ({err})"))
-            .unwrap_or_default();
+        let rtsp_paths = if self.discovery_interfaces.is_empty() {
+            Vec::new()
+        } else {
+            storage
+                .load_rtsp_paths()
+                .await
+                .inspect_err(|err| warn!("unable to load RTSP paths ({err})"))
+                .unwrap_or_default()
+        };
 
-        let mjpeg_paths = storage
-            .load_mjpeg_paths()
-            .inspect_err(|err| warn!("unable to load MJPEG paths ({err})"))
-            .unwrap_or_default();
+        let mjpeg_paths = if self.discovery_interfaces.is_empty() {
+            Vec::new()
+        } else {
+            storage
+                .load_mjpeg_paths()
+                .await
+                .inspect_err(|err| warn!("unable to load MJPEG paths ({err})"))
+                .unwrap_or_default()
+        };
 
         self.gateway_interfaces
             .extend(self.discovery_interfaces.clone());
+
         self.gateway_interfaces.sort_unstable();
         self.gateway_interfaces.dedup();
 
         self.discovery_interfaces.sort_unstable();
         self.discovery_interfaces.dedup();
 
-        let mut config = Config {
-            version: config.version,
+        let config = Config {
+            version: AtomicUsize::new(config.version),
             uuid: config.uuid.into(),
             passwd: config.passwd.into(),
             arrow_mac: mac,
             arrow_svc_addr: arrow_service_address.to_string(),
             diagnostic_mode: self.diagnostic_mode,
+            network_interfaces,
             gateway_interfaces: Arc::new(self.gateway_interfaces),
             discovery_interfaces: Arc::new(self.discovery_interfaces),
             rtsp_paths: Arc::new(rtsp_paths),
@@ -271,6 +290,8 @@ impl ConfigBuilder {
             device_vendor: self.device_vendor,
         };
 
+        let whitelisted_networks = config.get_whitelisted_network_interfaces().await;
+
         {
             let mut svc_table = config.svc_table.lock();
             let mut default_svc_table = config.default_svc_table.lock();
@@ -279,11 +300,11 @@ impl ConfigBuilder {
                 svc_table.add(svc.clone(), ServiceSource::Static);
                 default_svc_table.add(svc, ServiceSource::Static);
             }
+
+            svc_table.update_service_availability(&whitelisted_networks);
         }
 
-        config.update_service_availability();
-
-        config.save().map_err(Error::from_other)?;
+        config.save().await.map_err(Error::from_other)?;
 
         Ok(config)
     }
@@ -342,19 +363,20 @@ impl Default for PersistentConfig {
 
 /// Arrow client configuration.
 pub struct Config {
-    version: usize,
+    version: AtomicUsize,
     uuid: ClientId,
     passwd: ClientKey,
     arrow_mac: MacAddr,
     arrow_svc_addr: String,
     diagnostic_mode: bool,
+    network_interfaces: NetworkInterfacesCache,
     gateway_interfaces: Arc<Vec<String>>,
     discovery_interfaces: Arc<Vec<String>>,
     rtsp_paths: Arc<Vec<String>>,
     mjpeg_paths: Arc<Vec<String>>,
     svc_table: ServiceTable,
     default_svc_table: ServiceTable,
-    storage: Box<dyn Storage + Send>,
+    storage: Box<dyn StorageObject + Send + Sync>,
     tls_connector: TlsConnector,
     flash_friendly: bool,
     device_category: Option<String>,
@@ -372,8 +394,8 @@ impl Config {
     ///
     /// The method reads all command line arguments and loads the configuration
     /// file.
-    pub fn from_args() -> Result<Self, Error> {
-        argh::from_env::<ConfigParser>().into_config()
+    pub async fn from_args() -> Result<Self, Error> {
+        argh::from_env::<ConfigParser>().into_config().await
     }
 
     /// Get address of the remote Arrow Service.
@@ -444,20 +466,34 @@ impl Config {
 
     /// Reset the service table.
     #[doc(hidden)]
-    pub fn reset_service_table(&mut self) {
-        self.svc_table = self.default_svc_table.clone();
+    pub async fn reset_service_table(&self) {
+        self.svc_table.reset(&self.default_svc_table);
 
-        self.version += 1;
+        self.version.fetch_add(1, Ordering::AcqRel);
 
-        if let Err(err) = self.save() {
+        if let Err(err) = self.save().await {
             warn!("{err}");
         }
     }
 
+    /// Check if a given service belongs to one of the gateway networks.
+    #[doc(hidden)]
+    pub async fn is_available(&self, service: &Service) -> bool {
+        let Some(ip) = service.ip_address() else {
+            return false;
+        };
+
+        self.get_whitelisted_network_interfaces()
+            .await
+            .into_iter()
+            .any(|iface| iface.contains_ip_addr(ip))
+    }
+
     /// Add a new service to the service table.
     #[doc(hidden)]
-    pub fn add_service(&mut self, service: Service, source: ServiceSource) -> u16 {
+    pub async fn add_service(&self, service: Service, source: ServiceSource) -> u16 {
         self.update_service_table_internal(|svc_table| svc_table.add(service, source))
+            .await
     }
 
     /// Update service table.
@@ -465,7 +501,7 @@ impl Config {
     /// Add all given services into the table and update visible and available
     /// services.
     #[doc(hidden)]
-    pub fn update_service_table<I>(&mut self, services: I, source: ServiceSource)
+    pub async fn update_service_table<I>(&self, services: I, source: ServiceSource)
     where
         I: IntoIterator<Item = Service>,
     {
@@ -473,21 +509,20 @@ impl Config {
             for svc in services {
                 svc_table.add(svc, source);
             }
-        });
+        })
+        .await;
     }
 
-    /// Update service availability based on the current network state.
+    /// Update the availability and visibility flags of all services.
     #[doc(hidden)]
-    pub fn update_service_availability(&self) {
-        self.svc_table
-            .lock()
-            .update_service_availability(&self.get_whitelisted_network_interfaces());
+    pub async fn update_service_flags(&self) {
+        self.update_service_table_internal(|_| {}).await;
     }
 
     /// Update connection state.
     #[doc(hidden)]
-    pub fn update_connection_state(&mut self, state: ConnectionState) {
-        if let Err(err) = self.storage.save_connection_state(state) {
+    pub async fn update_connection_state(&self, state: ConnectionState) {
+        if let Err(err) = self.storage.save_connection_state(state).await {
             debug!("unable to save current connection state ({err})");
         }
     }
@@ -505,31 +540,12 @@ impl Config {
         }
     }
 
-    /// Save the current configuration.
-    fn save(&mut self) -> Result<(), io::Error> {
-        let config = self.to_persistent_config();
-
-        self.storage
-            .save_configuration(&config)
-            .map_err(|err| io::Error::other(format!("unable to save client configuration: {err}")))
-    }
-
-    /// Create persistent configuration.
-    fn to_persistent_config(&self) -> PersistentConfig {
-        PersistentConfig {
-            uuid: self.uuid.into(),
-            passwd: self.passwd.into(),
-            version: self.version,
-            svc_table: self.svc_table.clone(),
-        }
-    }
-
     /// Update service table.
-    fn update_service_table_internal<F, R>(&mut self, f: F) -> R
+    async fn update_service_table_internal<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut LockedServiceTable) -> R,
     {
-        let interface_whitelist = self.get_whitelisted_network_interfaces();
+        let interface_whitelist = self.get_whitelisted_network_interfaces().await;
 
         let (res, save) = {
             let mut svc_table = self.svc_table.lock();
@@ -552,9 +568,9 @@ impl Config {
         };
 
         if save {
-            self.version += 1;
+            self.version.fetch_add(1, Ordering::AcqRel);
 
-            if let Err(err) = self.save() {
+            if let Err(err) = self.save().await {
                 warn!("{err}");
             }
         }
@@ -563,382 +579,57 @@ impl Config {
     }
 
     /// Get whitelisted network interfaces.
-    fn get_whitelisted_network_interfaces(&self) -> Vec<NetworkInterface> {
-        NetworkInterface::list()
-            .into_iter()
+    async fn get_whitelisted_network_interfaces(&self) -> Vec<NetworkInterface> {
+        self.network_interfaces
+            .get_interfaces()
+            .await
+            .iter()
             .filter(|iface| {
                 self.gateway_interfaces
                     .binary_search_by_key(&iface.name(), String::as_str)
                     .is_ok()
             })
+            .cloned()
             .collect::<Vec<_>>()
     }
-}
 
-/// Arrow Client configuration parser.
-#[derive(FromArgs)]
-#[argh(help_triggers("-h", "--help"))]
-struct ConfigParser {
-    /// address of the Angelcam Arrow Service ("host[:port]" format expected)
-    #[argh(positional)]
-    arrow_service: String,
+    /// Save the current configuration.
+    async fn save(&self) -> io::Result<()> {
+        let config = self.to_persistent_config();
 
-    /// path to a CA certificate for Arrow Service identity verification; in
-    /// case the path is a directory, it's scanned recursively for all files
-    /// with the following extensions: *.der, *.cer, *.crr, *.pem
-    #[argh(option, short = 'c')]
-    ca_certificate: Vec<PathBuf>,
-
-    /// ethernet interface used for client identification (the first configured
-    /// network interface is used by default)
-    #[argh(option, short = 'i')]
-    default_interface: Option<String>,
-
-    /// enable the gateway mode on a given network interface (services
-    /// belonging to all local networks associated with the interface will be
-    /// accessible to the Arrow Client)
-    #[argh(option, short = 'G')]
-    gateway_interface: Vec<String>,
-
-    /// enable automatic service discovery on a given network interface (this
-    /// also enables the gateway mode on the interface)
-    #[cfg(feature = "discovery")]
-    #[argh(option, short = 'D')]
-    discovery_interface: Vec<String>,
-
-    /// add a given RTSP service URL
-    #[argh(option, short = 'R')]
-    rtsp_service: Vec<String>,
-
-    /// add a given MJPEG service URL
-    #[argh(option, short = 'M')]
-    mjpeg_service: Vec<String>,
-
-    /// add a given HTTP service ("host:port" format expected)
-    #[argh(option, short = 'H')]
-    http_service: Vec<String>,
-
-    /// add a given TCP service ("host:port" format expected)
-    #[argh(option, short = 'T')]
-    tcp_service: Vec<String>,
-
-    /// enable debug logs
-    #[argh(switch, short = 'v')]
-    verbose: bool,
-
-    /// alternative path to the client configuration file (default value:
-    /// /etc/arrow/config.json)
-    #[argh(option, default = "String::from(CONFIG_FILE)")]
-    config_file: String,
-
-    /// the client will use this file as a backup for its credentials (default
-    /// value: /etc/arrow/config-skel.json)
-    #[argh(option, default = "String::from(CONFIG_FILE_SKELETON)")]
-    config_file_skel: String,
-
-    /// a file that will contain only the public part of the client
-    /// identification (i.e. there will be no secret in the file)
-    #[argh(option)]
-    identity_file: Option<String>,
-
-    /// alternative path to a file for saving the client connection state
-    /// (default value: /var/lib/arrow/state)
-    #[argh(option, default = "String::from(STATE_FILE)")]
-    conn_state_file: String,
-
-    /// limit the number of writes into the configuration file (useful for
-    /// embedded device deployments with service discovery)
-    #[argh(switch)]
-    flash_friendly: bool,
-
-    /// start the client in the diagnostic mode (i.e. the client will try to
-    /// connect to a given Arrow Service and it will report success as its
-    /// exit code; note: the "access denied" response from the server is also
-    /// considered as a success)
-    #[argh(switch)]
-    diagnostic_mode: bool,
-
-    /// send log messages into stderr instead of syslog
-    #[argh(switch)]
-    log_stderr: bool,
-
-    /// send log messages into stderr instead of syslog and use colored
-    /// messages
-    #[argh(switch)]
-    log_stderr_pretty: bool,
-
-    /// send log messages into a given file instead of syslog
-    #[argh(option)]
-    log_file: Option<String>,
-
-    /// size limit for the log file (in bytes; default value: 10240)
-    #[argh(option, default = "10240")]
-    log_file_size: usize,
-
-    /// number of backup files (i.e. rotations) for the log file (default
-    /// value: 1)
-    #[argh(option, default = "1")]
-    log_file_rotations: usize,
-
-    /// alternative path to a file containing a list of RTSP paths used for
-    /// service discovery (default value: /etc/arrow/rtsp-paths)
-    #[cfg(feature = "discovery")]
-    #[argh(option, default = "String::from(RTSP_PATHS_FILE)")]
-    rtsp_paths: String,
-
-    /// alternative path to a file containing a list of MJPEG paths used for
-    /// service discovery (default value: /etc/arrow/mjpeg-paths)
-    #[cfg(feature = "discovery")]
-    #[argh(option, default = "String::from(MJPEG_PATHS_FILE)")]
-    mjpeg_paths: String,
-
-    /// use a given lock file to make sure that there is only one instance of
-    /// the process running; the file will contain also the PID of the process
-    #[argh(option)]
-    lock_file: Option<String>,
-
-    /// type of a device running the client (informational)
-    #[argh(option)]
-    device_type: Option<String>,
-
-    /// device vendor (informational)
-    #[argh(option)]
-    device_vendor: Option<String>,
-
-    /// device category (informational)
-    #[argh(option)]
-    device_category: Option<String>,
-
-    /// print the version information and exit
-    #[argh(switch)]
-    version: bool,
-}
-
-impl ConfigParser {
-    /// Build the client configuration from the parsed command line arguments.
-    fn into_config(self) -> Result<Config, Error> {
-        if self.version {
-            version();
-        }
-
-        // because of the lock file, we need to create the storage builder
-        // before creating the logger
-        let mut storage_builder =
-            DefaultStorage::builder(&self.config_file, self.lock_file.as_ref())
-                .map_err(Error::from_other)?;
-
-        self.init_logger()?;
-
-        let arrow_mac = self.get_arrow_mac()?;
-        let services = self.collect_services()?;
-
-        storage_builder
-            .config_skeleton_file(Some(self.config_file_skel))
-            .connection_state_file(Some(self.conn_state_file))
-            .identity_file(self.identity_file)
-            .ca_certificates(self.ca_certificate);
-
-        #[cfg(feature = "discovery")]
-        storage_builder
-            .rtsp_paths_file(Some(self.rtsp_paths))
-            .mjpeg_paths_file(Some(self.mjpeg_paths));
-
-        let storage = storage_builder.build();
-
-        let mut config_builder = Config::builder();
-
-        config_builder
-            .mac_address(arrow_mac)
-            .services(services)
-            .diagnostic_mode(self.diagnostic_mode)
-            .flash_friendly(self.flash_friendly)
-            .gateway_interfaces(self.gateway_interface);
-
-        #[cfg(feature = "discovery")]
-        config_builder.discovery_interfaces(self.discovery_interface);
-
-        if let Some(c) = self.device_category {
-            config_builder.device_category(c);
-        }
-
-        if let Some(t) = self.device_type {
-            config_builder.device_type(t);
-        }
-
-        if let Some(v) = self.device_vendor {
-            config_builder.device_vendor(v);
-        }
-
-        let mut arrow_service = self.arrow_service;
-
-        // add the default port number if the given address has no port
-        if arrow_service.ends_with(']') || !arrow_service.contains(':') {
-            let _ = write!(arrow_service, ":{}", DEFAULT_ARROW_SERVICE_PORT);
-        }
-
-        config_builder.build(storage, arrow_service)
+        self.storage
+            .save_configuration(&config)
+            .await
+            .map_err(|err| io::Error::other(format!("unable to save client configuration: {err}")))
     }
 
-    /// Initialize the application logger.
-    fn init_logger(&self) -> Result<(), Error> {
-        let logger: Box<dyn Log> = if let Some(file) = self.log_file.as_deref() {
-            let logger = FileLogger::new(file, self.log_file_size, self.log_file_rotations)
-                .map_err(|err| {
-                    Error::from_msg_and_cause(
-                        format!("unable to open the given log file: \"{file}\""),
-                        err,
-                    )
-                })?;
-
-            Box::new(logger)
-        } else if self.log_stderr || self.log_stderr_pretty || cfg!(target_os = "windows") {
-            Box::new(StderrLogger::new(self.log_stderr_pretty))
-        } else {
-            Box::new(Syslog::new())
-        };
-
-        log::set_boxed_logger(logger).expect("unable to configure application logger");
-
-        let max_log_level = if self.verbose {
-            LevelFilter::Debug
-        } else {
-            LevelFilter::Info
-        };
-
-        log::set_max_level(max_log_level);
-
-        Ok(())
-    }
-
-    /// Collect services passed via command line arguments.
-    fn collect_services(&self) -> Result<Vec<Service>, Error> {
-        let mut services = Vec::new();
-
-        for url in &self.rtsp_service {
-            services.push(parse_rtsp_url(url)?);
+    /// Create persistent configuration.
+    fn to_persistent_config(&self) -> PersistentConfig {
+        PersistentConfig {
+            uuid: self.uuid.into(),
+            passwd: self.passwd.into(),
+            version: self.version.load(Ordering::Acquire),
+            svc_table: self.svc_table.clone(),
         }
-
-        for url in &self.mjpeg_service {
-            services.push(parse_mjpeg_url(url)?);
-        }
-
-        for addr in &self.http_service {
-            let addr = crate::net::utils::get_socket_address(addr.as_str()).map_err(|_| {
-                Error::from_msg(format!("unable to resolve socket address: {addr}"))
-            })?;
-
-            let mac = get_fake_mac(0xffff, addr.ip());
-
-            services.push(Service::http(mac, addr));
-        }
-
-        for addr in &self.tcp_service {
-            let addr = crate::net::utils::get_socket_address(addr.as_str()).map_err(|_| {
-                Error::from_msg(format!("unable to resolve socket address: {addr}"))
-            })?;
-
-            let mac = get_fake_mac(0xffff, addr.ip());
-
-            services.push(Service::tcp(mac, addr));
-        }
-
-        Ok(services)
-    }
-
-    /// Get the Arrow Client MAC address.
-    fn get_arrow_mac(&self) -> Result<Option<MacAddr>, Error> {
-        self.default_interface.as_deref().map(get_mac).transpose()
     }
 }
 
 /// Get MAC address of the first configured ethernet device.
-fn get_first_mac() -> Result<MacAddr, Error> {
-    NetworkInterface::list()
-        .into_iter()
+fn get_first_mac(interfaces: &[NetworkInterface]) -> Result<MacAddr, Error> {
+    interfaces
+        .iter()
         .next()
         .map(|dev| dev.mac())
         .ok_or_else(|| Error::from_static_msg("there is no configured ethernet device"))
 }
 
 /// Get MAC address of a given network interface.
-fn get_mac(iface: &str) -> Result<MacAddr, Error> {
-    NetworkInterface::list()
-        .into_iter()
+fn get_mac(interfaces: &[NetworkInterface], iface: &str) -> Result<MacAddr, Error> {
+    interfaces
+        .iter()
         .find(|dev| dev.name() == iface)
         .map(|dev| dev.mac())
         .ok_or_else(|| Error::from_msg(format!("there is no such ethernet device: {iface}")))
-}
-
-/// Parse a given RTSP URL and return an RTSP service, a LockedRTSP service or an error.
-fn parse_rtsp_url(url: &str) -> Result<Service, Error> {
-    let url = url
-        .parse::<Url>()
-        .map_err(|_| Error::from_msg(format!("invalid RTSP URL given: {url}")))?;
-
-    let scheme = url.scheme();
-
-    if !scheme.eq_ignore_ascii_case("rtsp") {
-        return Err(Error::from_msg(format!("invalid RTSP URL given: {url}")));
-    }
-
-    let host = url.host();
-    let port = url.port().unwrap_or(554);
-
-    let socket_addr = crate::net::utils::get_socket_address((host, port)).map_err(|_| {
-        Error::from_msg(format!(
-            "unable to resolve RTSP service address: {host}:{port}"
-        ))
-    })?;
-
-    let mac = get_fake_mac(0xffff, socket_addr.ip());
-
-    let mut path = url.path().to_string();
-
-    if let Some(query) = url.query() {
-        path = format!("{}?{}", path, query);
-    }
-
-    // NOTE: we do not want to probe the service here as it might not be available on app startup
-    match url.username() {
-        Some(_) => Ok(Service::locked_rtsp(mac, socket_addr, Some(path))),
-        None => Ok(Service::rtsp(mac, socket_addr, path)),
-    }
-}
-
-/// Parse a given HTTP URL and return an MJPEG service, a LockedMJPEG service or an error.
-fn parse_mjpeg_url(url: &str) -> Result<Service, Error> {
-    let url = url
-        .parse::<Url>()
-        .map_err(|_| Error::from_msg(format!("invalid HTTP URL given: {url}")))?;
-
-    let scheme = url.scheme();
-
-    if !scheme.eq_ignore_ascii_case("http") {
-        return Err(Error::from_msg(format!("invalid HTTP URL given: {url}")));
-    }
-
-    let host = url.host();
-    let port = url.port().unwrap_or(80);
-
-    let socket_addr = crate::net::utils::get_socket_address((host, port)).map_err(|_| {
-        Error::from_msg(format!(
-            "unable to resolve HTTP service address: {host}:{port}"
-        ))
-    })?;
-
-    let mac = get_fake_mac(0xffff, socket_addr.ip());
-
-    let mut path = url.path().to_string();
-
-    if let Some(query) = url.query() {
-        path = format!("{}?{}", path, query);
-    }
-
-    // NOTE: we do not want to probe the service here as it might not be available on app startup
-    match url.username() {
-        Some(_) => Ok(Service::locked_mjpeg(mac, socket_addr, Some(path))),
-        None => Ok(Service::mjpeg(mac, socket_addr, path)),
-    }
 }
 
 /// Print usage and exit the process with a given exit code.
@@ -950,7 +641,7 @@ pub fn usage(exit_code: i32) -> ! {
 
     println!("{}", err.output);
 
-    process::exit(exit_code);
+    std::process::exit(exit_code);
 }
 
 /// Print version information and exit the process.
@@ -963,7 +654,7 @@ pub fn version() -> ! {
         env!("CARGO_PKG_VERSION")
     );
 
-    process::exit(0);
+    std::process::exit(0);
 }
 
 /// Get the application name.
@@ -1084,7 +775,7 @@ struct ExtendedDeviceInfo {
 }
 
 /// Create a TLS connector with loaded CA certificates.
-fn create_tls_connector<S>(storage: &mut S) -> Result<TlsConnector, Error>
+async fn create_tls_connector<S>(storage: &mut S) -> Result<TlsConnector, Error>
 where
     S: Storage,
 {
@@ -1098,9 +789,41 @@ where
 
     storage
         .load_ca_certificates(&mut builder)
+        .await
         .map_err(Error::from_other)?;
 
     let connector = builder.build().map_err(Error::from_other)?;
 
     Ok(connector.into())
+}
+
+/// Helper type.
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// Helper trait.
+trait StorageObject {
+    /// Save the configuration.
+    fn save_configuration<'a>(
+        &'a self,
+        config: &'a PersistentConfig,
+    ) -> BoxFuture<'a, io::Result<()>>;
+
+    /// Save the connection state.
+    fn save_connection_state(&self, _: ConnectionState) -> BoxFuture<'_, io::Result<()>>;
+}
+
+impl<T> StorageObject for T
+where
+    T: Storage,
+{
+    fn save_configuration<'a>(
+        &'a self,
+        config: &'a PersistentConfig,
+    ) -> BoxFuture<'a, io::Result<()>> {
+        Box::pin(self.save_configuration(config))
+    }
+
+    fn save_connection_state(&self, state: ConnectionState) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(self.save_connection_state(state))
+    }
 }

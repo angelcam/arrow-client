@@ -13,16 +13,13 @@
 // limitations under the License.
 
 use std::{
-    fs::File,
     io::{self, Write},
     path::{Path, PathBuf},
     process,
 };
 
-#[cfg(feature = "discovery")]
-use std::io::{BufRead, BufReader};
-
 use serde_lite::{Deserialize, Intermediate, Serialize};
+use tokio::fs::File;
 use tokio_native_tls::native_tls::{Certificate, TlsConnectorBuilder};
 
 use crate::{
@@ -31,36 +28,40 @@ use crate::{
 };
 
 /// Arrow client storage.
+#[trait_variant::make(Send)]
 pub trait Storage {
     /// Save a given persistent configuration.
-    fn save_configuration(&mut self, config: &PersistentConfig) -> io::Result<()>;
+    async fn save_configuration(&self, config: &PersistentConfig) -> io::Result<()>;
 
     /// Create a new empty configuration.
-    fn create_configuration(&mut self) -> io::Result<PersistentConfig> {
-        Ok(PersistentConfig::new())
+    fn create_configuration(&self) -> PersistentConfig {
+        PersistentConfig::new()
     }
 
     /// Load persistent configuration.
-    fn load_configuration(&mut self) -> io::Result<PersistentConfig>;
+    async fn load_configuration(&self) -> io::Result<PersistentConfig>;
 
     /// Save connection state.
-    fn save_connection_state(&mut self, _: ConnectionState) -> io::Result<()> {
-        Ok(())
+    fn save_connection_state(
+        &self,
+        _: ConnectionState,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { Ok(()) }
     }
 
     /// Load a list of RTSP paths for the device discovery.
-    fn load_rtsp_paths(&mut self) -> io::Result<Vec<String>> {
-        Ok(Vec::new())
+    fn load_rtsp_paths(&self) -> impl Future<Output = io::Result<Vec<String>>> + Send {
+        async { Ok(Vec::new()) }
     }
 
     /// Load a list of MJPEG paths for the device discovery.
-    fn load_mjpeg_paths(&mut self) -> io::Result<Vec<String>> {
-        Ok(Vec::new())
+    fn load_mjpeg_paths(&self) -> impl Future<Output = io::Result<Vec<String>>> + Send {
+        async { Ok(Vec::new()) }
     }
 
     /// Load CA certificates.
-    fn load_ca_certificates(
-        &mut self,
+    async fn load_ca_certificates(
+        &self,
         ssl_connector_builder: &mut TlsConnectorBuilder,
     ) -> io::Result<()>;
 }
@@ -124,7 +125,7 @@ impl DefaultStorageBuilder {
     }
 
     /// Add a given CA certificate path.
-    pub fn add_ca_cerificate<T>(&mut self, path: T) -> &mut Self
+    pub fn add_ca_certificate<T>(&mut self, path: T) -> &mut Self
     where
         PathBuf: From<T>,
     {
@@ -170,23 +171,26 @@ pub struct DefaultStorage {
 
 impl DefaultStorage {
     /// Get a builder for the file based storage and set a given path to the configuration file.
-    pub fn builder<T, L>(config_file: T, lock_file: Option<L>) -> io::Result<DefaultStorageBuilder>
+    pub async fn builder<T, L>(
+        config_file: T,
+        lock_file: Option<L>,
+    ) -> io::Result<DefaultStorageBuilder>
     where
         PathBuf: From<T>,
         L: AsRef<Path>,
     {
-        let lock_file = lock_file
-            .as_ref()
-            .map(|path| path.as_ref())
-            .map(|path| {
-                create_lock_file(path).map_err(|_| {
-                    io::Error::other(format!(
-                        "unable to acquire an exclusive lock on \"{}\"",
-                        path.display()
-                    ))
-                })
-            })
-            .transpose()?;
+        let lock_file = if let Some(lock_file) = lock_file {
+            let path = lock_file.as_ref();
+
+            create_lock_file(path).await.map(Some).map_err(|_| {
+                io::Error::other(format!(
+                    "unable to acquire an exclusive lock on \"{}\"",
+                    path.display()
+                ))
+            })?
+        } else {
+            None
+        };
 
         let res = DefaultStorageBuilder {
             config_file: config_file.into(),
@@ -204,23 +208,26 @@ impl DefaultStorage {
 }
 
 impl Storage for DefaultStorage {
-    fn save_configuration(&mut self, config: &PersistentConfig) -> io::Result<()> {
-        save_configuration_file(config, &self.config_file).map_err(|err| {
-            io::Error::new(
-                err.kind(),
-                format!(
-                    "unable to create configuration file \"{}\": {}",
-                    self.config_file.display(),
-                    err
-                ),
-            )
-        })
+    async fn save_configuration(&self, config: &PersistentConfig) -> io::Result<()> {
+        save_configuration_file(config, &self.config_file)
+            .await
+            .map_err(|err| {
+                io::Error::new(
+                    err.kind(),
+                    format!(
+                        "unable to create configuration file \"{}\": {}",
+                        self.config_file.display(),
+                        err
+                    ),
+                )
+            })
     }
 
-    fn load_configuration(&mut self) -> io::Result<PersistentConfig> {
+    async fn load_configuration(&self) -> io::Result<PersistentConfig> {
         // read config skeleton
-        let config_skeleton = self.config_skeleton_file.as_ref().and_then(|file| {
+        let config_skeleton = if let Some(file) = self.config_skeleton_file.as_ref() {
             load_configuration_file(file)
+                .await
                 .inspect_err(|err| {
                     warn!(
                         "unable to read configuration file skeleton \"{}\" ({})",
@@ -229,10 +236,13 @@ impl Storage for DefaultStorage {
                     )
                 })
                 .ok()
-        });
+        } else {
+            None
+        };
 
         // read config
         let config = load_configuration_file(&self.config_file)
+            .await
             .inspect_err(|err| {
                 warn!(
                     "unable to read configuration file \"{}\" ({})",
@@ -248,8 +258,7 @@ impl Storage for DefaultStorage {
         // if there is no skeleton, create a new config
         let config = config
             .or(config_skeleton)
-            .map(Ok)
-            .unwrap_or_else(|| self.create_configuration())?;
+            .unwrap_or_else(|| self.create_configuration());
 
         // if there is no skeleton, create one from the config
         if !config_skeleton_exists && let Some(file) = self.config_skeleton_file.as_ref() {
@@ -260,7 +269,7 @@ impl Storage for DefaultStorage {
                 file.display()
             );
 
-            if let Err(err) = save_configuration_file(&config_skeleton, file) {
+            if let Err(err) = save_configuration_file(&config_skeleton, file).await {
                 warn!(
                     "unable to create configuration file skeleton \"{}\" ({})",
                     file.display(),
@@ -273,7 +282,7 @@ impl Storage for DefaultStorage {
         if let Some(file) = self.identity_file.as_ref() {
             let identity = config.to_identity();
 
-            if let Err(err) = save_identity_file(&identity, file) {
+            if let Err(err) = save_identity_file(&identity, file).await {
                 warn!(
                     "unable to create identity file \"{}\" ({})",
                     file.display(),
@@ -285,38 +294,36 @@ impl Storage for DefaultStorage {
         Ok(config)
     }
 
-    fn save_connection_state(&mut self, state: ConnectionState) -> io::Result<()> {
+    async fn save_connection_state(&self, state: ConnectionState) -> io::Result<()> {
         if let Some(file) = self.connection_state_file.as_ref() {
-            let mut file = File::create(file)?;
-
-            writeln!(&mut file, "{}", state)?;
+            tokio::fs::write(file, format!("{}\n", state)).await?;
         }
 
         Ok(())
     }
 
-    fn load_rtsp_paths(&mut self) -> io::Result<Vec<String>> {
+    async fn load_rtsp_paths(&self) -> io::Result<Vec<String>> {
         if let Some(file) = self.rtsp_paths_file.as_ref() {
-            load_paths(file)
+            load_paths(file).await
         } else {
             Ok(Vec::new())
         }
     }
 
-    fn load_mjpeg_paths(&mut self) -> io::Result<Vec<String>> {
+    async fn load_mjpeg_paths(&self) -> io::Result<Vec<String>> {
         if let Some(file) = self.mjpeg_paths_file.as_ref() {
-            load_paths(file)
+            load_paths(file).await
         } else {
             Ok(Vec::new())
         }
     }
 
-    fn load_ca_certificates(
-        &mut self,
+    async fn load_ca_certificates(
+        &self,
         ssl_connector_builder: &mut TlsConnectorBuilder,
     ) -> io::Result<()> {
         for path in &self.ca_cert_files {
-            if let Err(err) = ssl_connector_builder.load_ca_certificates(path) {
+            if let Err(err) = ssl_connector_builder.load_ca_certificates(path).await {
                 warn!(
                     "unable to open certificate file/dir \"{}\" ({})",
                     path.display(),
@@ -332,92 +339,71 @@ impl Storage for DefaultStorage {
 /// Simple extension to the SslContextBuilder.
 trait TlsConnectorBuilderExt {
     /// Load all CA certificates from a given path.
-    fn load_ca_certificates<P>(&mut self, path: P) -> io::Result<()>
-    where
-        P: AsRef<Path>;
+    async fn load_ca_certificates(&mut self, path: &Path) -> io::Result<()>;
 
     /// Load a given CA certificate file.
-    fn load_ca_certificate<P>(&mut self, path: P) -> io::Result<()>
-    where
-        P: AsRef<Path>;
+    async fn load_ca_certificate(&mut self, path: &Path) -> io::Result<()>;
 }
 
 impl TlsConnectorBuilderExt for TlsConnectorBuilder {
-    fn load_ca_certificates<P>(&mut self, path: P) -> Result<(), io::Error>
-    where
-        P: AsRef<Path>,
-    {
-        // helper function to avoid expensive monomorphization
-        fn inner(path: &Path, builder: &mut TlsConnectorBuilder) -> io::Result<()> {
-            if path.is_dir() {
-                for entry in path.read_dir()? {
-                    inner(&entry?.path(), builder)?;
-                }
-            } else if is_cert_file(path) {
-                builder.load_ca_certificate(path)?;
-            }
+    async fn load_ca_certificates(&mut self, path: &Path) -> io::Result<()> {
+        let meta = tokio::fs::metadata(path).await?;
 
-            Ok(())
+        if meta.is_dir() {
+            let mut entries = tokio::fs::read_dir(path).await?;
+
+            while let Some(entry) = entries.next_entry().await? {
+                let this = &mut *self;
+
+                let future =
+                    Box::pin(async move { this.load_ca_certificates(&entry.path()).await });
+
+                future.await?;
+            }
+        } else if is_cert_file(path) {
+            self.load_ca_certificate(path).await?;
         }
 
-        inner(path.as_ref(), self)
+        Ok(())
     }
 
-    fn load_ca_certificate<P>(&mut self, path: P) -> io::Result<()>
-    where
-        P: AsRef<Path>,
-    {
-        // helper function to avoid expensive monomorphization
-        fn inner(path: &Path, builder: &mut TlsConnectorBuilder) -> io::Result<()> {
-            let content = std::fs::read(path)?;
+    async fn load_ca_certificate(&mut self, path: &Path) -> io::Result<()> {
+        let content = tokio::fs::read(path).await?;
 
-            let res = if content.starts_with(b"-----BEGIN ") {
-                Certificate::from_pem(&content)
-            } else {
-                Certificate::from_der(&content)
-            };
+        let res = if content.starts_with(b"-----BEGIN ") {
+            Certificate::from_pem(&content)
+        } else {
+            Certificate::from_der(&content)
+        };
 
-            let cert = res.map_err(|_| io::Error::other("invalid CA certificate"))?;
+        let cert = res.map_err(|_| io::Error::other("invalid CA certificate"))?;
 
-            builder.add_root_certificate(cert);
+        self.add_root_certificate(cert);
 
-            Ok(())
-        }
-
-        inner(path.as_ref(), self)
+        Ok(())
     }
 }
 
 /// Check if a given file is a certificate file.
-fn is_cert_file<P>(path: P) -> bool
-where
-    P: AsRef<Path>,
-{
-    // helper function to avoid expensive monomorphization
-    fn inner(path: &Path) -> bool {
-        if let Some(ext) = path.extension()
-            && let Some(ext) = ext.to_str()
-        {
-            return ext.eq_ignore_ascii_case("der")
-                || ext.eq_ignore_ascii_case("cer")
-                || ext.eq_ignore_ascii_case("crt")
-                || ext.eq_ignore_ascii_case("pem");
-        }
-
-        false
+fn is_cert_file(path: &Path) -> bool {
+    if let Some(ext) = path.extension()
+        && let Some(ext) = ext.to_str()
+    {
+        return ext.eq_ignore_ascii_case("der")
+            || ext.eq_ignore_ascii_case("cer")
+            || ext.eq_ignore_ascii_case("crt")
+            || ext.eq_ignore_ascii_case("pem");
     }
 
-    inner(path.as_ref())
+    false
 }
 
 /// Create a lock file.
-fn create_lock_file<P>(path: P) -> Result<File, io::Error>
-where
-    P: AsRef<Path>,
-{
-    // helper function to avoid expensive monomorphization
-    fn inner(path: &Path) -> io::Result<File> {
-        let mut file = File::create(path)?;
+async fn create_lock_file(path: &Path) -> io::Result<File> {
+    let path = path.to_path_buf();
+
+    let blocking = tokio::task::spawn_blocking(|| {
+        let mut file = std::fs::File::create(path)?;
 
         file.try_lock()?;
 
@@ -426,112 +412,68 @@ where
         file.flush()?;
         file.sync_all()?;
 
-        Ok(file)
-    }
+        Ok(file.into())
+    });
 
-    inner(path.as_ref())
+    blocking
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::Interrupted))?
 }
 
 /// Helper function for loading persistent config.
-fn load_configuration_file<P>(file: P) -> Result<PersistentConfig, io::Error>
-where
-    P: AsRef<Path>,
-{
-    // helper function to avoid expensive monomorphization
-    fn inner(file: &Path) -> io::Result<PersistentConfig> {
-        let file = File::open(file)?;
+async fn load_configuration_file(file: &Path) -> io::Result<PersistentConfig> {
+    let content = tokio::fs::read(file).await?;
 
-        let intermediate = serde_json::from_reader::<_, Intermediate>(file)
-            .map_err(|err| io::Error::other(format!("unable to parse configuration: {err}")))?;
+    let intermediate = serde_json::from_slice::<Intermediate>(&content)
+        .map_err(|err| io::Error::other(format!("unable to parse configuration: {err}")))?;
 
-        PersistentConfig::deserialize(&intermediate).map_err(io::Error::other)
-    }
-
-    inner(file.as_ref())
+    PersistentConfig::deserialize(&intermediate).map_err(io::Error::other)
 }
 
 /// Helper function for saving persistent config.
-fn save_configuration_file<P>(config: &PersistentConfig, file: P) -> io::Result<()>
-where
-    P: AsRef<Path>,
-{
-    // helper function to avoid expensive monomorphization
-    fn inner(file: &Path, config: &PersistentConfig) -> io::Result<()> {
-        let intermediate = config
-            .serialize()
-            .expect("unable to serialize persistent configuration");
+async fn save_configuration_file(config: &PersistentConfig, file: &Path) -> io::Result<()> {
+    let intermediate = config
+        .serialize()
+        .expect("unable to serialize persistent configuration");
 
-        save_json_file(file, &intermediate)
-    }
-
-    inner(file.as_ref(), config)
+    save_json_file(file, &intermediate).await
 }
 
 /// Helper function for saving client public identity.
-fn save_identity_file<P>(identity: &PublicIdentity, file: P) -> io::Result<()>
-where
-    P: AsRef<Path>,
-{
-    // helper function to avoid expensive monomorphization
-    fn inner(file: &Path, identity: &PublicIdentity) -> io::Result<()> {
-        let intermediate = identity
-            .serialize()
-            .expect("unable to serialize public identity");
+async fn save_identity_file(identity: &PublicIdentity, file: &Path) -> io::Result<()> {
+    let intermediate = identity
+        .serialize()
+        .expect("unable to serialize public identity");
 
-        save_json_file(file, &intermediate)
-    }
-
-    inner(file.as_ref(), identity)
+    save_json_file(file, &intermediate).await
 }
 
 /// Save a given value as JSON into a given file.
-fn save_json_file<P>(file: P, value: &Intermediate) -> io::Result<()>
-where
-    P: AsRef<Path>,
-{
-    // helper function to avoid expensive monomorphization
-    fn inner(file: &Path, value: &Intermediate) -> io::Result<()> {
-        let file = File::create(file)?;
+async fn save_json_file(file: &Path, value: &Intermediate) -> io::Result<()> {
+    let content = serde_json::to_vec(value).map_err(io::Error::other)?;
 
-        serde_json::to_writer(file, value).map_err(io::Error::other)
-    }
-
-    inner(file.as_ref(), value)
+    tokio::fs::write(file, content).await
 }
 
 /// Helper function for loading all path variants from a given file.
 #[cfg(feature = "discovery")]
-fn load_paths<P>(file: P) -> io::Result<Vec<String>>
-where
-    P: AsRef<Path>,
-{
-    // helper function to avoid expensive monomorphization
-    fn inner(file: &Path) -> io::Result<Vec<String>> {
-        let file = File::open(file)?;
-        let breader = BufReader::new(file);
+async fn load_paths(file: &Path) -> io::Result<Vec<String>> {
+    let content = tokio::fs::read_to_string(file).await?;
 
-        let mut paths = Vec::new();
+    let mut paths = Vec::new();
 
-        for line in breader.lines() {
-            let path = line?;
-
-            if !path.starts_with('#') {
-                paths.push(path);
-            }
+    for line in content.lines() {
+        if !line.starts_with('#') {
+            paths.push(String::from(line));
         }
-
-        Ok(paths)
     }
 
-    inner(file.as_ref())
+    Ok(paths)
 }
 
 /// Helper function for loading all path variants from a given file.
 #[cfg(not(feature = "discovery"))]
 #[allow(clippy::unnecessary_wraps)]
-fn load_paths<P>(_: P) -> io::Result<Vec<String>>
-where
-    P: AsRef<Path>,
-{
+async fn load_paths(_: &Path) -> io::Result<Vec<String>> {
     Ok(Vec::new())
 }

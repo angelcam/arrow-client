@@ -59,7 +59,8 @@ where
 {
     /// Create a new task.
     async fn start(app_context: ApplicationContext, cmd_channel: CommandChannel, svc_connector: C) {
-        let addr = app_context.get_arrow_service_address();
+        let addr = String::from(app_context.get_arrow_service_address());
+
         let diagnostic_mode = app_context.get_diagnostic_mode();
 
         let now = Instant::now();
@@ -91,7 +92,8 @@ where
         self.last_attempt = Instant::now();
 
         self.app_context
-            .set_connection_state(ConnectionState::Connected);
+            .set_connection_state(ConnectionState::Connected)
+            .await;
 
         arrow::connect(
             self.app_context.clone(),
@@ -123,7 +125,7 @@ where
                 ConnectionState::Disconnected
             };
 
-            self.app_context.set_connection_state(cstate);
+            self.app_context.set_connection_state(cstate).await;
 
             let retry = process_connection_error(err, self.last_attempt, self.pairing_mode_timeout);
 
@@ -224,7 +226,7 @@ async fn wait_for_retry(connection_retry: ConnectionRetry) {
         ConnectionRetry::Timeout(_) => (),
         ConnectionRetry::Suspend(reason) => {
             info!("{}", reason.to_string());
-            info!("suspending the connection thread");
+            info!("suspending the connection task");
 
             let halt = futures::future::pending::<()>();
 
@@ -266,7 +268,7 @@ pub struct ArrowClient {
     command_channel: Option<CommandChannel>,
 
     cancel_main_task: Option<AbortHandle>,
-    cancel_nw_scan: Option<AbortHandle>,
+    cancel_periodic_tasks: Option<AbortHandle>,
 }
 
 impl ArrowClient {
@@ -297,25 +299,25 @@ impl ArrowClient {
         let arrow_main_task =
             ArrowMainTask::start(context.clone(), cmd_channel.clone(), svc_connector);
 
-        let nw_scan_cmd_channel = cmd_channel.clone();
+        let periodic_task_channel = cmd_channel.clone();
 
         // schedule periodic network scan
-        let periodic_network_scan = async move {
+        let periodic_tasks = async move {
             loop {
-                nw_scan_cmd_channel.send(Command::PeriodicNetworkScan);
+                periodic_task_channel.send(Command::RunPeriodicTasks);
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         };
 
         let (arrow_main_task, cancel_main_task) = futures::future::abortable(arrow_main_task);
-        let (periodic_network_scan, cancel_nw_scan) =
-            futures::future::abortable(periodic_network_scan.boxed());
+        let (periodic_tasks, cancel_periodic_tasks) =
+            futures::future::abortable(periodic_tasks.boxed());
 
         let ctx = context.clone();
 
         let task = async move {
             tokio::spawn(cmd_handler);
-            tokio::spawn(periodic_network_scan.map(|_| ()));
+            tokio::spawn(periodic_tasks.map(|_| ()));
 
             info!(
                 "Arrow Client started (uuid: {}, mac: {})",
@@ -336,7 +338,7 @@ impl ArrowClient {
             command_channel: Some(cmd_channel),
 
             cancel_main_task: Some(cancel_main_task),
-            cancel_nw_scan: Some(cancel_nw_scan),
+            cancel_periodic_tasks: Some(cancel_periodic_tasks),
         };
 
         (arrow_client, arrow_client_task)
@@ -402,7 +404,7 @@ impl ArrowClient {
 
     /// Close the Arrow client.
     pub fn close(&mut self) {
-        if let Some(handle) = self.cancel_nw_scan.take() {
+        if let Some(handle) = self.cancel_periodic_tasks.take() {
             handle.abort();
         }
 

@@ -15,7 +15,6 @@
 use std::{
     pin::Pin,
     task::{Context, Poll},
-    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -23,11 +22,15 @@ use futures::{
     FutureExt, StreamExt,
     channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
 };
+use tokio::task::JoinHandle;
 
 use crate::context::ApplicationContext;
 
 #[cfg(feature = "discovery")]
 use crate::{scanner::discovery, svc_table::ServiceSource};
+
+/// Service flag update period.
+const SERVICE_FLAG_UPDATE_PERIOD: Duration = Duration::from_secs(10);
 
 /// Network scan period.
 const NETWORK_SCAN_PERIOD: Duration = Duration::from_secs(300);
@@ -37,7 +40,7 @@ const NETWORK_SCAN_PERIOD: Duration = Duration::from_secs(300);
 pub enum Command {
     ResetServiceTable,
     ScanNetwork,
-    PeriodicNetworkScan,
+    RunPeriodicTasks,
 }
 
 /// Command handler event.
@@ -51,8 +54,8 @@ type CommandReceiver = UnboundedReceiver<Event>;
 
 type CommandSender = UnboundedSender<Event>;
 
-/// A channel for sending commands across threads. The channel is cloneable and every copy of it
-/// will send commands to the same handler.
+/// A channel for sending commands across threads. The channel is cloneable and
+/// every copy of it will send commands to the same handler.
 #[derive(Clone)]
 pub struct CommandChannel {
     tx: CommandSender,
@@ -76,6 +79,7 @@ impl CommandChannel {
 struct CommandHandlerContext {
     app_context: ApplicationContext,
     cmd_sender: CommandSender,
+    last_svc_flag_update: Option<Instant>,
     last_nw_scan: Option<Instant>,
     scanner: Option<JoinHandle<()>>,
 }
@@ -86,35 +90,36 @@ impl CommandHandlerContext {
         Self {
             app_context,
             cmd_sender,
+            last_svc_flag_update: None,
             last_nw_scan: None,
             scanner: None,
         }
     }
 
     /// Process a given command handler event.
-    fn proces_event(&mut self, event: Event) {
+    async fn process_event(&mut self, event: Event) {
         match event {
-            Event::Command(cmd) => self.process_command(cmd),
-            Event::ScanCompleted => self.scan_completed(),
+            Event::Command(cmd) => self.process_command(cmd).await,
+            Event::ScanCompleted => self.scan_completed().await,
         }
     }
 
     /// Process a given command.
-    fn process_command(&mut self, cmd: Command) {
+    async fn process_command(&mut self, cmd: Command) {
         match cmd {
-            Command::ResetServiceTable => self.reset_service_table(),
+            Command::ResetServiceTable => self.reset_service_table().await,
             Command::ScanNetwork => self.scan_network(),
-            Command::PeriodicNetworkScan => self.periodic_network_scan(),
+            Command::RunPeriodicTasks => self.run_periodic_tasks().await,
         }
     }
 
     /// Reset service table.
-    fn reset_service_table(&mut self) {
-        self.app_context.reset_service_table()
+    async fn reset_service_table(&mut self) {
+        self.app_context.reset_service_table().await
     }
 
-    /// Trigger periodic netork scan.
-    fn periodic_network_scan(&mut self) {
+    /// Run periodic tasks.
+    async fn run_periodic_tasks(&mut self) {
         let time_since_last_nw_scan = self
             .last_nw_scan
             .map(|i| i.elapsed())
@@ -123,6 +128,22 @@ impl CommandHandlerContext {
         if time_since_last_nw_scan >= NETWORK_SCAN_PERIOD {
             self.scan_network();
         }
+
+        if let Some(last_svc_flag_update) = self.last_svc_flag_update {
+            if last_svc_flag_update.elapsed() >= SERVICE_FLAG_UPDATE_PERIOD {
+                self.update_service_flags().await;
+            }
+        } else if self.last_nw_scan.is_some() || !cfg!(feature = "discovery") {
+            // first service flag update after start or network scan
+            self.update_service_flags().await;
+        }
+    }
+
+    /// Update service flags.
+    async fn update_service_flags(&mut self) {
+        self.app_context.update_service_flags().await;
+
+        self.last_svc_flag_update = Some(Instant::now());
     }
 
     #[cfg(feature = "discovery")]
@@ -130,17 +151,21 @@ impl CommandHandlerContext {
     fn scan_network(&mut self) {
         let interfaces = self.app_context.get_discovery_interfaces();
 
-        if interfaces.is_empty() || self.scanner.is_some() {
+        if interfaces.is_empty() {
+            let _ = self.cmd_sender.unbounded_send(Event::ScanCompleted);
+
+            return;
+        } else if self.scanner.is_some() {
             return;
         }
 
         let app_context = self.app_context.clone();
         let cmd_sender = self.cmd_sender.clone();
 
-        let handle = std::thread::spawn(move || {
-            network_scanner_thread(app_context);
+        let handle = tokio::task::spawn(async move {
+            network_scanner_task(app_context).await;
 
-            cmd_sender.unbounded_send(Event::ScanCompleted).unwrap();
+            let _ = cmd_sender.unbounded_send(Event::ScanCompleted);
         });
 
         self.scanner = Some(handle);
@@ -149,18 +174,16 @@ impl CommandHandlerContext {
     #[cfg(not(feature = "discovery"))]
     /// Dummy network scan.
     fn scan_network(&mut self) {
-        self.cmd_sender
-            .unbounded_send(Event::ScanCompleted)
-            .unwrap();
+        let _ = self.cmd_sender.unbounded_send(Event::ScanCompleted);
     }
 
     /// Cleanup the scanner context.
-    fn scan_completed(&mut self) {
+    async fn scan_completed(&mut self) {
         if let Some(handle) = self.scanner.take() {
-            let res = handle.join();
+            let res = handle.await;
 
             if res.is_err() {
-                warn!("network scanner thread panicked");
+                warn!("network scanner task panicked");
             }
         }
 
@@ -181,7 +204,7 @@ impl CommandHandler {
 
         let handler = async move {
             while let Some(event) = rx.next().await {
-                context.proces_event(event);
+                context.process_event(event).await;
             }
         };
 
@@ -211,7 +234,7 @@ pub fn new(app_context: ApplicationContext) -> (CommandChannel, CommandHandler) 
 
 #[cfg(feature = "discovery")]
 /// Run device discovery and update the service table.
-fn network_scanner_thread(mut app_context: ApplicationContext) {
+async fn network_scanner_task(mut app_context: ApplicationContext) {
     let discovery_whitelist = app_context.get_discovery_interfaces();
     let rtsp_paths = app_context.get_rtsp_paths();
     let mjpeg_paths = app_context.get_mjpeg_paths();
@@ -221,6 +244,7 @@ fn network_scanner_thread(mut app_context: ApplicationContext) {
     info!("looking for local services...");
 
     let result = discovery::scan_network(discovery_whitelist, rtsp_paths, mjpeg_paths)
+        .await
         .inspect_err(|err| warn!("network scanner error ({err})"));
 
     if let Ok(result) = result {
@@ -228,7 +252,10 @@ fn network_scanner_thread(mut app_context: ApplicationContext) {
 
         let count = services.len();
 
-        app_context.update_service_table(services, ServiceSource::Discovery);
+        app_context
+            .update_service_table(services, ServiceSource::Discovery)
+            .await;
+
         app_context.set_scan_result(result);
 
         info!(

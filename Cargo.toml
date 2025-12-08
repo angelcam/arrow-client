@@ -9,9 +9,8 @@ edition = "2024"
 
 [features]
 default = []
-threads = ["tokio/rt-multi-thread"]
-discovery = ["threads", "dep:str-reader", "dep:tokio-util"]
-all = ["discovery", "threads"]
+discovery = ["dep:str-reader", "dep:tokio-util"]
+all = ["discovery"]
 
 [lib]
 crate-type = ["rlib", "cdylib", "staticlib"]
@@ -38,11 +37,11 @@ features = ["max_level_debug", "release_max_level_debug", "std"]
 
 [dependencies.serde-lite]
 version = "0.5"
-features = ["derive"]
+features = ["derive", "preserve-order"]
 
 [dependencies.tokio]
 version = "1"
-features = ["net", "rt", "time"]
+features = ["fs", "macros", "net", "rt-multi-thread", "time"]
 
 [dependencies.tokio-util]
 version = "0.7"
@@ -60,10 +59,6 @@ features = ["v4"]
 [build-dependencies]
 cc = "1"
 vcpkg = "0.2"
-
-[dev-dependencies.serde-lite]
-version = "0.5"
-features = ["derive", "preserve-order"]
 
 [dev-dependencies.tokio]
 version = "1"

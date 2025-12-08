@@ -12,16 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod runtime;
-
 use arrow_client::{client::ArrowClient, config::Config};
 
 /// Arrow Client main function.
-fn main() {
-    let config = match Config::from_args() {
+#[tokio::main]
+async fn main() {
+    let config = match Config::from_args().await {
         Ok(config) => config,
         Err(err) => {
-            println!("ERROR: {}\n", err);
+            eprintln!("ERROR: {}\n", err);
 
             arrow_client::config::usage(1);
         }
@@ -32,5 +31,5 @@ fn main() {
     // forget the client, we want to run the application indefinitely
     std::mem::forget(client);
 
-    runtime::run(task);
+    task.await;
 }

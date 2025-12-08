@@ -48,23 +48,27 @@ pub struct EthernetDevice {
 
 impl EthernetDevice {
     /// List all configured IPv4 network interfaces.
-    pub fn list() -> Vec<Self> {
-        let mut result = Vec::new();
+    pub async fn list() -> Vec<Self> {
+        let blocking = tokio::task::spawn_blocking(|| {
+            let mut result = Vec::new();
 
-        unsafe {
-            let devices = net_find_devices();
+            unsafe {
+                let devices = net_find_devices();
 
-            let mut device = devices;
+                let mut device = devices;
 
-            while !device.is_null() {
-                result.push(Self::new(device));
-                device = net_get_next_device(device);
+                while !device.is_null() {
+                    result.push(Self::new(device));
+                    device = net_get_next_device(device);
+                }
+
+                net_free_device_list(devices);
             }
 
-            net_free_device_list(devices);
-        }
+            result
+        });
 
-        result
+        blocking.await.unwrap_or_default()
     }
 
     /// Create a new network interface instance from its raw counterpart.

@@ -177,13 +177,13 @@ impl Request {
 
     /// Send the request and return a future response.
     async fn send_inner(self) -> Result<Response, Error> {
+        let stream = TcpStream::connect((self.host.as_ref(), self.port)).await?;
+
         let codec = ClientCodec::new(
             self.max_line_length,
             self.max_header_lines,
             self.ignore_response_body,
         );
-
-        let stream = TcpStream::connect((self.host.as_ref(), self.port)).await?;
 
         let mut stream = codec.framed(stream);
 
@@ -273,7 +273,7 @@ impl Response {
 /// HTTP client codec.
 pub struct ClientCodec {
     hdecoder: GenericResponseHeaderDecoder,
-    bdecoder: Option<Box<dyn MessageBodyDecoder>>,
+    bdecoder: Option<Box<dyn MessageBodyDecoder + Send>>,
     header: Option<GenericResponseHeader>,
     max_line_length: usize,
     ignore_response_body: bool,
@@ -308,7 +308,7 @@ impl Decoder for ClientCodec {
         {
             let status_code = header.status_code();
 
-            let bdecoder: Box<dyn MessageBodyDecoder> =
+            let bdecoder: Box<dyn MessageBodyDecoder + Send> =
                 if (100..200).contains(&status_code) || status_code == 204 || status_code == 304 {
                     Box::new(FixedSizeBodyDecoder::new(0, self.ignore_response_body))
                 } else if let Some(tenc) = header.get_header_field("transfer-encoding") {
