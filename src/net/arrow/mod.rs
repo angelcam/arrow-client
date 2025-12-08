@@ -27,7 +27,6 @@ use arrow_protocol::v3::{
     ControlProtocolClientConnection, ControlProtocolConnectionError,
     msg::hello::ControlProtocolHelloMessage,
 };
-use tokio_native_tls::TlsConnector;
 
 use crate::{
     cmd_handler::CommandChannel,
@@ -35,9 +34,10 @@ use crate::{
     context::ApplicationContext,
     error::Error,
     net::raw::ether::MacAddr,
+    tls::TlsConnector,
 };
 
-use self::{rpc::ArrowClientRpcService, svc_table::ServiceTableUpdater, utils::TlsConnectorExt};
+use self::{rpc::ArrowClientRpcService, svc_table::ServiceTableUpdater};
 
 pub use self::session::{DefaultServiceConnector, ServiceConnection, ServiceConnector};
 
@@ -193,7 +193,7 @@ async fn connect_inner<T>(
 where
     T: Into<String>,
 {
-    let io = tls_connector.tcp_connect(addr).await?;
+    let io = tls_connector.connect(addr).await?;
 
     let mut flags = 0;
 

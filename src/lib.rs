@@ -18,6 +18,9 @@
 extern crate log;
 
 #[doc(hidden)]
+pub mod tls;
+
+#[doc(hidden)]
 #[macro_use]
 pub mod utils;
 

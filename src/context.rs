@@ -18,13 +18,12 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use tokio_native_tls::TlsConnector;
-
 use crate::{
     config::{ClientId, ClientKey, Config},
     net::raw::ether::MacAddr,
     scanner::ScanResult,
     svc_table::{Service, ServiceSource, ServiceTableHandle},
+    tls::TlsConnector,
 };
 
 /// Arrow service connection state.

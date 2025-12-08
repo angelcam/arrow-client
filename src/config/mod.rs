@@ -29,7 +29,6 @@ use std::{
 
 use argh::FromArgs;
 use serde_lite::{Deserialize, Intermediate, Serialize};
-use tokio_native_tls::TlsConnector;
 use uuid::Uuid;
 
 use crate::{
@@ -37,6 +36,7 @@ use crate::{
     error::Error,
     storage::Storage,
     svc_table::{LockedServiceTable, ServiceSource, ServiceTable, ServiceTableHandle},
+    tls::TlsConnector,
 };
 
 use self::{parser::ConfigParser, utils::NetworkInterfacesCache};
@@ -779,22 +779,14 @@ async fn create_tls_connector<S>(storage: &mut S) -> Result<TlsConnector, Error>
 where
     S: Storage,
 {
-    use tokio_native_tls::native_tls::Protocol;
-
-    let mut builder = tokio_native_tls::native_tls::TlsConnector::builder();
-
-    builder
-        .min_protocol_version(Some(Protocol::Tlsv12))
-        .disable_built_in_roots(true);
+    let mut builder = TlsConnector::builder()?;
 
     storage
         .load_ca_certificates(&mut builder)
         .await
         .map_err(Error::from_other)?;
 
-    let connector = builder.build().map_err(Error::from_other)?;
-
-    Ok(connector.into())
+    builder.build()
 }
 
 /// Helper type.

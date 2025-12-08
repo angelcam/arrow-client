@@ -20,11 +20,11 @@ use std::{
 
 use serde_lite::{Deserialize, Intermediate, Serialize};
 use tokio::fs::File;
-use tokio_native_tls::native_tls::{Certificate, TlsConnectorBuilder};
 
 use crate::{
     config::{PersistentConfig, PublicIdentity},
     context::ConnectionState,
+    tls::TlsConnectorBuilder,
 };
 
 /// Arrow client storage.
@@ -368,19 +368,7 @@ impl TlsConnectorBuilderExt for TlsConnectorBuilder {
     }
 
     async fn load_ca_certificate(&mut self, path: &Path) -> io::Result<()> {
-        let content = tokio::fs::read(path).await?;
-
-        let res = if content.starts_with(b"-----BEGIN ") {
-            Certificate::from_pem(&content)
-        } else {
-            Certificate::from_der(&content)
-        };
-
-        let cert = res.map_err(|_| io::Error::other("invalid CA certificate"))?;
-
-        self.add_root_certificate(cert);
-
-        Ok(())
+        self.add_root_certificate(path).await
     }
 }
 

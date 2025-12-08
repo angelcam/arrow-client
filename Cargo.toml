@@ -8,7 +8,9 @@ build = "build.rs"
 edition = "2024"
 
 [features]
-default = []
+default = ["native-tls"]
+openssl = ["dep:openssl", "dep:tokio-openssl"]
+native-tls = ["dep:tokio-native-tls"]
 discovery = ["dep:str-reader", "dep:tokio-util"]
 all = ["discovery"]
 
@@ -23,7 +25,6 @@ futures = "0.3"
 libc = "0.2"
 pin-project-lite = "0.2"
 serde_json = "1"
-tokio-native-tls = "0.3"
 trait-variant = "0.1"
 ttpkit-url = "0.1"
 
@@ -35,6 +36,10 @@ tag = "v0.5.0"
 version = "0.4"
 features = ["max_level_debug", "release_max_level_debug", "std"]
 
+[dependencies.openssl]
+version = "0.10"
+optional = true
+
 [dependencies.serde-lite]
 version = "0.5"
 features = ["derive", "preserve-order"]
@@ -42,6 +47,14 @@ features = ["derive", "preserve-order"]
 [dependencies.tokio]
 version = "1"
 features = ["fs", "macros", "net", "rt-multi-thread", "time"]
+
+[dependencies.tokio-native-tls]
+version = "0.3"
+optional = true
+
+[dependencies.tokio-openssl]
+version = "0.6"
+optional = true
 
 [dependencies.tokio-util]
 version = "0.7"

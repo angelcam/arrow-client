@@ -21,31 +21,7 @@ use std::{
 
 use bytes::{Buf, Bytes};
 use futures::{Sink, Stream, ready};
-use tokio::{
-    io::{AsyncRead, AsyncWrite, ReadBuf},
-    net::TcpStream,
-};
-use tokio_native_tls::{TlsConnector, TlsStream};
-
-use crate::error::Error;
-
-/// Extension trait for TLS connector.
-pub trait TlsConnectorExt {
-    /// Establish a TCP connection and upgrade it to TLS.
-    async fn tcp_connect(&self, addr: &str) -> Result<TlsStream<TcpStream>, Error>;
-}
-
-impl TlsConnectorExt for TlsConnector {
-    async fn tcp_connect(&self, addr: &str) -> Result<TlsStream<TcpStream>, Error> {
-        let stream = TcpStream::connect(addr).await?;
-
-        let (hostname, _) = addr.rsplit_once(':').unwrap_or((addr, ""));
-
-        self.connect(hostname, stream)
-            .await
-            .map_err(Error::from_other)
-    }
-}
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 pin_project_lite::pin_project! {
     /// Async IO wrapper implementing `Stream` and `Sink`.

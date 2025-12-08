@@ -29,15 +29,12 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
 };
-use tokio_native_tls::TlsConnector;
 
 use crate::{
     error::Error,
-    net::{
-        arrow::utils::{StreamedIO, TlsConnectorExt},
-        raw::ether::MacAddr,
-    },
+    net::{arrow::utils::StreamedIO, raw::ether::MacAddr},
     svc_table::{ServiceTableHandle, ServiceType},
+    tls::TlsConnector,
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(60);
@@ -386,7 +383,7 @@ async fn connect_to_arrow_proxy_service_inner(
     proxy_service: &str,
     access_token: &str,
 ) -> Result<ServiceProtocolConnection, Error> {
-    let io = tls_connector.tcp_connect(proxy_service).await?;
+    let io = tls_connector.connect(proxy_service).await?;
 
     let hello = ServiceProtocolHelloMessage::new(access_token);
 
