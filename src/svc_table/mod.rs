@@ -69,13 +69,9 @@ impl ServiceTable {
         Self::default()
     }
 
-    /// Reset the service table to a given default state.
-    pub fn reset(&self, default: &ServiceTable) {
-        let mut this = self.data.lock().unwrap();
-
-        let default = default.data.lock().unwrap();
-
-        *this = default.clone();
+    /// Reset the service table, keeping only static and custom services.
+    pub fn reset(&self) {
+        self.data.lock().unwrap().reset();
     }
 
     /// Lock the service table for exclusive access.
@@ -437,6 +433,21 @@ impl ServiceTableData {
                 self.visible_set_version = self.visible_set_version.wrapping_add(1);
             }
         }
+    }
+
+    /// Reset the service table, keeping only static and custom services.
+    fn reset(&mut self) {
+        let mut new = ServiceTableData::new();
+
+        for (_, element) in self.service_map.drain() {
+            // the static service is already in the new table and we only
+            // want to keep static and custom services
+            if element.id != 0 && (element.static_service || element.custom_service) {
+                new.add_element(element);
+            }
+        }
+
+        *self = new;
     }
 }
 

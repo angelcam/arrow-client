@@ -280,7 +280,6 @@ impl ConfigBuilder {
             discovery_interfaces: Arc::new(self.discovery_interfaces),
             rtsp_paths: Arc::new(rtsp_paths),
             mjpeg_paths: Arc::new(mjpeg_paths),
-            default_svc_table: config.svc_table.clone(),
             svc_table: config.svc_table,
             storage: Box::new(storage),
             tls_connector,
@@ -294,11 +293,9 @@ impl ConfigBuilder {
 
         {
             let mut svc_table = config.svc_table.lock();
-            let mut default_svc_table = config.default_svc_table.lock();
 
             for svc in self.services {
-                svc_table.add(svc.clone(), ServiceSource::Static);
-                default_svc_table.add(svc, ServiceSource::Static);
+                svc_table.add(svc, ServiceSource::Static);
             }
 
             svc_table.update_service_availability(&whitelisted_networks);
@@ -375,7 +372,6 @@ pub struct Config {
     rtsp_paths: Arc<Vec<String>>,
     mjpeg_paths: Arc<Vec<String>>,
     svc_table: ServiceTable,
-    default_svc_table: ServiceTable,
     storage: Box<dyn StorageObject + Send + Sync>,
     tls_connector: TlsConnector,
     flash_friendly: bool,
@@ -467,7 +463,7 @@ impl Config {
     /// Reset the service table.
     #[doc(hidden)]
     pub async fn reset_service_table(&self) {
-        self.svc_table.reset(&self.default_svc_table);
+        self.svc_table.reset();
 
         self.version.fetch_add(1, Ordering::AcqRel);
 
