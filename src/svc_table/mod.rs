@@ -580,6 +580,11 @@ impl ServiceTableElement {
 
     /// Update the internal service, the service source and the last_seen
     /// timestamp.
+    ///
+    /// We assume that the service is either static, it was discovered via
+    /// network scanning, or it was added via the JSON-RPC API in which case
+    /// it has passed the whitelisting check. Therefore, we set the service as
+    /// visible and available.
     fn update(&mut self, svc: Service, source: ServiceSource) {
         self.service = svc;
         self.last_seen = get_utc_timestamp();
@@ -646,7 +651,77 @@ mod tests {
         utils::get_utc_timestamp,
     };
 
-    use super::{Service, ServiceSource, ServiceTable, ServiceTableData};
+    use super::{LockedServiceTable, Service, ServiceSource, ServiceTable, ServiceTableData};
+
+    trait ServiceTableTestHelper {
+        /// Check that the list of available services matches the given list.
+        fn check_available_services(&self, expected: &[(u16, &Service)]);
+
+        /// Check that the list of visible services matches the given list.
+        fn check_visible_services(&self, expected: &[(u16, &Service)]);
+    }
+
+    impl ServiceTableTestHelper for ServiceTableData {
+        fn check_available_services(&self, expected: &[(u16, &Service)]) {
+            let available = self
+                .service_map
+                .values()
+                .filter(|elem| elem.is_available() && !elem.service.is_control())
+                .map(|elem| (elem.id, elem.to_service()))
+                .collect::<Vec<_>>();
+
+            let expected = expected
+                .iter()
+                .map(|&(id, svc)| (id, svc.clone()))
+                .collect::<Vec<_>>();
+
+            check_service_list(&available, &expected);
+        }
+
+        fn check_visible_services(&self, expected: &[(u16, &Service)]) {
+            let visible = Vec::from_iter(self.visible());
+
+            let expected = expected
+                .iter()
+                .map(|&(id, svc)| (id, svc.clone()))
+                .collect::<Vec<_>>();
+
+            check_service_list(&visible, &expected);
+        }
+    }
+
+    impl ServiceTableTestHelper for LockedServiceTable<'_> {
+        fn check_available_services(&self, expected: &[(u16, &Service)]) {
+            self.inner.check_available_services(expected);
+        }
+
+        fn check_visible_services(&self, expected: &[(u16, &Service)]) {
+            self.inner.check_visible_services(expected);
+        }
+    }
+
+    fn check_service_list(a: &[(u16, Service)], b: &[(u16, Service)]) {
+        let mut a = a.to_vec();
+
+        a.sort_by_key(|&(id, _)| id);
+
+        let mut b = b.to_vec();
+
+        b.sort_by_key(|&(id, _)| id);
+
+        assert_eq!(a.len(), b.len());
+
+        let a = a.iter();
+        let b = b.iter();
+
+        for (a, b) in a.zip(b) {
+            let (a_id, a_svc) = a;
+            let (b_id, b_svc) = b;
+
+            assert_eq!(a_id, b_id);
+            assert_eq!(a_svc, b_svc);
+        }
+    }
 
     fn create_fake_ethernet_device(name: &str, network: Ipv4Addr) -> EthernetDevice {
         EthernetDevice {
@@ -672,22 +747,33 @@ mod tests {
         table.add_service(svc_2, ServiceSource::Discovery, false);
         table.add_service(svc_3.clone(), ServiceSource::Discovery, true);
 
-        let mut visible = table.visible().collect::<Vec<_>>();
-
-        visible.sort_by_key(|&(id, _)| id);
-
-        let mut expected = vec![(93, svc_3), (640, svc_1)];
-
-        expected.sort_by_key(|&(id, _)| id);
-
-        assert_eq!(visible, expected);
+        table.check_visible_services(&[
+            (93, &svc_3),
+            (640, &svc_1),
+        ]);
     }
 
     #[test]
-    fn test_deserialization_and_initialization() {
-        use serde_lite::intermediate;
+    fn test_old_deserialization_and_initialization() {
+        // This will test backward compatibility with old service table JSON
+        // representations. The very first format did not even have service
+        // IDs. Service IDs were assigned sequentially starting from 1 for
+        // each service during deserialization.
+        //
+        // A more recent format added the service ID field, however, the
+        // service flags have been changed since then. We have renamed the
+        // `active` flag to `visible` in order to better reflect the semantics.
+        // The flag captures service visibility at the time of serialization.
+        //
+        // The `static_svc` was used to indicate services added via command
+        // line. However, this flag should not be persistent, so we treat
+        // services with this flag as non-custom and non-discovered and we
+        // mark them as invisible after deserialization. They also may not be
+        // available if they do not belong to any of the whitelisted networks.
+        // They are marked as static, visible and available only if they are
+        // added via command line again.
 
-        let intermediate = intermediate!({
+        let json = r#"{
             "services": [
                 {
                     "svc_type": 1,
@@ -727,7 +813,10 @@ mod tests {
                     "active": true
                 }
             ]
-        });
+        }"#;
+
+        let intermediate = serde_json::from_str(json)
+            .expect("invalid JSON");
 
         let table =
             ServiceTable::deserialize(&intermediate).expect("expected valid service table JSON");
@@ -748,27 +837,33 @@ mod tests {
         let svc_5 = Service::rtsp(mac, addr_1, "/5".to_string());
         let svc_6 = Service::rtsp(mac, addr_2, "/6".to_string());
 
-        let mut visible = table.inner.visible().collect::<Vec<_>>();
+        // NOTE: The only visible services should be the last two defined in
+        //   the JSON above. The first two are static services that should not
+        //   be visible until they are explicitly added as static again.
+        table.check_visible_services(&[
+            (3, &svc_3),
+            (10000, &svc_4),
+        ]);
 
-        visible.sort_by_key(|&(id, _)| id);
-
-        assert_eq!(visible, vec![(3, svc_3.clone()), (10000, svc_4.clone()),]);
+        // ... however, all the services should be available at this point.
+        table.check_available_services(&[
+            (1, &svc_1),
+            (2, &svc_2),
+            (3, &svc_3),
+            (10000, &svc_4),
+        ]);
 
         // add the first static service
         table.add(svc_1.clone(), ServiceSource::Static);
 
-        let mut visible = table.inner.visible().collect::<Vec<_>>();
-
-        visible.sort_by_key(|&(id, _)| id);
-
-        assert_eq!(
-            visible,
-            vec![
-                (1, svc_1.clone()),
-                (3, svc_3.clone()),
-                (10000, svc_4.clone()),
-            ]
-        );
+        // NOTE: The first static service should now be visible and it's ID
+        //   should be 1 because it didn't come with an explicit ID but it was
+        //   the first service in the JSON array.
+        table.check_visible_services(&[
+            (1, &svc_1),
+            (3, &svc_3),
+            (10000, &svc_4),
+        ]);
 
         assert_eq!(table.service_table_version(), 0);
         assert_eq!(table.visible_set_version(), 1);
@@ -776,18 +871,12 @@ mod tests {
         // add the first static service again
         table.add(svc_1.clone(), ServiceSource::Static);
 
-        let mut visible = table.inner.visible().collect::<Vec<_>>();
-
-        visible.sort_by_key(|&(id, _)| id);
-
-        assert_eq!(
-            visible,
-            vec![
-                (1, svc_1.clone()),
-                (3, svc_3.clone()),
-                (10000, svc_4.clone()),
-            ]
-        );
+        // NOTE: No changes are expected here.
+        table.check_visible_services(&[
+            (1, &svc_1),
+            (3, &svc_3),
+            (10000, &svc_4),
+        ]);
 
         assert_eq!(table.service_table_version(), 0);
         assert_eq!(table.visible_set_version(), 1);
@@ -795,115 +884,294 @@ mod tests {
         // add the second static service
         table.add(svc_2.clone(), ServiceSource::Static);
 
-        let mut visible = table.inner.visible().collect::<Vec<_>>();
-
-        visible.sort_by_key(|&(id, _)| id);
-
-        assert_eq!(
-            visible,
-            vec![
-                (1, svc_1.clone()),
-                (2, svc_2.clone()),
-                (3, svc_3.clone()),
-                (10000, svc_4.clone()),
-            ]
-        );
+        table.check_visible_services(&[
+            (1, &svc_1),
+            (2, &svc_2),
+            (3, &svc_3),
+            (10000, &svc_4),
+        ]);
 
         assert_eq!(table.service_table_version(), 0);
         assert_eq!(table.visible_set_version(), 2);
 
-        // add a new service
+        // add new services
         table.add(svc_5.clone(), ServiceSource::Discovery);
         table.add(svc_6.clone(), ServiceSource::Discovery);
 
-        let mut visible = table.inner.visible().collect::<Vec<_>>();
-
-        visible.sort_by_key(|&(id, _)| id);
-
-        assert_eq!(
-            visible,
-            vec![
-                (1, svc_1.clone()),
-                (2, svc_2.clone()),
-                (3, svc_3.clone()),
-                (10000, svc_4.clone()),
-                (11717, svc_5.clone()),
-                (63236, svc_6.clone()),
-            ]
-        );
+        table.check_visible_services(&[
+            (1, &svc_1),
+            (2, &svc_2),
+            (3, &svc_3),
+            (10000, &svc_4),
+            (11717, &svc_5),
+            (63236, &svc_6),
+        ]);
 
         assert_eq!(table.service_table_version(), 2);
         assert_eq!(table.visible_set_version(), 4);
 
-        // some additional consistency checks
-        let internal = &mut table.inner;
+        // additional consistency checks
+        let table = &mut *table.inner;
 
         let control = Service::control();
+
         let key = control.to_service_identifier();
 
-        assert_eq!(internal.get(0), Some(control.clone()));
-        assert_eq!(internal.get_id(&key), Some(0));
-        assert_eq!(internal.service_map.len(), 7);
-        assert_eq!(internal.identifier_map.len(), 7);
+        assert_eq!(table.get(0), Some(control.clone()));
+        assert_eq!(table.get_id(&key), Some(0));
+        assert_eq!(table.service_map.len(), 7);
+        assert_eq!(table.identifier_map.len(), 7);
 
-        internal.update(control.clone(), ServiceSource::Static);
+        table.update(control.clone(), ServiceSource::Static);
 
-        assert_eq!(internal.get(0), Some(control));
-        assert_eq!(internal.get_id(&key), Some(0));
-        assert_eq!(internal.service_map.len(), 7);
-        assert_eq!(internal.identifier_map.len(), 7);
+        assert_eq!(table.get(0), Some(control));
+        assert_eq!(table.get_id(&key), Some(0));
+        assert_eq!(table.service_map.len(), 7);
+        assert_eq!(table.identifier_map.len(), 7);
 
-        let mut visible = internal.visible().collect::<Vec<_>>();
+        table.check_visible_services(&[
+            (1, &svc_1),
+            (2, &svc_2),
+            (3, &svc_3),
+            (10000, &svc_4),
+            (11717, &svc_5),
+            (63236, &svc_6),
+        ]);
 
-        visible.sort_by_key(|&(id, _)| id);
-
-        assert_eq!(
-            visible,
-            vec![
-                (1, svc_1.clone()),
-                (2, svc_2.clone()),
-                (3, svc_3),
-                (10000, svc_4),
-                (11717, svc_5.clone()),
-                (63236, svc_6.clone()),
-            ]
-        );
-
-        assert_eq!(internal.service_table_version(), 2);
-        assert_eq!(internal.visible_set_version(), 4);
+        assert_eq!(table.service_table_version(), 2);
+        assert_eq!(table.visible_set_version(), 4);
 
         // update visible services
-        internal.update_service_visibility(get_utc_timestamp());
+        table.update_service_visibility(get_utc_timestamp());
 
-        let mut visible = internal.visible().collect::<Vec<_>>();
+        // NOTE: The first two services are static, so we expect them to remain
+        //   visible. The last two services were added recently as
+        //   "discovered", so they should also remain visible. The third and
+        //   the fourth service should be hidden because they are neither
+        //   static nor custom and their `last_seen` timestamp is too old.
+        table.check_visible_services(&[
+            (1, &svc_1),
+            (2, &svc_2),
+            (11717, &svc_5),
+            (63236, &svc_6),
+        ]);
 
-        visible.sort_by_key(|&(id, _)| id);
-
-        assert_eq!(
-            visible,
-            vec![
-                (1, svc_1.clone()),
-                (2, svc_2.clone()),
-                (11717, svc_5.clone()),
-                (63236, svc_6.clone()),
-            ]
-        );
-
-        assert_eq!(internal.service_table_version(), 2);
-        assert_eq!(internal.visible_set_version(), 6);
+        assert_eq!(table.service_table_version(), 2);
+        assert_eq!(table.visible_set_version(), 6);
 
         let interface = create_fake_ethernet_device("eth0", Ipv4Addr::new(192, 168, 0, 1));
 
         // update available services
-        internal.update_service_availability(&[interface]);
+        table.update_service_availability(&[interface]);
 
-        let mut visible = internal.visible().collect::<Vec<_>>();
+        // NOTE: The first two services are static, so we expect them to remain
+        //   available. The last service belongs to the `eth0` network so it
+        //   should also remain available. The third service should be
+        //   unavailable because it isn't static and it doesn't belong to any
+        //   of the whitelisted networks.
+        table.check_available_services(&[
+            (1, &svc_1),
+            (2, &svc_2),
+            (63236, &svc_6),
+        ]);
 
-        visible.sort_by_key(|&(id, _)| id);
+        // NOTE: The list of visible services should match the list of
+        //   available services.
+        table.check_visible_services(&[
+            (1, &svc_1),
+            (2, &svc_2),
+            (63236, &svc_6),
+        ]);
 
-        assert_eq!(visible, vec![(1, svc_1), (2, svc_2), (63236, svc_6),]);
+        assert_eq!(table.service_table_version(), 2);
+        assert_eq!(table.visible_set_version(), 7);
+    }
 
-        assert_eq!(internal.service_table_version(), 2);
-        assert_eq!(internal.visible_set_version(), 7);
+    #[test]
+    fn test_new_deserialization() {
+        let json = r#"{
+            "services": [
+                {
+                    "id": 1001,
+                    "svc_type": 1,
+                    "mac": "00:00:00:00:00:00",
+                    "address": "192.168.1.100:554",
+                    "path": "/1",
+                    "discovered": false,
+                    "custom": false,
+                    "last_seen": 1000,
+                    "visible": true
+                },
+                {
+                    "id": 1002,
+                    "svc_type": 1,
+                    "mac": "00:00:00:00:00:00",
+                    "address": "192.168.1.100:554",
+                    "path": "/2",
+                    "discovered": true,
+                    "custom": false,
+                    "last_seen": 1000,
+                    "visible": true
+                },
+                {
+                    "id": 1003,
+                    "svc_type": 1,
+                    "mac": "00:00:00:00:00:00",
+                    "address": "192.168.1.100:554",
+                    "path": "/3",
+                    "discovered": false,
+                    "custom": true,
+                    "last_seen": 1000,
+                    "visible": true
+                },
+                {
+                    "id": 1004,
+                    "svc_type": 1,
+                    "mac": "00:00:00:00:00:00",
+                    "address": "192.168.1.100:554",
+                    "path": "/4",
+                    "discovered": true,
+                    "custom": true,
+                    "last_seen": 1000,
+                    "visible": true
+                },
+                {
+                    "id": 1005,
+                    "svc_type": 1,
+                    "mac": "00:00:00:00:00:00",
+                    "address": "192.168.2.100:554",
+                    "path": "/5",
+                    "discovered": true,
+                    "custom": false,
+                    "last_seen": 5000,
+                    "visible": false
+                },
+                {
+                    "id": 1006,
+                    "svc_type": 1,
+                    "mac": "00:00:00:00:00:00",
+                    "address": "192.168.2.100:554",
+                    "path": "/6",
+                    "discovered": false,
+                    "custom": true,
+                    "last_seen": 5000,
+                    "visible": false
+                },
+                {
+                    "id": 1007,
+                    "svc_type": 1,
+                    "mac": "00:00:00:00:00:00",
+                    "address": "192.168.2.100:554",
+                    "path": "/7",
+                    "discovered": true,
+                    "custom": true,
+                    "last_seen": 5000,
+                    "visible": false
+                }
+            ]
+        }"#;
+
+        let intermediate = serde_json::from_str(json)
+            .expect("invalid JSON");
+
+        let table =
+            ServiceTable::deserialize(&intermediate).expect("expected valid service table JSON");
+
+        let mut table = table.lock();
+
+        assert_eq!(table.service_table_version(), 0);
+        assert_eq!(table.visible_set_version(), 0);
+
+        let mac = MacAddr::zero();
+        let addr_1 = SocketAddr::from((Ipv4Addr::new(192, 168, 1, 100), 554));
+        let addr_2 = SocketAddr::from((Ipv4Addr::new(192, 168, 2, 100), 554));
+
+        let svc_1 = Service::rtsp(mac, addr_1, "/1".to_string());
+        let svc_2 = Service::rtsp(mac, addr_1, "/2".to_string());
+        let svc_3 = Service::rtsp(mac, addr_1, "/3".to_string());
+        let svc_4 = Service::rtsp(mac, addr_1, "/4".to_string());
+        let svc_5 = Service::rtsp(mac, addr_2, "/5".to_string());
+        let svc_6 = Service::rtsp(mac, addr_2, "/6".to_string());
+        let svc_7 = Service::rtsp(mac, addr_2, "/7".to_string());
+
+        // all the service should be available
+        table.check_available_services(&[
+            (1001, &svc_1),
+            (1002, &svc_2),
+            (1003, &svc_3),
+            (1004, &svc_4),
+            (1005, &svc_5),
+            (1006, &svc_6),
+            (1007, &svc_7),
+        ]);
+
+        // 1001 should be hidden because it's neither static, discovered nor
+        // custom. 1005 should be also hidden because it's neither static nor
+        // custom and its `visible` flag is false.
+        table.check_visible_services(&[
+            (1002, &svc_2),
+            (1003, &svc_3),
+            (1004, &svc_4),
+            (1006, &svc_6),
+            (1007, &svc_7),
+        ]);
+
+        table.add(svc_1.clone(), ServiceSource::Static);
+
+        // Now 1001 should be visible because it's been marked as static.
+        table.check_visible_services(&[
+            (1001, &svc_1),
+            (1002, &svc_2),
+            (1003, &svc_3),
+            (1004, &svc_4),
+            (1006, &svc_6),
+            (1007, &svc_7),
+        ]);
+
+        table.update_service_visibility(6000);
+
+        // All the services should still remain available after the visibility
+        // update.
+        table.check_available_services(&[
+            (1001, &svc_1),
+            (1002, &svc_2),
+            (1003, &svc_3),
+            (1004, &svc_4),
+            (1005, &svc_5),
+            (1006, &svc_6),
+            (1007, &svc_7),
+        ]);
+
+        // Only 1002 should be hidden now because it's the only one discovered,
+        // non-static and non-custom whose `last_seen`` timestamp is too old.
+        table.check_visible_services(&[
+            (1001, &svc_1),
+            (1003, &svc_3),
+            (1004, &svc_4),
+            (1005, &svc_5),
+            (1006, &svc_6),
+            (1007, &svc_7),
+        ]);
+
+        let interface = create_fake_ethernet_device("eth0", Ipv4Addr::new(192, 168, 2, 1));
+
+        table.update_service_availability(&[interface]);
+
+        // 1001, 1002 and 1003 should become unavailable because they don't
+        // belong to the `eth0` network and they are not static.
+        table.check_available_services(&[
+            (1001, &svc_1),
+            (1005, &svc_5),
+            (1006, &svc_6),
+            (1007, &svc_7),
+        ]);
+
+        // Visibility of the available services should not change.
+        table.check_visible_services(&[
+            (1001, &svc_1),
+            (1005, &svc_5),
+            (1006, &svc_6),
+            (1007, &svc_7),
+        ]);
     }
 }
