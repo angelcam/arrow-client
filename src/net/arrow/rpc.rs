@@ -50,9 +50,8 @@ impl<C> ArrowClientRpcService<C> {
     ) -> Self {
         let tls_connector = app_context.get_tls_connector();
         let svc_table = app_context.get_service_table();
-        let gateway_mode = app_context.get_gateway_mode();
 
-        let sessions = SessionManager::new(tls_connector, svc_table, svc_connector, gateway_mode);
+        let sessions = SessionManager::new(tls_connector, svc_table, svc_connector);
 
         let inner = InternalRpcService {
             app_context,

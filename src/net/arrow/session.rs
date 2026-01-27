@@ -92,7 +92,6 @@ pub struct SessionManager<C> {
     context: Arc<Mutex<SessionManagerContext>>,
     svc_table: ServiceTableHandle,
     svc_connector: C,
-    gateway_mode: bool,
 }
 
 impl<C> SessionManager<C> {
@@ -101,14 +100,12 @@ impl<C> SessionManager<C> {
         tls_connector: TlsConnector,
         svc_table: ServiceTableHandle,
         svc_connector: C,
-        gateway_mode: bool,
     ) -> Self {
         Self {
             tls_connector,
             context: Arc::new(Mutex::new(SessionManagerContext::new())),
             svc_table,
             svc_connector,
-            gateway_mode,
         }
     }
 }
@@ -140,12 +137,6 @@ where
                 service_id
             ))
         })?;
-
-        let ip = addr.ip();
-
-        if !self.gateway_mode && !ip.is_loopback() {
-            return Err(Error::from_static_msg("gateway mode disabled"));
-        }
 
         let registration = self.context.lock().unwrap().register_session();
 
