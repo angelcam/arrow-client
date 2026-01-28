@@ -15,5 +15,5 @@ jobs:
           apt: libpcap-dev libssl-dev
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test
-      - run: cargo test --features "openssl"
+      - run: cargo test --no-default-features --features "openssl"
       - run: cargo test --features "all"
