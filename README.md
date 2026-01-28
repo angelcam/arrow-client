@@ -1,6 +1,12 @@
 # Angelcam Connector (a.k.a. Arrow Client)
 
-![](https://github.com/angelcam/arrow-client/workflows/tests/badge.svg)
+[![Apache-2.0 licensed][license-badge]][license-url]
+[![Build status][build-badge]][build-url]
+
+[license-badge]: https://img.shields.io/github/license/angelcam/arrow-client
+[license-url]: https://github.com/angelcam/arrow-client/blob/master/LICENSE
+[build-badge]: https://github.com/angelcam/arrow-client/actions/workflows/build.yaml/badge.svg?branch=master
+[build-url]: https://github.com/angelcam/arrow-client/actions/workflows/build.yaml
 
 Arrow Client is an application used to simplify the process of connecting IP
 cameras to the Angelcam cloud. The Arrow Client is intended to be shipped

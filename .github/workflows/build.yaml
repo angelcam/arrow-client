@@ -1,0 +1,19 @@
+name: Build and test the Arrow Client
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - uses: ConorMacBride/install-package@v1
+        with:
+          apt: libpcap-dev libssl-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+      - run: cargo test --features "openssl"
+      - run: cargo test --features "all"
