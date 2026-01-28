@@ -13,7 +13,7 @@ such services can be registered within Angelcam cloud under your Angelcam
 account without the need of a public IP address and setting up your firewall.
 
 This is a reference implementation of the Arrow Client role described in
-[Arrow Protocol](https://github.com/angelcam/arrow-client/wiki/Arrow-Protocol "Arrow Protocol").
+[Arrow Protocol](https://github.com/angelcam/arrow-protocol "Arrow Protocol").
 If you are interested in integration or you just want to play with the client
 a little, please see our
 [Quick Start guide](https://github.com/angelcam/arrow-client/wiki/Quick-Start "Quick Start guide").
@@ -49,7 +49,7 @@ Here is an example of starting the Arrow Client with one fixed RTSP service and
 with network scanning enabled:
 
 ```bash
-arrow-client arr-rs.angelcam.com:8900 -d \
+arrow-client arr-rs.angelcam.com:8900 -D eth0 \
     -c root-g2.pem \
     -R "rtsp://localhost:8554/stream.sdp?prof=baseline&res=low"
 ```
