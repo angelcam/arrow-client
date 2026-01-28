@@ -64,7 +64,7 @@ dependencies = [
 [[package]]
 name = "arrow-protocol"
 version = "0.5.0"
-source = "git+ssh://git@github.com/angelcam/arrow-protocol.git?tag=v0.5.0#359a11f911d90bf665a77be6ba935c1cb97688ed"
+source = "git+https://github.com/angelcam/arrow-protocol.git?tag=v0.5.0#359a11f911d90bf665a77be6ba935c1cb97688ed"
 dependencies = [
  "bytes",
  "futures",

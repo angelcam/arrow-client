@@ -29,7 +29,7 @@ trait-variant = "0.1"
 ttpkit-url = "0.1"
 
 [dependencies.arrow-protocol]
-git = "ssh://git@github.com/angelcam/arrow-protocol.git"
+git = "https://github.com/angelcam/arrow-protocol.git"
 tag = "v0.5.0"
 
 [dependencies.log]
