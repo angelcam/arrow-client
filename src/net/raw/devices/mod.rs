@@ -15,11 +15,12 @@
 //! Ethernet device definitions.
 
 use std::{
+    ffi::CStr,
     net::{IpAddr, Ipv4Addr},
     os::raw::{c_char, c_void},
 };
 
-use crate::{net::raw::ether::MacAddr, utils};
+use crate::net::raw::ether::MacAddr;
 
 #[allow(non_camel_case_types)]
 type net_device = *mut c_void;
@@ -122,7 +123,19 @@ impl EthernetDevice {
 
 /// Get device name.
 unsafe fn get_name(dev: net_device) -> String {
-    unsafe { utils::cstr_to_string(net_get_name(dev) as *const _) }
+    let cstr = unsafe {
+        let name = net_get_name(dev);
+
+        if name.is_null() {
+            return String::new();
+        }
+
+        CStr::from_ptr(name)
+    };
+
+    let slice = String::from_utf8_lossy(cstr.to_bytes());
+
+    slice.into_owned()
 }
 
 /// Get device MAC address.

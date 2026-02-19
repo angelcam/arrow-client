@@ -261,7 +261,7 @@ impl Scanner {
         packet_generator: F,
         read_timeout: Duration,
         stop_after: Option<Duration>,
-    ) -> Result<Vec<EtherPacket>>
+    ) -> Result<Vec<EtherPacket<Bytes>>>
     where
         F: FnMut() -> Option<Bytes>,
     {
@@ -302,7 +302,7 @@ fn packet_listener(
     packet_timeout: Duration,
     total_timeout: Option<Duration>,
     init_event_tx: Option<Sender<()>>,
-) -> Result<Vec<EtherPacket>> {
+) -> Result<Vec<EtherPacket<Bytes>>> {
     let mut cap = Capture::builder(device)
         .max_packet_length(65_536)
         .read_timeout(100)
@@ -323,11 +323,11 @@ fn packet_listener(
         if cap.read_packet(&mut buffer)? {
             last_packet_time = Instant::now();
 
-            if let Ok(packet) = EtherPacket::parse(buffer.as_ref()) {
+            let packet = buffer.split();
+
+            if let Ok(packet) = EtherPacket::parse(&mut packet.freeze()) {
                 res.push(packet);
             }
-
-            buffer.clear();
         }
 
         if let Some(timeout) = total_timeout

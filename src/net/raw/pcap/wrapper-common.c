@@ -129,7 +129,14 @@ int pcap_wrapper__set_filter(Wrapper* wrapper, const char* filter) {
         free(wrapper->filter);
     }
 
+    wrapper->filter = NULL;
+
+    if (!filter) {
+        return 0;
+    }
+
     wrapper->filter = string_dup(filter);
+
     if (!wrapper->filter) {
         return ENOMEM;
     }

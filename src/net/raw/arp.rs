@@ -14,21 +14,20 @@
 
 //! ARP packet definitions.
 
-use std::{
-    io::{self, Write},
-    mem,
-    net::Ipv4Addr,
+use std::net::Ipv4Addr;
+
+use bytes::{Buf, Bytes, BytesMut};
+use zerocopy::{
+    FromBytes, Immutable, IntoBytes, KnownLayout, SizeError, Unaligned,
+    byteorder::network_endian::U16,
 };
 
-use crate::{
-    net::raw::{
-        ether::{
-            MacAddr,
-            packet::{EtherPacketBody, PacketParseError, Result},
-        },
-        utils::Serialize,
+use crate::net::raw::{
+    ether::{
+        MacAddr,
+        packet::{PacketParseError, Result},
     },
-    utils::AsBytes,
+    utils::Serialize,
 };
 
 /// ARP packet.
@@ -39,10 +38,10 @@ pub struct ArpPacket {
     pub hlen: u8,
     pub plen: u8,
     pub oper: ArpOperation,
-    pub sha: Box<[u8]>,
-    pub spa: Box<[u8]>,
-    pub tha: Box<[u8]>,
-    pub tpa: Box<[u8]>,
+    pub sha: Bytes,
+    pub spa: Bytes,
+    pub tha: Bytes,
+    pub tpa: Bytes,
 }
 
 /// ARP operation.
@@ -93,121 +92,115 @@ impl ArpPacket {
             hlen: 6,
             plen: 4,
             oper,
-            sha: sha.octets().to_vec().into_boxed_slice(),
-            spa: spa.octets().to_vec().into_boxed_slice(),
-            tha: tha.octets().to_vec().into_boxed_slice(),
-            tpa: tpa.octets().to_vec().into_boxed_slice(),
+            sha: Bytes::copy_from_slice(&sha.octets()),
+            spa: Bytes::copy_from_slice(&spa.octets()),
+            tha: Bytes::copy_from_slice(&tha.octets()),
+            tpa: Bytes::copy_from_slice(&tpa.octets()),
         }
     }
 
     /// Parse given data.
-    pub fn parse(data: &[u8]) -> Result<Self> {
-        let size = mem::size_of::<RawArpPacketHeader>();
-        if data.len() < size {
-            Err(PacketParseError::new(
+    pub fn parse(data: &mut Bytes) -> Result<Self> {
+        let mut tmp = data.clone();
+
+        let (rh, _) = RawArpPacketHeader::ref_from_prefix(&tmp)
+            .map_err(SizeError::from)
+            .map_err(|_| PacketParseError::new("unable to parse ARP packet, not enough data"))?;
+
+        let mut res = Self {
+            htype: rh.htype.get(),
+            ptype: rh.ptype.get(),
+            hlen: rh.hlen,
+            plen: rh.plen,
+            oper: ArpOperation::from(rh.oper.get()),
+            sha: Bytes::new(),
+            spa: Bytes::new(),
+            tha: Bytes::new(),
+            tpa: Bytes::new(),
+        };
+
+        let hlen = rh.hlen as usize;
+        let plen = rh.plen as usize;
+
+        tmp.advance(std::mem::size_of::<RawArpPacketHeader>());
+
+        if tmp.len() < ((hlen + plen) << 1) {
+            return Err(PacketParseError::new(
                 "unable to parse ARP packet, not enough data",
-            ))
-        } else {
-            let ptr = data.as_ptr();
-            let ptr = ptr as *const RawArpPacketHeader;
-
-            let rh = unsafe { ptr.read_unaligned() };
-
-            let hlen = rh.hlen as usize;
-            let plen = rh.plen as usize;
-            let required = size + (hlen << 1) + (plen << 1);
-
-            if data.len() < required {
-                Err(PacketParseError::new(
-                    "unable to parse ARP packet, not enough data",
-                ))
-            } else {
-                let offset_1 = size;
-                let offset_2 = offset_1 + hlen;
-                let offset_3 = offset_2 + plen;
-                let offset_4 = offset_3 + hlen;
-
-                let sha = &data[offset_1..offset_1 + hlen];
-                let spa = &data[offset_2..offset_2 + plen];
-                let tha = &data[offset_3..offset_3 + hlen];
-                let tpa = &data[offset_4..offset_4 + plen];
-
-                let res = Self {
-                    htype: u16::from_be(rh.htype),
-                    ptype: u16::from_be(rh.ptype),
-                    hlen: rh.hlen,
-                    plen: rh.plen,
-                    oper: ArpOperation::from(u16::from_be(rh.oper)),
-                    sha: sha.to_vec().into_boxed_slice(),
-                    spa: spa.to_vec().into_boxed_slice(),
-                    tha: tha.to_vec().into_boxed_slice(),
-                    tpa: tpa.to_vec().into_boxed_slice(),
-                };
-
-                Ok(res)
-            }
+            ));
         }
+
+        res.sha = tmp.split_to(hlen);
+        res.spa = tmp.split_to(plen);
+        res.tha = tmp.split_to(hlen);
+        res.tpa = tmp.split_to(plen);
+
+        *data = tmp;
+
+        Ok(res)
     }
 }
 
 impl Serialize for ArpPacket {
-    fn serialize(&self, w: &mut dyn Write) -> io::Result<()> {
+    fn serialize(&self, buf: &mut BytesMut) {
         let rh = RawArpPacketHeader::new(self);
 
-        w.write_all(rh.as_bytes())?;
+        let header = rh.as_bytes();
 
-        w.write_all(&self.sha)?;
-        w.write_all(&self.spa)?;
-        w.write_all(&self.tha)?;
-        w.write_all(&self.tpa)?;
+        let total_len =
+            header.len() + self.sha.len() + self.spa.len() + self.tha.len() + self.tpa.len();
 
-        Ok(())
+        buf.reserve(total_len);
+
+        buf.extend_from_slice(header);
+
+        buf.extend_from_slice(&self.sha);
+        buf.extend_from_slice(&self.spa);
+        buf.extend_from_slice(&self.tha);
+        buf.extend_from_slice(&self.tpa);
     }
 }
 
-impl EtherPacketBody for ArpPacket {}
-
 /// Packed representation of ARP packet header.
-#[repr(C, packed)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, KnownLayout, Immutable, Unaligned, IntoBytes, FromBytes)]
+#[repr(C)]
 struct RawArpPacketHeader {
-    htype: u16,
-    ptype: u16,
+    htype: U16,
+    ptype: U16,
     hlen: u8,
     plen: u8,
-    oper: u16,
+    oper: U16,
 }
 
 impl RawArpPacketHeader {
     /// Create a new raw ARP packet header.
     fn new(arp: &ArpPacket) -> Self {
-        let operation = arp.oper.code();
-
         Self {
-            htype: arp.htype.to_be(),
-            ptype: arp.ptype.to_be(),
+            htype: U16::new(arp.htype),
+            ptype: U16::new(arp.ptype),
             hlen: arp.hlen,
             plen: arp.plen,
-            oper: operation.to_be(),
+            oper: U16::new(arp.oper.code()),
         }
     }
 }
 
 pub mod scanner {
-    use super::*;
+    use std::{net::Ipv4Addr, time::Duration};
 
-    use std::net::Ipv4Addr;
-    use std::time::Duration;
+    use bytes::BytesMut;
 
-    use bytes::Bytes;
+    use crate::net::raw::{
+        devices::EthernetDevice,
+        ether::{
+            MacAddr,
+            packet::{EtherPacket, EtherPacketType},
+        },
+        pcap::{self, Scanner},
+        utils::Serialize,
+    };
 
-    use crate::net::raw::pcap;
-
-    use crate::net::raw::devices::EthernetDevice;
-    use crate::net::raw::ether::MacAddr;
-    use crate::net::raw::ether::packet::EtherPacket;
-    use crate::net::raw::pcap::Scanner;
-    use crate::net::raw::utils::Serialize;
+    use super::{ArpOperation, ArpPacket};
 
     /// IPv4 ARP scanner.
     pub struct Ipv4ArpScanner {
@@ -242,7 +235,7 @@ pub mod scanner {
 
             let mut current = (addr & mask) + 1;
 
-            let mut buffer = Vec::new();
+            let mut buffer = BytesMut::new();
 
             let mut generator = move || {
                 if current < end {
@@ -256,15 +249,13 @@ pub mod scanner {
                     );
                     let pkt = EtherPacket::arp(hsrc, bcast, arpp);
 
-                    buffer.clear();
-
-                    pkt.serialize(&mut buffer).unwrap();
+                    pkt.serialize(&mut buffer);
 
                     current += 1;
 
-                    let pkt = Bytes::copy_from_slice(&buffer);
+                    let pkt = buffer.split();
 
-                    Some(pkt)
+                    Some(pkt.freeze())
                 } else {
                     None
                 }
@@ -282,7 +273,12 @@ pub mod scanner {
             let mut hosts = Vec::new();
 
             for ep in packets {
-                if let Some(arp) = ep.body::<ArpPacket>() {
+                let eh = ep.header();
+                let eb = ep.body();
+
+                if eh.packet_type() == EtherPacketType::ARP
+                    && let Ok(arp) = ArpPacket::parse(&mut eb.clone())
+                {
                     let mut sha = [0u8; 6];
                     let mut spa = [0u8; 4];
 
@@ -303,13 +299,19 @@ pub mod scanner {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::net::Ipv4Addr;
 
-    use crate::net::raw::ether::MacAddr;
-    use crate::net::raw::ether::packet::EtherPacket;
-    use crate::net::raw::utils::Serialize;
+    use bytes::BytesMut;
+
+    use crate::net::raw::{
+        ether::{
+            MacAddr,
+            packet::{EtherPacket, EtherPacketType},
+        },
+        utils::Serialize,
+    };
+
+    use super::{ArpOperation, ArpPacket};
 
     #[test]
     fn test_arp_packet() {
@@ -321,14 +323,20 @@ mod tests {
         let arp = ArpPacket::ipv4_over_ethernet(ArpOperation::REQUEST, smac, sip, dmac, dip);
         let pkt = EtherPacket::arp(smac, dmac, arp);
 
-        let mut buf = Vec::new();
+        let mut buf = BytesMut::new();
 
-        pkt.serialize(&mut buf).unwrap();
+        pkt.serialize(&mut buf);
 
-        let ep2 = EtherPacket::parse(buf.as_ref()).unwrap();
+        let ep2 = EtherPacket::parse(&mut buf.freeze()).unwrap();
 
-        let arpp1 = pkt.body::<ArpPacket>().unwrap();
-        let arpp2 = ep2.body::<ArpPacket>().unwrap();
+        let ep2h = ep2.header();
+        let ep2b = ep2.body();
+
+        assert_eq!(ep2h.packet_type(), EtherPacketType::ARP);
+
+        let arpp1 = pkt.body();
+
+        let arpp2 = ArpPacket::parse(&mut ep2b.clone()).unwrap();
 
         assert_eq!(arpp1.htype, arpp2.htype);
         assert_eq!(arpp1.ptype, arpp2.ptype);

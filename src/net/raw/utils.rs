@@ -14,60 +14,57 @@
 
 //! Common functions used throughout the `net::raw::*` modules.
 
-use std::{
-    io::{self, Write},
-    mem, slice,
-};
+use bytes::{Bytes, BytesMut};
+use zerocopy::{FromBytes, Immutable, IntoBytes, byteorder::network_endian::U16};
 
 /// Common trait for serializable objects.
 pub trait Serialize {
-    /// Serialize this object using a given writer.
-    fn serialize(&self, w: &mut dyn Write) -> io::Result<()>;
+    /// Serialize this object.
+    fn serialize(&self, buf: &mut BytesMut);
 }
 
-impl Serialize for Box<[u8]> {
-    fn serialize(&self, w: &mut dyn Write) -> io::Result<()> {
-        w.write_all(self.as_ref())
+impl Serialize for Bytes {
+    fn serialize(&self, buf: &mut BytesMut) {
+        buf.extend_from_slice(self);
     }
 }
 
 /// Sum a given Sized type instance as 16-bit unsigned big endian numbers.
-pub fn sum_type<T: Sized>(data: &T) -> u32 {
-    let size = mem::size_of::<T>();
-    let ptr = data as *const T;
-    unsafe { sum_raw_be(ptr as *const u8, size) }
+pub fn sum_type<T>(data: &T) -> u32
+where
+    T: Immutable + IntoBytes,
+{
+    sum_be_bytes(data.as_bytes())
 }
 
 /// Sum a given slice of Sized type instances as 16-bit unsigned big endian
 /// numbers.
-pub fn sum_slice<T: Sized>(data: &[T]) -> u32 {
-    let size = mem::size_of_val(data);
-    let ptr = data.as_ptr();
-    unsafe { sum_raw_be(ptr as *const u8, size) }
+pub fn sum_slice<T>(data: &[T]) -> u32
+where
+    T: Immutable + IntoBytes,
+{
+    sum_be_bytes(data.as_bytes())
 }
 
-/// Sum given raw data as 16-bit unsigned big endian numbers.
-#[allow(clippy::missing_safety_doc)]
-pub unsafe fn sum_raw_be(data: *const u8, size: usize) -> u32 {
+/// Sum given data as 16-bit unsigned big endian numbers.
+fn sum_be_bytes(data: &[u8]) -> u32 {
+    let count = data.len() >> 1;
+
     let mut sum: u32 = 0;
 
-    let count = size >> 1;
+    let (elems, rest) = <[U16]>::ref_from_prefix_with_elems(data, count)
+        .expect("unable to convert input data into a sequence of 16-bit numbers");
 
-    for idx in 0..count {
-        let val = unsafe { std::ptr::read_unaligned(data.add(idx << 1) as *const u16) };
-
-        let val = u16::from_be(val);
-
-        sum = sum.wrapping_add(val as u32);
+    for elem in elems {
+        sum = sum.wrapping_add(elem.get() as u32);
     }
 
-    let slice = unsafe { slice::from_raw_parts(data, size) };
-
-    if (size & 0x01) != 0 {
-        sum.wrapping_add((slice[size - 1] as u32) << 8)
-    } else {
-        sum
+    // NOTE: There will be at most one byte left at the end.
+    for elem in rest {
+        sum = sum.wrapping_add((*elem as u32) << 8);
     }
+
+    sum
 }
 
 /// Convert given 32-bit unsigned sum into 16-bit unsigned checksum.
@@ -84,10 +81,12 @@ pub fn sum_to_checksum(sum: u32) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use zerocopy::{Immutable, IntoBytes};
+
     use super::*;
 
-    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-    #[repr(packed)]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq, Immutable, IntoBytes)]
+    #[repr(C)]
     struct TestType {
         b1: u8,
         b2: u8,

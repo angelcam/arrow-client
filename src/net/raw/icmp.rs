@@ -14,18 +14,16 @@
 
 //! ICMP packet definitions.
 
-use std::{
-    io::{self, Write},
-    mem,
+use bytes::{Buf, Bytes, BytesMut};
+use zerocopy::{
+    FromBytes, Immutable, IntoBytes, KnownLayout, SizeError, Unaligned,
+    byteorder::network_endian::{U16, U32},
 };
 
-use crate::{
-    net::raw::{
-        self,
-        ether::packet::{PacketParseError, Result},
-        ip::{Ipv4PacketBody, Ipv4PacketHeader},
-    },
-    utils::AsBytes,
+use crate::net::raw::{
+    self,
+    ether::packet::{PacketParseError, Result},
+    ip::{Ipv4PacketBody, Ipv4PacketHeader},
 };
 
 const ICMP_TYPE_ECHO_REPLY: u8 = 0x00;
@@ -65,12 +63,12 @@ pub struct IcmpPacket {
     icmp_type: IcmpPacketType,
     code: u8,
     rest: u32,
-    body: Box<[u8]>,
+    body: Bytes,
 }
 
 impl IcmpPacket {
     /// Create a new echo request.
-    pub fn echo_request(id: u16, seq: u16, payload: &[u8]) -> Self {
+    pub fn echo_request(id: u16, seq: u16, body: Bytes) -> Self {
         let id = id as u32;
         let seq = seq as u32;
 
@@ -78,52 +76,33 @@ impl IcmpPacket {
             icmp_type: IcmpPacketType::Echo,
             code: 0,
             rest: (id << 16) | seq,
-            body: payload.to_vec().into_boxed_slice(),
+            body,
         }
     }
 
     /// Create a new echo request without payload.
     pub fn empty_echo_request(id: u16, seq: u16) -> Self {
-        Self::echo_request(id, seq, &[])
+        Self::echo_request(id, seq, Bytes::from_static(&[]))
     }
 
     /// Parse an ICMP packet from given data.
-    pub fn parse(data: &[u8]) -> Result<Self> {
-        let size = mem::size_of::<RawIcmpPacketHeader>();
+    pub fn parse(data: &mut Bytes) -> Result<Self> {
+        let (rh, _) = RawIcmpPacketHeader::ref_from_prefix(data)
+            .map_err(SizeError::from)
+            .map_err(|_| PacketParseError::new("unable to parse ICMP packet, not enough data"))?;
 
-        if data.len() < size {
-            Err(PacketParseError::new(
-                "unable to parse ICMP packet, not enough data",
-            ))
-        } else {
-            let ptr = data.as_ptr();
-            let ptr = ptr as *const RawIcmpPacketHeader;
+        let mut res = Self {
+            icmp_type: IcmpPacketType::from(rh.icmp_type),
+            code: rh.code,
+            rest: rh.rest.get(),
+            body: Bytes::new(),
+        };
 
-            let rh = unsafe { ptr.read_unaligned() };
+        data.advance(std::mem::size_of::<RawIcmpPacketHeader>());
 
-            let body = &data[size..];
+        res.body = data.split_to(data.len());
 
-            let res = Self {
-                icmp_type: IcmpPacketType::from(rh.icmp_type),
-                code: rh.code,
-                rest: u32::from_be(rh.rest),
-                body: body.to_vec().into_boxed_slice(),
-            };
-
-            Ok(res)
-        }
-    }
-
-    /// Get raw ICMP packet header.
-    fn raw_header(&self) -> RawIcmpPacketHeader {
-        let checksum = self.checksum();
-
-        RawIcmpPacketHeader {
-            icmp_type: self.icmp_type.code(),
-            code: self.code,
-            checksum: checksum.to_be(),
-            rest: self.rest.to_be(),
-        }
+        Ok(res)
     }
 
     /// Get packet checksum.
@@ -136,7 +115,7 @@ impl IcmpPacket {
         let mut sum = ((icmp_type << 8) | icmp_code) as u32;
 
         sum = sum.wrapping_add(self.rest >> 16);
-        sum = sum.wrapping_add(self.rest & 0xff);
+        sum = sum.wrapping_add(self.rest & 0xffff);
         sum = sum.wrapping_add(raw::utils::sum_slice(payload));
 
         raw::utils::sum_to_checksum(sum)
@@ -144,33 +123,37 @@ impl IcmpPacket {
 }
 
 impl Ipv4PacketBody for IcmpPacket {
-    fn serialize(&self, _: &Ipv4PacketHeader, w: &mut dyn Write) -> io::Result<()> {
-        let raw_header = self.raw_header();
+    fn serialize(&self, _: &Ipv4PacketHeader, buf: &mut BytesMut) {
+        let rh = RawIcmpPacketHeader {
+            icmp_type: self.icmp_type.code(),
+            code: self.code,
+            checksum: U16::new(self.checksum()),
+            rest: U32::new(self.rest),
+        };
 
-        let payload = self.body.as_ref();
+        let header = rh.as_bytes();
 
-        w.write_all(raw_header.as_bytes())?;
-        w.write_all(payload)?;
+        let total_len = header.len() + self.body.len();
 
-        Ok(())
+        buf.reserve(total_len);
+
+        buf.extend_from_slice(header);
+        buf.extend_from_slice(&self.body);
     }
 
     fn len(&self, _: &Ipv4PacketHeader) -> usize {
-        let payload = self.body.as_ref();
-
-        mem::size_of::<RawIcmpPacketHeader>() + payload.len()
+        std::mem::size_of::<RawIcmpPacketHeader>() + self.body.len()
     }
 }
 
 /// Raw ICMP packet header.
-#[repr(C, packed)]
-#[allow(dead_code)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, KnownLayout, Immutable, Unaligned, IntoBytes, FromBytes)]
+#[repr(C)]
 struct RawIcmpPacketHeader {
     icmp_type: u8,
     code: u8,
-    checksum: u16,
-    rest: u32,
+    checksum: U16,
+    rest: U32,
 }
 
 pub trait IcmpEchoPacket {
@@ -199,21 +182,22 @@ impl IcmpEchoPacket for IcmpPacket {
 }
 
 pub mod scanner {
-    use super::*;
+    use std::{net::Ipv4Addr, time::Duration};
 
-    use std::net::Ipv4Addr;
-    use std::time::Duration;
+    use bytes::BytesMut;
 
-    use bytes::Bytes;
+    use crate::net::raw::{
+        devices::EthernetDevice,
+        ether::{
+            MacAddr,
+            packet::{EtherPacket, EtherPacketType},
+        },
+        ip::Ipv4Packet,
+        pcap::{self, Scanner},
+        utils::Serialize,
+    };
 
-    use crate::net::raw::pcap;
-
-    use crate::net::raw::devices::EthernetDevice;
-    use crate::net::raw::ether::MacAddr;
-    use crate::net::raw::ether::packet::EtherPacket;
-    use crate::net::raw::ip::Ipv4Packet;
-    use crate::net::raw::pcap::Scanner;
-    use crate::net::raw::utils::Serialize;
+    use super::IcmpPacket;
 
     /// ICMP scanner.
     pub struct IcmpScanner {
@@ -255,7 +239,7 @@ pub mod scanner {
 
             let mut current = (addr & mask) + 1;
 
-            let mut buffer = Vec::new();
+            let mut buffer = BytesMut::new();
 
             let mut generator = move || {
                 if current < end {
@@ -268,15 +252,13 @@ pub mod scanner {
                     let ipp = Ipv4Packet::icmp(psrc, pdst, 64, icmpp);
                     let pkt = EtherPacket::ipv4(hsrc, bcast, ipp);
 
-                    buffer.clear();
-
-                    pkt.serialize(&mut buffer).unwrap();
+                    pkt.serialize(&mut buffer);
 
                     current += 1;
 
-                    let pkt = Bytes::copy_from_slice(&buffer);
+                    let pkt = buffer.split();
 
-                    Some(pkt)
+                    Some(pkt.freeze())
                 } else {
                     None
                 }
@@ -287,6 +269,7 @@ pub mod scanner {
                  and ip dst {}",
                 self.device.ip()
             );
+
             let packets = self.scanner.sr(
                 &filter,
                 &mut generator,
@@ -298,8 +281,11 @@ pub mod scanner {
 
             for ep in packets {
                 let eh = ep.header();
+                let eb = ep.body();
 
-                if let Some(ip) = ep.body::<Ipv4Packet>() {
+                if eh.packet_type() == EtherPacketType::IPv4
+                    && let Ok(ip) = Ipv4Packet::parse(&mut eb.clone())
+                {
                     let iph = ip.header();
 
                     let sha = eh.src;

@@ -747,10 +747,7 @@ mod tests {
         table.add_service(svc_2, ServiceSource::Discovery, false);
         table.add_service(svc_3.clone(), ServiceSource::Discovery, true);
 
-        table.check_visible_services(&[
-            (93, &svc_3),
-            (640, &svc_1),
-        ]);
+        table.check_visible_services(&[(93, &svc_3), (640, &svc_1)]);
     }
 
     #[test]
@@ -815,8 +812,7 @@ mod tests {
             ]
         }"#;
 
-        let intermediate = serde_json::from_str(json)
-            .expect("invalid JSON");
+        let intermediate = serde_json::from_str(json).expect("invalid JSON");
 
         let table =
             ServiceTable::deserialize(&intermediate).expect("expected valid service table JSON");
@@ -840,18 +836,10 @@ mod tests {
         // NOTE: The only visible services should be the last two defined in
         //   the JSON above. The first two are static services that should not
         //   be visible until they are explicitly added as static again.
-        table.check_visible_services(&[
-            (3, &svc_3),
-            (10000, &svc_4),
-        ]);
+        table.check_visible_services(&[(3, &svc_3), (10000, &svc_4)]);
 
         // ... however, all the services should be available at this point.
-        table.check_available_services(&[
-            (1, &svc_1),
-            (2, &svc_2),
-            (3, &svc_3),
-            (10000, &svc_4),
-        ]);
+        table.check_available_services(&[(1, &svc_1), (2, &svc_2), (3, &svc_3), (10000, &svc_4)]);
 
         // add the first static service
         table.add(svc_1.clone(), ServiceSource::Static);
@@ -859,11 +847,7 @@ mod tests {
         // NOTE: The first static service should now be visible and it's ID
         //   should be 1 because it didn't come with an explicit ID but it was
         //   the first service in the JSON array.
-        table.check_visible_services(&[
-            (1, &svc_1),
-            (3, &svc_3),
-            (10000, &svc_4),
-        ]);
+        table.check_visible_services(&[(1, &svc_1), (3, &svc_3), (10000, &svc_4)]);
 
         assert_eq!(table.service_table_version(), 0);
         assert_eq!(table.visible_set_version(), 1);
@@ -872,11 +856,7 @@ mod tests {
         table.add(svc_1.clone(), ServiceSource::Static);
 
         // NOTE: No changes are expected here.
-        table.check_visible_services(&[
-            (1, &svc_1),
-            (3, &svc_3),
-            (10000, &svc_4),
-        ]);
+        table.check_visible_services(&[(1, &svc_1), (3, &svc_3), (10000, &svc_4)]);
 
         assert_eq!(table.service_table_version(), 0);
         assert_eq!(table.visible_set_version(), 1);
@@ -884,12 +864,7 @@ mod tests {
         // add the second static service
         table.add(svc_2.clone(), ServiceSource::Static);
 
-        table.check_visible_services(&[
-            (1, &svc_1),
-            (2, &svc_2),
-            (3, &svc_3),
-            (10000, &svc_4),
-        ]);
+        table.check_visible_services(&[(1, &svc_1), (2, &svc_2), (3, &svc_3), (10000, &svc_4)]);
 
         assert_eq!(table.service_table_version(), 0);
         assert_eq!(table.visible_set_version(), 2);
@@ -949,12 +924,7 @@ mod tests {
         //   "discovered", so they should also remain visible. The third and
         //   the fourth service should be hidden because they are neither
         //   static nor custom and their `last_seen` timestamp is too old.
-        table.check_visible_services(&[
-            (1, &svc_1),
-            (2, &svc_2),
-            (11717, &svc_5),
-            (63236, &svc_6),
-        ]);
+        table.check_visible_services(&[(1, &svc_1), (2, &svc_2), (11717, &svc_5), (63236, &svc_6)]);
 
         assert_eq!(table.service_table_version(), 2);
         assert_eq!(table.visible_set_version(), 6);
@@ -969,19 +939,11 @@ mod tests {
         //   should also remain available. The third service should be
         //   unavailable because it isn't static and it doesn't belong to any
         //   of the whitelisted networks.
-        table.check_available_services(&[
-            (1, &svc_1),
-            (2, &svc_2),
-            (63236, &svc_6),
-        ]);
+        table.check_available_services(&[(1, &svc_1), (2, &svc_2), (63236, &svc_6)]);
 
         // NOTE: The list of visible services should match the list of
         //   available services.
-        table.check_visible_services(&[
-            (1, &svc_1),
-            (2, &svc_2),
-            (63236, &svc_6),
-        ]);
+        table.check_visible_services(&[(1, &svc_1), (2, &svc_2), (63236, &svc_6)]);
 
         assert_eq!(table.service_table_version(), 2);
         assert_eq!(table.visible_set_version(), 7);
@@ -1071,8 +1033,7 @@ mod tests {
             ]
         }"#;
 
-        let intermediate = serde_json::from_str(json)
-            .expect("invalid JSON");
+        let intermediate = serde_json::from_str(json).expect("invalid JSON");
 
         let table =
             ServiceTable::deserialize(&intermediate).expect("expected valid service table JSON");
