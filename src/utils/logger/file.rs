@@ -146,8 +146,6 @@ impl LogFile {
     /// Write given data into the underlying file and rotate as necessary.
     fn write(&mut self, data: &[u8]) -> io::Result<()> {
         if (self.written + data.len()) > self.limit {
-            eprintln!("rotating log file...");
-
             self.flush()?;
             self.rotate()?;
         }
@@ -155,8 +153,6 @@ impl LogFile {
         self.file.write_all(data)?;
 
         self.written += data.len();
-
-        eprintln!("written bytes: {}", self.written);
 
         Ok(())
     }
