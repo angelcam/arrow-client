@@ -38,7 +38,7 @@ const NETWORK_SCAN_PERIOD: Duration = Duration::from_secs(300);
 /// Different command types that the command handler can receive.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Command {
-    ResetServiceTable,
+    ResetServiceTable(bool),
     ScanNetwork,
     RunPeriodicTasks,
 }
@@ -107,15 +107,15 @@ impl CommandHandlerContext {
     /// Process a given command.
     async fn process_command(&mut self, cmd: Command) {
         match cmd {
-            Command::ResetServiceTable => self.reset_service_table().await,
+            Command::ResetServiceTable(full) => self.reset_service_table(full).await,
             Command::ScanNetwork => self.scan_network(),
             Command::RunPeriodicTasks => self.run_periodic_tasks().await,
         }
     }
 
     /// Reset service table.
-    async fn reset_service_table(&mut self) {
-        self.app_context.reset_service_table().await
+    async fn reset_service_table(&mut self, full: bool) {
+        self.app_context.reset_service_table(full).await
     }
 
     /// Run periodic tasks.

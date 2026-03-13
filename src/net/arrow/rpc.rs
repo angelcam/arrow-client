@@ -30,7 +30,7 @@ use crate::{
     error::Error,
     net::arrow::{
         session::{ServiceConnector, SessionManager},
-        svc_table::ServiceTableElement,
+        svc_table::ServiceSerializer,
     },
     scanner::{HostRecord, ScanResult},
     svc_table::{Service, ServiceSource, ServiceTableHandle},
@@ -90,7 +90,8 @@ where
         match method {
             "connect" => self.inner.connect(params).await,
             "add_service" => self.inner.add_service(params).await,
-            "reset_service_table" => self.inner.reset_service_table().await,
+            "remove_service" => self.inner.remove_service(params).await,
+            "reset_service_table" => self.inner.reset_service_table(params).await,
             "scan_network" => self.inner.scan_network(),
             "get_status" => self.inner.get_status(),
             "get_last_scan_report" => self.inner.get_last_scan_report(),
@@ -163,9 +164,31 @@ impl<C> InternalRpcService<C> {
         Ok(res)
     }
 
+    /// Process a given `remove_service` request.
+    async fn remove_service(&self, params: JsonRpcParams) -> Result<JsonRpcValue, JsonRpcError> {
+        let params = params
+            .decode::<RemoveServiceParams>()
+            .map_err(|_| JsonRpcError::new(-32602, "Invalid params"))?;
+
+        self.app_context
+            .remove_service_source(params.service_id, ServiceSource::Custom)
+            .await;
+
+        Ok(JsonRpcValue::None)
+    }
+
     /// Process a given `reset_service_table` request.
-    async fn reset_service_table(&self) -> Result<JsonRpcValue, JsonRpcError> {
-        self.app_context.reset_service_table().await;
+    async fn reset_service_table(
+        &self,
+        params: JsonRpcParams,
+    ) -> Result<JsonRpcValue, JsonRpcError> {
+        let params = params
+            .decode::<ResetServiceTableParams>()
+            .map_err(|_| JsonRpcError::new(-32602, "Invalid params"))?;
+
+        let full = params.full.unwrap_or(false);
+
+        self.app_context.reset_service_table(full).await;
 
         Ok(JsonRpcValue::None)
     }
@@ -266,6 +289,19 @@ struct AddServiceResponse {
 }
 
 /// Helper struct.
+#[derive(Deserialize)]
+struct RemoveServiceParams {
+    service_id: u16,
+}
+
+/// Helper struct.
+#[derive(Deserialize)]
+struct ResetServiceTableParams {
+    #[serde(default)]
+    full: Option<bool>,
+}
+
+/// Helper struct.
 #[derive(Serialize)]
 struct GetStatusResponse {
     is_scanning: bool,
@@ -276,7 +312,7 @@ struct GetStatusResponse {
 #[derive(Serialize)]
 struct ScanReportResponse {
     hosts: Vec<ScanReportHost>,
-    services: Vec<ServiceTableElement>,
+    services: Vec<ServiceSerializer>,
 }
 
 impl ScanReportResponse {
@@ -289,7 +325,7 @@ impl ScanReportResponse {
             .filter_map(|svc| {
                 svc_table
                     .get_id(&svc.to_service_identifier())
-                    .map(|service_id| ServiceTableElement::new(service_id, svc))
+                    .map(|service_id| ServiceSerializer::new(service_id, svc))
             })
             .collect();
 

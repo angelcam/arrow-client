@@ -186,14 +186,23 @@ impl ApplicationContext {
             .await
     }
 
+    /// Remove a given service source from a given service table element.
+    pub async fn remove_service_source(&self, id: u16, source: ServiceSource) {
+        self.data.config().remove_service_source(id, source).await;
+    }
+
     /// Update service flags.
     pub async fn update_service_flags(&self) {
         self.data.config().update_service_flags().await;
     }
 
     /// Reset service table.
-    pub async fn reset_service_table(&self) {
-        self.data.config().reset_service_table().await
+    ///
+    /// If `full` is `true`, then all custom and discovered services will be
+    /// removed from the service table. Otherwise, only discovered services
+    /// will be removed.
+    pub async fn reset_service_table(&self, full: bool) {
+        self.data.config().reset_service_table(full).await
     }
 
     /// Get connection state.

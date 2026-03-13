@@ -369,11 +369,11 @@ impl ArrowClient {
         self.application_context
             .get_service_table()
             .visible()
-            .filter_map(|(id, svc)| {
-                if svc.is_control() {
+            .filter_map(|elem| {
+                if elem.is_control() {
                     None
                 } else {
-                    Some((id, svc))
+                    Some((elem.id(), elem.into()))
                 }
             })
             .collect()
@@ -397,7 +397,7 @@ impl ArrowClient {
     /// Clear the service table and scan the local network again.
     pub fn rescan_network(&mut self) {
         if let Some(channel) = self.command_channel.as_ref() {
-            channel.send(Command::ResetServiceTable);
+            channel.send(Command::ResetServiceTable(false));
             channel.send(Command::ScanNetwork);
         }
     }

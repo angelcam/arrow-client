@@ -20,6 +20,7 @@ pub mod service;
 use std::{
     collections::HashMap,
     fmt::{self, Display, Formatter},
+    ops::Deref,
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -69,9 +70,13 @@ impl ServiceTable {
         Self::default()
     }
 
-    /// Reset the service table, keeping only static and custom services.
-    pub fn reset(&self) {
-        self.data.lock().unwrap().reset();
+    /// Reset the service table.
+    ///
+    /// If `full` is `true`, then all custom and discovered services will be
+    /// removed from the service table. Otherwise, only discovered services
+    /// will be removed.
+    pub fn reset(&self, full: bool) {
+        self.data.lock().unwrap().reset(full);
     }
 
     /// Lock the service table for exclusive access.
@@ -153,6 +158,13 @@ impl<'a> LockedServiceTable<'a> {
         self.inner.update(svc, source)
     }
 
+    /// Remove a given service source from a given service table element.
+    ///
+    /// This method does not change the service visibility or availability.
+    pub fn remove_service_source(&mut self, id: u16, source: ServiceSource) {
+        self.inner.remove_service_source(id, source);
+    }
+
     /// Update service availability.
     pub fn update_service_availability(&mut self, local_networks: &[EthernetDevice]) {
         self.inner.update_service_availability(local_networks);
@@ -187,7 +199,7 @@ impl ServiceTableHandle {
     }
 
     /// Get visible services.
-    pub fn visible(&self) -> ServiceTableIterator {
+    pub fn visible(&self) -> VisibleServices {
         self.data.lock().unwrap().visible()
     }
 
@@ -215,33 +227,27 @@ impl Display for ServiceTableHandle {
 }
 
 /// Service table iterator.
-pub struct ServiceTableIterator {
-    elements: std::vec::IntoIter<(u16, Service)>,
+pub struct VisibleServices {
+    inner: std::vec::IntoIter<ServiceTableElement>,
 }
 
-impl ServiceTableIterator {
+impl VisibleServices {
     /// Create a new service table iterator.
-    #[allow(clippy::needless_collect)]
-    fn new<'a, I>(elements: I) -> Self
+    fn new<T>(elements: T) -> Self
     where
-        I: IntoIterator<Item = &'a ServiceTableElement>,
+        T: Into<Vec<ServiceTableElement>>,
     {
-        let elements = elements
-            .into_iter()
-            .map(|elem| (elem.id, elem.to_service()))
-            .collect::<Vec<_>>();
-
         Self {
-            elements: elements.into_iter(),
+            inner: Vec::into_iter(elements.into()),
         }
     }
 }
 
-impl Iterator for ServiceTableIterator {
-    type Item = (u16, Service);
+impl Iterator for VisibleServices {
+    type Item = ServiceTableElement;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.elements.next()
+        self.inner.next()
     }
 }
 
@@ -319,13 +325,15 @@ impl ServiceTableData {
     }
 
     /// Get visible services.
-    fn visible(&self) -> ServiceTableIterator {
+    fn visible(&self) -> VisibleServices {
         let visible = self
             .service_map
             .values()
-            .filter(|elem| elem.is_visible() && !elem.service.is_control());
+            .filter(|elem| elem.is_visible() && !elem.service.is_control())
+            .cloned()
+            .collect::<Vec<_>>();
 
-        ServiceTableIterator::new(visible)
+        VisibleServices::new(visible)
     }
 
     /// Insert a new element into the table and return its ID.
@@ -409,6 +417,15 @@ impl ServiceTableData {
         }
     }
 
+    /// Remove service source from a given service table element.
+    ///
+    /// This method does not change the service visibility or availability.
+    fn remove_service_source(&mut self, id: u16, source: ServiceSource) {
+        if let Some(elem) = self.service_map.get_mut(&id) {
+            elem.remove_source(source);
+        }
+    }
+
     /// Update service availability.
     fn update_service_availability(&mut self, local_networks: &[EthernetDevice]) {
         for elem in self.service_map.values_mut() {
@@ -435,14 +452,19 @@ impl ServiceTableData {
         }
     }
 
-    /// Reset the service table, keeping only static and custom services.
-    fn reset(&mut self) {
+    /// Reset the service table.
+    fn reset(&mut self, full: bool) {
         let mut new = ServiceTableData::new();
 
         for (_, element) in self.service_map.drain() {
             // the static service is already in the new table and we only
-            // want to keep static and custom services
-            if element.id != 0 && (element.static_service || element.custom_service) {
+            // want to keep static and custom services if `full` is false
+            #[allow(clippy::nonminimal_bool)]
+            let delete = element.id == 0
+                || (full && !element.static_service)
+                || (!full && !element.static_service && !element.custom_service);
+
+            if !delete {
                 new.add_element(element);
             }
         }
@@ -496,7 +518,7 @@ impl Display for ServiceTableData {
 /// (i.e. once set to true, they remain true). The `static_service` flag is
 /// sticky only for the lifetime of the process.
 #[derive(Debug, Clone)]
-struct ServiceTableElement {
+pub struct ServiceTableElement {
     /// Service ID.
     id: u16,
 
@@ -563,6 +585,26 @@ impl ServiceTableElement {
         }
     }
 
+    /// Get the service ID.
+    pub fn id(&self) -> u16 {
+        self.id
+    }
+
+    /// Check if the service is a static service.
+    pub fn is_static(&self) -> bool {
+        self.static_service
+    }
+
+    /// Check if the service is a discovered service.
+    pub fn is_discovered(&self) -> bool {
+        self.discovered_service
+    }
+
+    /// Check if the service is a custom service.
+    pub fn is_custom(&self) -> bool {
+        self.custom_service
+    }
+
     /// Check if the service should be visible.
     ///
     /// Services that are not visible should not be returned in the visible
@@ -596,6 +638,17 @@ impl ServiceTableElement {
             ServiceSource::Static => self.static_service = true,
             ServiceSource::Discovery => self.discovered_service = true,
             ServiceSource::Custom => self.custom_service = true,
+        }
+    }
+
+    /// Remove a given service source from this element.
+    ///
+    /// This method does not change the service visibility or availability.
+    fn remove_source(&mut self, source: ServiceSource) {
+        match source {
+            ServiceSource::Static => self.static_service = false,
+            ServiceSource::Discovery => self.discovered_service = false,
+            ServiceSource::Custom => self.custom_service = false,
         }
     }
 
@@ -640,6 +693,20 @@ impl ServiceTableElement {
     }
 }
 
+impl Deref for ServiceTableElement {
+    type Target = Service;
+
+    fn deref(&self) -> &Self::Target {
+        &self.service
+    }
+}
+
+impl From<ServiceTableElement> for Service {
+    fn from(elem: ServiceTableElement) -> Self {
+        elem.service
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
@@ -679,7 +746,10 @@ mod tests {
         }
 
         fn check_visible_services(&self, expected: &[(u16, &Service)]) {
-            let visible = Vec::from_iter(self.visible());
+            let visible = self
+                .visible()
+                .map(|elem| (elem.id, elem.to_service()))
+                .collect::<Vec<_>>();
 
             let expected = expected
                 .iter()

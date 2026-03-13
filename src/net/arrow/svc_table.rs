@@ -23,7 +23,7 @@ use serde_lite::Serialize;
 use crate::{
     error::Error,
     net::raw::ether::MacAddr,
-    svc_table::{Service, ServiceTableHandle, ServiceType},
+    svc_table::{Service, ServiceTableElement, ServiceTableHandle, ServiceType},
 };
 
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(5);
@@ -60,7 +60,7 @@ impl ServiceTableUpdater {
         // helper struct
         #[derive(Serialize)]
         struct Params {
-            services: Vec<ServiceTableElement>,
+            services: Vec<ServiceTableElementSerializer>,
         }
 
         let current_version = self.svc_table.visible_set_version();
@@ -75,10 +75,10 @@ impl ServiceTableUpdater {
             services: Vec::new(),
         };
 
-        for (service_id, service) in self.svc_table.visible() {
+        for elem in self.svc_table.visible() {
             params
                 .services
-                .push(ServiceTableElement::new(service_id, &service));
+                .push(ServiceTableElementSerializer::new(&elem));
         }
 
         let msg = params
@@ -94,9 +94,9 @@ impl ServiceTableUpdater {
     }
 }
 
-/// Scan report service entry.
+/// Service serializer.
 #[derive(Serialize)]
-pub struct ServiceTableElement {
+pub struct ServiceSerializer {
     service_id: u16,
     #[serde(rename = "type")]
     kind: &'static str,
@@ -106,8 +106,8 @@ pub struct ServiceTableElement {
     path: String,
 }
 
-impl ServiceTableElement {
-    /// Create a new service table element.
+impl ServiceSerializer {
+    /// Create a new service serializer.
     pub fn new(service_id: u16, service: &Service) -> Self {
         let kind = match service.service_type() {
             ServiceType::ControlProtocol => "control",
@@ -136,6 +136,42 @@ impl ServiceTableElement {
             host,
             port,
             path,
+        }
+    }
+}
+
+/// Service table element serializer.
+#[derive(Serialize)]
+pub struct ServiceTableElementSerializer {
+    #[serde(flatten)]
+    service: ServiceSerializer,
+    flags: u32,
+}
+
+impl ServiceTableElementSerializer {
+    const FLAG_STATIC: u32 = 0x01;
+    const FLAG_DISCOVERED: u32 = 0x02;
+    const FLAG_CUSTOM: u32 = 0x04;
+
+    /// Create a new service table element serializer.
+    pub fn new(elem: &ServiceTableElement) -> Self {
+        let mut flags = 0;
+
+        if elem.is_static() {
+            flags |= Self::FLAG_STATIC;
+        }
+
+        if elem.is_discovered() {
+            flags |= Self::FLAG_DISCOVERED;
+        }
+
+        if elem.is_custom() {
+            flags |= Self::FLAG_CUSTOM;
+        }
+
+        Self {
+            service: ServiceSerializer::new(elem.id(), elem),
+            flags,
         }
     }
 }

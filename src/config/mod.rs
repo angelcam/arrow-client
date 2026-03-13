@@ -462,8 +462,8 @@ impl Config {
 
     /// Reset the service table.
     #[doc(hidden)]
-    pub async fn reset_service_table(&self) {
-        self.svc_table.reset();
+    pub async fn reset_service_table(&self, full: bool) {
+        self.svc_table.reset(full);
 
         self.version.fetch_add(1, Ordering::AcqRel);
 
@@ -507,6 +507,13 @@ impl Config {
             }
         })
         .await;
+    }
+
+    /// Remove a given service source from a given service table element.
+    #[doc(hidden)]
+    pub async fn remove_service_source(&self, id: u16, source: ServiceSource) {
+        self.update_service_table_internal(|svc_table| svc_table.remove_service_source(id, source))
+            .await;
     }
 
     /// Update the availability and visibility flags of all services.
