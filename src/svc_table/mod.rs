@@ -469,6 +469,9 @@ impl ServiceTableData {
             }
         }
 
+        new.service_table_version = self.service_table_version.wrapping_add(1);
+        new.visible_set_version = self.visible_set_version.wrapping_add(1);
+
         *self = new;
     }
 }
