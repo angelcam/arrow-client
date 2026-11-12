@@ -54,6 +54,7 @@ pub trait ServiceConnector {
     /// Connect to a given service.
     async fn connect(
         &self,
+        svc_id: u16,
         svc_type: ServiceType,
         mac: MacAddr,
         addr: SocketAddr,
@@ -78,6 +79,7 @@ impl ServiceConnector for DefaultServiceConnector {
     #[inline]
     fn connect(
         &self,
+        _: u16,
         _: ServiceType,
         _: MacAddr,
         addr: SocketAddr,
@@ -151,12 +153,13 @@ where
             "connecting to local service: {addr}, service ID: {service_id:04x}, session ID: {session_id:08x}",
         );
 
-        let local_connection = connect_to_local_service(&self.svc_connector, svc_type, mac, addr)
-            .await
-            .map_err(|err| {
-                Error::from_static_msg_and_cause("unable to connect to local service", err)
-            })
-            .inspect_err(|err| warn!("{err}"))?;
+        let local_connection =
+            connect_to_local_service(&self.svc_connector, service_id, svc_type, mac, addr)
+                .await
+                .map_err(|err| {
+                    Error::from_static_msg_and_cause("unable to connect to local service", err)
+                })
+                .inspect_err(|err| warn!("{err}"))?;
 
         let tls_connector = self.tls_connector.clone();
 
@@ -337,6 +340,7 @@ impl Drop for SessionHandle {
 /// Connect to a given local service.
 async fn connect_to_local_service<C>(
     connector: &C,
+    svc_id: u16,
     svc_type: ServiceType,
     mac: MacAddr,
     addr: SocketAddr,
@@ -344,7 +348,7 @@ async fn connect_to_local_service<C>(
 where
     C: ServiceConnector,
 {
-    let connect = connector.connect(svc_type, mac, addr);
+    let connect = connector.connect(svc_id, svc_type, mac, addr);
 
     let res = tokio::time::timeout(CONNECT_TIMEOUT, connect)
         .await
