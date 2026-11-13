@@ -380,22 +380,31 @@ impl ArrowClient {
     }
 
     /// Add a new event listener.
-    pub fn add_event_listener<T>(&mut self, listener: T)
+    pub fn add_event_listener<T>(&self, listener: T) -> u64
     where
-        T: 'static + ArrowClientEventListener + Send,
+        T: 'static + ArrowClientEventListener + Send + Sync,
     {
         self.application_context.add_event_listener(listener)
     }
 
+    /// Remove event listener with a given ID.
+    ///
+    /// Note that the removed event listener may still be called after it's
+    /// been removed if there was an event created before the removal and the
+    /// event hasn't been delivered to the listener yet.
+    pub fn remove_event_listener(&self, id: u64) {
+        self.application_context.remove_event_listener(id)
+    }
+
     /// Scan the local network.
-    pub fn scan_network(&mut self) {
+    pub fn scan_network(&self) {
         if let Some(channel) = self.command_channel.as_ref() {
             channel.send(Command::ScanNetwork);
         }
     }
 
     /// Clear the service table and scan the local network again.
-    pub fn rescan_network(&mut self) {
+    pub fn rescan_network(&self) {
         if let Some(channel) = self.command_channel.as_ref() {
             channel.send(Command::ResetServiceTable(false));
             channel.send(Command::ScanNetwork);

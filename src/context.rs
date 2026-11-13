@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::{
+    collections::hash_map::{self, HashMap},
     fmt::{self, Display, Formatter},
     ops::{Deref, DerefMut},
     sync::{Arc, Mutex, MutexGuard},
@@ -53,10 +54,13 @@ impl Display for ConnectionState {
 /// Listener for application events.
 pub trait ApplicationEventListener {
     /// Report new connection state.
-    fn connection_state_changed(&mut self, _: ConnectionState) {}
+    fn connection_state_changed(&self, _: ConnectionState) {}
 
     /// Report new network scanner state (`true` means that the network scanner is running).
-    fn network_scanner_state_changed(&mut self, _: bool) {}
+    fn network_scanner_state_changed(&self, _: bool) {}
+
+    /// Report a service table change.
+    fn service_table_changed(&self) {}
 }
 
 /// Application context.
@@ -133,16 +137,14 @@ impl ApplicationContext {
 
         data.set_scanning(scanning);
 
-        let mut listeners = data.take_event_listeners();
+        let listeners = data.get_event_listeners();
 
         // make sure that we are not holding the mutex
         std::mem::drop(data);
 
-        for listener in &mut listeners {
+        for listener in &listeners {
             listener.network_scanner_state_changed(scanning);
         }
-
-        self.data.lock().add_event_listeners(listeners);
     }
 
     /// Check if the network scanner thread is running right now.
@@ -172,7 +174,13 @@ impl ApplicationContext {
 
     /// Add a new service to the service table.
     pub async fn add_service(&self, service: Service, source: ServiceSource) -> u16 {
-        self.data.config().add_service(service, source).await
+        let (changed, service_id) = self.data.config().add_service(service, source).await;
+
+        if changed {
+            self.on_service_table_change();
+        }
+
+        service_id
     }
 
     /// Update service table. Add all given services into the table and update active services.
@@ -180,20 +188,28 @@ impl ApplicationContext {
     where
         I: IntoIterator<Item = Service>,
     {
-        self.data
+        if self
+            .data
             .config()
             .update_service_table(services, source)
             .await
+        {
+            self.on_service_table_change();
+        }
     }
 
     /// Remove a given service source from a given service table element.
     pub async fn remove_service_source(&self, id: u16, source: ServiceSource) {
-        self.data.config().remove_service_source(id, source).await;
+        if self.data.config().remove_service_source(id, source).await {
+            self.on_service_table_change();
+        }
     }
 
     /// Update service flags.
     pub async fn update_service_flags(&self) {
-        self.data.config().update_service_flags().await;
+        if self.data.config().update_service_flags().await {
+            self.on_service_table_change();
+        }
     }
 
     /// Reset service table.
@@ -202,7 +218,23 @@ impl ApplicationContext {
     /// removed from the service table. Otherwise, only discovered services
     /// will be removed.
     pub async fn reset_service_table(&self, full: bool) {
-        self.data.config().reset_service_table(full).await
+        self.data.config().reset_service_table(full).await;
+
+        self.on_service_table_change();
+    }
+
+    /// Send the service table changed event.
+    fn on_service_table_change(&self) {
+        let data = self.data.lock();
+
+        let listeners = data.get_event_listeners();
+
+        // make sure that we are not holding the mutex
+        std::mem::drop(data);
+
+        for listener in &listeners {
+            listener.service_table_changed();
+        }
     }
 
     /// Get connection state.
@@ -221,16 +253,14 @@ impl ApplicationContext {
 
             data.set_connection_state(state);
 
-            let mut listeners = data.take_event_listeners();
+            let listeners = data.get_event_listeners();
 
             // make sure that we are not holding the mutex
             std::mem::drop(data);
 
-            for listener in &mut listeners {
+            for listener in &listeners {
                 listener.connection_state_changed(state);
             }
-
-            self.data.lock().add_event_listeners(listeners);
         }
 
         self.data.config().update_connection_state(state).await;
@@ -242,11 +272,16 @@ impl ApplicationContext {
     }
 
     /// Add a new event listener.
-    pub fn add_event_listener<T>(&self, listener: T)
+    pub fn add_event_listener<T>(&self, listener: T) -> u64
     where
-        T: 'static + ApplicationEventListener + Send,
+        T: 'static + ApplicationEventListener + Send + Sync,
     {
         self.data.lock().add_event_listener(listener)
+    }
+
+    /// Remove event listener with a given ID.
+    pub fn remove_event_listener(&self, id: u64) {
+        self.data.lock().remove_event_listener(id);
     }
 }
 
@@ -302,7 +337,8 @@ struct MutableApplicationContextData {
     scanning: bool,
     scan_result: ScanResult,
     connection_state: ConnectionState,
-    event_listeners: Vec<Box<dyn ApplicationEventListener + Send>>,
+    event_listeners: HashMap<u64, Arc<dyn ApplicationEventListener + Send + Sync>>,
+    next_event_listener_id: u64,
 }
 
 impl MutableApplicationContextData {
@@ -312,7 +348,8 @@ impl MutableApplicationContextData {
             scanning: false,
             scan_result: ScanResult::new(),
             connection_state: ConnectionState::Disconnected,
-            event_listeners: Vec::new(),
+            event_listeners: HashMap::new(),
+            next_event_listener_id: 0,
         }
     }
 
@@ -347,27 +384,32 @@ impl MutableApplicationContextData {
     }
 
     /// Add a new event listener.
-    fn add_event_listener<T>(&mut self, listener: T)
+    fn add_event_listener<T>(&mut self, listener: T) -> u64
     where
-        T: 'static + ApplicationEventListener + Send,
+        T: 'static + ApplicationEventListener + Send + Sync,
     {
-        self.event_listeners.push(Box::new(listener));
-    }
+        for _ in 0..u64::MAX {
+            let id = self.next_event_listener_id;
 
-    /// Add all given event listeners.
-    fn add_event_listeners(
-        &mut self,
-        mut listeners: Vec<Box<dyn ApplicationEventListener + Send>>,
-    ) {
-        for listener in self.event_listeners.drain(..) {
-            listeners.push(listener);
+            self.next_event_listener_id = self.next_event_listener_id.wrapping_add(1);
+
+            if let hash_map::Entry::Vacant(entry) = self.event_listeners.entry(id) {
+                entry.insert(Arc::new(listener));
+
+                return id;
+            }
         }
 
-        self.event_listeners = listeners;
+        panic!("no available listener ID")
+    }
+
+    /// Remove event listener with a given ID.
+    fn remove_event_listener(&mut self, id: u64) {
+        self.event_listeners.remove(&id);
     }
 
     /// Get all event listeners.
-    fn take_event_listeners(&mut self) -> Vec<Box<dyn ApplicationEventListener + Send>> {
-        std::mem::take(&mut self.event_listeners)
+    fn get_event_listeners(&self) -> Vec<Arc<dyn ApplicationEventListener + Send + Sync>> {
+        self.event_listeners.values().cloned().collect()
     }
 }

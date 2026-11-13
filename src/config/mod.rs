@@ -486,8 +486,11 @@ impl Config {
     }
 
     /// Add a new service to the service table.
+    ///
+    /// The method returns a tuple where the first element indicates whether
+    /// the service table has changed and the second element is the service ID.
     #[doc(hidden)]
-    pub async fn add_service(&self, service: Service, source: ServiceSource) -> u16 {
+    pub async fn add_service(&self, service: Service, source: ServiceSource) -> (bool, u16) {
         self.update_service_table_internal(|svc_table| svc_table.add(service, source))
             .await
     }
@@ -495,31 +498,46 @@ impl Config {
     /// Update service table.
     ///
     /// Add all given services into the table and update visible and available
-    /// services.
+    /// services. The method returns a boolean indicating whether the service
+    /// table has changed.
     #[doc(hidden)]
-    pub async fn update_service_table<I>(&self, services: I, source: ServiceSource)
+    pub async fn update_service_table<I>(&self, services: I, source: ServiceSource) -> bool
     where
         I: IntoIterator<Item = Service>,
     {
-        self.update_service_table_internal(|svc_table| {
-            for svc in services {
-                svc_table.add(svc, source);
-            }
-        })
-        .await;
+        let (changed, _) = self
+            .update_service_table_internal(|svc_table| {
+                for svc in services {
+                    svc_table.add(svc, source);
+                }
+            })
+            .await;
+
+        changed
     }
 
     /// Remove a given service source from a given service table element.
+    ///
+    /// The method returns a boolean indicating whether the service table has
+    /// changed.
     #[doc(hidden)]
-    pub async fn remove_service_source(&self, id: u16, source: ServiceSource) {
-        self.update_service_table_internal(|svc_table| svc_table.remove_service_source(id, source))
+    pub async fn remove_service_source(&self, id: u16, source: ServiceSource) -> bool {
+        let (changed, _) = self
+            .update_service_table_internal(|svc_table| svc_table.remove_service_source(id, source))
             .await;
+
+        changed
     }
 
     /// Update the availability and visibility flags of all services.
+    ///
+    /// The method returns a boolean indicating whether the service table has
+    /// changed.
     #[doc(hidden)]
-    pub async fn update_service_flags(&self) {
-        self.update_service_table_internal(|_| {}).await;
+    pub async fn update_service_flags(&self) -> bool {
+        let (changed, _) = self.update_service_table_internal(|_| {}).await;
+
+        changed
     }
 
     /// Update connection state.
@@ -544,13 +562,13 @@ impl Config {
     }
 
     /// Update service table.
-    async fn update_service_table_internal<F, R>(&self, f: F) -> R
+    async fn update_service_table_internal<F, R>(&self, f: F) -> (bool, R)
     where
         F: FnOnce(&mut LockedServiceTable) -> R,
     {
         let interface_whitelist = self.get_whitelisted_network_interfaces().await;
 
-        let (res, save) = {
+        let (changed, res, save) = {
             let mut svc_table = self.svc_table.lock();
 
             let old_st_version = svc_table.service_table_version();
@@ -564,10 +582,12 @@ impl Config {
             let new_st_version = svc_table.service_table_version();
             let new_vs_version = svc_table.visible_set_version();
 
+            let changed = old_st_version != new_st_version || old_vs_version != new_vs_version;
+
             let save = old_st_version != new_st_version
                 || (!self.flash_friendly && old_vs_version != new_vs_version);
 
-            (res, save)
+            (changed, res, save)
         };
 
         if save {
@@ -578,7 +598,7 @@ impl Config {
             }
         }
 
-        res
+        (changed, res)
     }
 
     /// Get whitelisted network interfaces.
